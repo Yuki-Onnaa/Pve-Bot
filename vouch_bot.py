@@ -99,8 +99,9 @@ def get_user_record(data, user_id):
 # PARSING
 # ─────────────────────────────────────────────────────────────
 
-# Matches: vouch @user <event text>
-VOUCH_PATTERN = re.compile(r"^\s*vouch\s+<@!?(\d+)>\s+(.+)$", re.IGNORECASE)
+# Matches: vouch @user1 @user2 ... <event text>
+VOUCH_PATTERN = re.compile(r"^\s*vouch\s+((?:<@!?\d+>\s*)+)(.+)$", re.IGNORECASE)
+MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 
 
 def normalize(text):
@@ -144,35 +145,42 @@ async def on_message(message):
 
     match = VOUCH_PATTERN.match(message.content)
     if match:
-        target_id = int(match.group(1))
+        mentions_block = match.group(1)
         event_text = match.group(2)
-        event_name = parse_event(event_text)
+        target_ids = [int(uid) for uid in MENTION_PATTERN.findall(mentions_block)]
 
+        event_name = parse_event(event_text)
         if event_name is None:
             await message.add_reaction("❌")
             return
 
-        # Prevent self-vouching (optional — remove this block if not wanted)
-        if target_id == message.author.id:
+        # Filter out self-vouch attempts; track if that removed everyone
+        valid_targets = [uid for uid in target_ids if uid != message.author.id]
+        if not valid_targets:
             await message.add_reaction("🚫")
             return
 
         points = EVENT_POINTS[event_name]
-
         data = load_data()
-        record = get_user_record(data, target_id)
-        record["total_points"] += points
-        record["total_vouches"] += 1
-        record["events"][event_name] += 1
-        record["log"].append({
-            "by": message.author.id,
-            "by_name": str(message.author),
-            "event": event_name,
-            "points": points,
-            "time": datetime.now(timezone.utc).isoformat(),
-        })
+
+        for target_id in valid_targets:
+            record = get_user_record(data, target_id)
+            record["total_points"] += points
+            record["total_vouches"] += 1
+            record["events"][event_name] += 1
+            record["log"].append({
+                "by": message.author.id,
+                "by_name": str(message.author),
+                "event": event_name,
+                "points": points,
+                "time": datetime.now(timezone.utc).isoformat(),
+            })
+
         save_data(data)
 
+        # If some targets were dropped for being self-vouches, flag it alongside success
+        if len(valid_targets) < len(target_ids):
+            await message.add_reaction("🚫")
         await message.add_reaction("✅")
         return
 
