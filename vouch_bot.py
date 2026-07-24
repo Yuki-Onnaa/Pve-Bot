@@ -24,6 +24,9 @@ SUPPORT_CHANNEL_ID = 1527834504658550924
 # Channel where the 3 live, auto-updating leaderboards get posted
 LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
 
+# Channel where every vouch / backfill / sync gets logged
+AUDIT_LOG_CHANNEL_ID = 1530317395669815438
+
 CHANNEL_CATEGORY = {
     PVE_CHANNEL_ID: "pve",
     SECURITY_CHANNEL_ID: "security",
@@ -92,6 +95,28 @@ CATEGORY_EVENTS = {
     "pve": PVE_EVENTS,
     "security": SECURITY_EVENTS,
     "support": SUPPORT_EVENTS,
+}
+
+# ── Role ladders (ascending by threshold). Role names must match exactly
+#    the roles already created in your Discord server. ──
+ROLE_THRESHOLDS = {
+    "pve": [
+        (0, "Apprentice Hoster"),
+        (150, "Skilled Hoster"),
+        (350, "Master Hoster"),
+        (750, "Divine Hoster"),
+        (1250, "Godlike Hoster"),
+        (2000, "True Hoster"),
+        (3500, "No Life Hoster"),
+        (5000, "Absolute Being"),
+    ],
+    "support": [
+        (0, "Guardian Link"),
+        (15, "Vigor Warden"),
+        (45, "Soul Reliefer"),
+        (100, "Graceful Commander"),
+        (200, "Hero Of Events"),
+    ],
 }
 
 # Phrase -> (category, canonical event name), for the "<event> @user" style commands
@@ -175,6 +200,9 @@ def parse_pve_event(text):
 # ─────────────────────────────────────────────────────────────
 
 def record_vouch(data, target_ids, author_id, category, event_name, when=None):
+    """
+    Returns (recorded_target_ids, cooldown_target_ids, self_dropped_count).
+    """
     when = when or datetime.now(timezone.utc)
     cfg = CATEGORY_EVENTS[category][event_name]
     points = cfg["points"]
@@ -183,8 +211,8 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
     valid_targets = [uid for uid in target_ids if uid != author_id]
     self_dropped = len(target_ids) - len(valid_targets)
 
-    recorded = 0
-    cooldown_hit = 0
+    recorded_ids = []
+    cooldown_ids = []
 
     for target_id in valid_targets:
         record = get_user_record(data, target_id, category)
@@ -194,7 +222,7 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
             if last:
                 last_dt = datetime.fromisoformat(last)
                 if (when - last_dt).total_seconds() < cooldown:
-                    cooldown_hit += 1
+                    cooldown_ids.append(target_id)
                     continue
 
         record["total_points"] += points
@@ -207,9 +235,9 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
             "points": points,
             "time": when.isoformat(),
         })
-        recorded += 1
+        recorded_ids.append(target_id)
 
-    return recorded, cooldown_hit, self_dropped
+    return recorded_ids, cooldown_ids, self_dropped
 
 
 # ─────────────────────────────────────────────────────────────
@@ -274,6 +302,66 @@ async def refresh_live_leaderboards():
 
 
 # ─────────────────────────────────────────────────────────────
+# AUDIT LOG
+# ─────────────────────────────────────────────────────────────
+
+async def log_audit(text):
+    channel = bot.get_channel(AUDIT_LOG_CHANNEL_ID)
+    if channel is None:
+        return
+    try:
+        await channel.send(text)
+    except discord.HTTPException:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────
+# ROLE LADDER
+# ─────────────────────────────────────────────────────────────
+
+async def update_role_for_user(guild, user_id, category):
+    """Assigns the correct rank role for a user in a category with a role ladder."""
+    if guild is None or category not in ROLE_THRESHOLDS:
+        return
+
+    data = load_data()
+    record = data.get(str(user_id), {}).get(category)
+    points = record["total_points"] if record else 0
+
+    thresholds = ROLE_THRESHOLDS[category]
+    achieved_role_name = thresholds[0][1]
+    for threshold, role_name in thresholds:
+        if points >= threshold:
+            achieved_role_name = role_name
+
+    member = guild.get_member(user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return
+        except discord.HTTPException:
+            return
+
+    category_role_names = {name for _, name in thresholds}
+    roles_to_remove = [r for r in member.roles if r.name in category_role_names and r.name != achieved_role_name]
+    role_to_add = discord.utils.get(guild.roles, name=achieved_role_name)
+
+    try:
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove, reason="Vouch rank update")
+        if role_to_add and role_to_add not in member.roles:
+            await member.add_roles(role_to_add, reason="Vouch rank update")
+    except discord.Forbidden:
+        await log_audit(
+            f"⚠️ Couldn't update rank role for <@{user_id}> — check the bot's role is above "
+            f"the `{achieved_role_name}` role and has Manage Roles permission."
+        )
+    except discord.HTTPException:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
 
@@ -301,8 +389,9 @@ async def on_message(message):
         return
 
     data = load_data()
-    recorded = cooldown_hit = self_dropped = 0
+    recorded_ids, cooldown_ids, self_dropped = [], [], 0
     handled = False
+    event_name = None
 
     if category == "pve":
         match = PVE_VOUCH_PATTERN.match(message.content)
@@ -315,7 +404,7 @@ async def on_message(message):
             if event_name is None:
                 await message.add_reaction("❌")
                 return
-            recorded, cooldown_hit, self_dropped = record_vouch(
+            recorded_ids, cooldown_ids, self_dropped = record_vouch(
                 data, target_ids, message.author.id, "pve", event_name
             )
     else:
@@ -324,24 +413,34 @@ async def on_message(message):
             handled = True
             phrase = normalize(match.group(1))
             mentions_block = match.group(2)
-            evt_category, event_name = PHRASE_ALIASES[phrase]
+            category, event_name = PHRASE_ALIASES[phrase]
             target_ids = [int(uid) for uid in MENTION_PATTERN.findall(mentions_block)]
-            recorded, cooldown_hit, self_dropped = record_vouch(
-                data, target_ids, message.author.id, evt_category, event_name
+            recorded_ids, cooldown_ids, self_dropped = record_vouch(
+                data, target_ids, message.author.id, category, event_name
             )
 
     if handled:
         save_data(data)
-        if self_dropped and recorded == 0 and cooldown_hit == 0:
+
+        if self_dropped and not recorded_ids and not cooldown_ids:
             await message.add_reaction("🚫")
             return
         if self_dropped:
             await message.add_reaction("🚫")
-        if cooldown_hit:
+        if cooldown_ids:
             await message.add_reaction("⏳")
-        if recorded:
+
+        if recorded_ids:
             await message.add_reaction("✅")
+            points = CATEGORY_EVENTS[category][event_name]["points"]
+            targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
+            await log_audit(
+                f"✅ **{CATEGORY_NAMES[category]} — {event_name}** (+{points} pts each)\n"
+                f"By: <@{message.author.id}> → {targets_str}"
+            )
             await refresh_live_leaderboards()
+            for target_id in recorded_ids:
+                await update_role_for_user(message.guild, target_id, category)
         return
 
     await bot.process_commands(message)
@@ -481,6 +580,12 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
     })
     save_data(data)
     await refresh_live_leaderboards()
+    await update_role_for_user(ctx.guild, member.id, category)
+
+    await log_audit(
+        f"🛠️ **Backfill** — {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"(+{points * count} pts) by <@{ctx.author.id}>"
+    )
 
     await ctx.send(
         f"✅ Backfilled **{count}x {event_name}** ({CATEGORY_NAMES[category]}) for {member.display_name} "
@@ -530,8 +635,8 @@ async def syncvouches(ctx):
                 event_name = parse_pve_event(match.group(2))
                 if event_name is None:
                     continue
-                r, _, _ = record_vouch(new_data, target_ids, msg.author.id, "pve", event_name, when)
-                recorded_total += r
+                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, "pve", event_name, when)
+                recorded_total += len(recorded_ids)
             else:
                 match = PHRASE_VOUCH_PATTERN.match(msg.content)
                 if not match:
@@ -539,11 +644,24 @@ async def syncvouches(ctx):
                 phrase = normalize(match.group(1))
                 evt_category, event_name = PHRASE_ALIASES[phrase]
                 target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
-                r, _, _ = record_vouch(new_data, target_ids, msg.author.id, evt_category, event_name, when)
-                recorded_total += r
+                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, evt_category, event_name, when)
+                recorded_total += len(recorded_ids)
 
     save_data(new_data)
     await refresh_live_leaderboards()
+
+    for uid, rec in new_data.items():
+        if not uid.isdigit():
+            continue
+        for cat in ROLE_THRESHOLDS:
+            if cat in rec:
+                await update_role_for_user(ctx.guild, int(uid), cat)
+
+    await log_audit(
+        f"🔄 **Sync** — scanned {scanned} messages, recorded {recorded_total} vouches "
+        f"across {len(new_data)} users, run by <@{ctx.author.id}>"
+    )
+
     await status.edit(
         content=f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches across {len(new_data)} users."
     )
