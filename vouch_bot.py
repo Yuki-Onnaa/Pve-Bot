@@ -448,6 +448,36 @@ async def on_message(message):
 
 
 # ─────────────────────────────────────────────────────────────
+# RANK PROGRESS HELPERS
+# ─────────────────────────────────────────────────────────────
+
+def get_rank_progress(points, thresholds):
+    """Returns (current_role, current_threshold, next_role, next_threshold)."""
+    current_role, current_threshold = thresholds[0][1], thresholds[0][0]
+    next_role, next_threshold = None, None
+    for i, (threshold, role_name) in enumerate(thresholds):
+        if points >= threshold:
+            current_role, current_threshold = role_name, threshold
+            if i + 1 < len(thresholds):
+                next_threshold, next_role = thresholds[i + 1]
+            else:
+                next_threshold, next_role = None, None
+        else:
+            break
+    return current_role, current_threshold, next_role, next_threshold
+
+
+def progress_bar(points, current_threshold, next_threshold, length=10):
+    if next_threshold is None:
+        return "█" * length
+    span = next_threshold - current_threshold
+    progressed = points - current_threshold
+    frac = max(0, min(1, progressed / span)) if span > 0 else 1
+    filled = round(frac * length)
+    return "█" * filled + "░" * (length - filled)
+
+
+# ─────────────────────────────────────────────────────────────
 # COMMANDS
 # ─────────────────────────────────────────────────────────────
 
@@ -473,6 +503,100 @@ async def send_leaderboard(ctx, category, top_n=10):
         lines.append(f"{i}. {name} — {pts} pts ({cnt} vouches)")
 
     await ctx.send(f"**🏆 {CATEGORY_NAMES[category]} Leaderboard**\n" + "\n".join(lines))
+
+
+def make_progress_bar(current, low, high, length=10):
+    if high <= low:
+        filled = length
+    else:
+        frac = max(0, min(1, (current - low) / (high - low)))
+        filled = round(frac * length)
+    return "▰" * filled + "▱" * (length - filled)
+
+
+@bot.command(name="profile")
+async def profile(ctx, member: discord.Member = None):
+    """Shows a combined profile card: rank, points, and progress to next rank. Usage: ?profile [@user]"""
+    member = member or ctx.author
+    data = load_data()
+    user_data = data.get(str(member.id), {})
+
+    embed = discord.Embed(title=f"{member.display_name}'s Vouch Profile", color=discord.Color.gold())
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    for cat in CATEGORY_EVENTS:
+        record = user_data.get(cat)
+        points = record["total_points"] if record else 0
+        vouch_count = record["total_vouches"] if record else 0
+
+        if cat in ROLE_THRESHOLDS:
+            thresholds = ROLE_THRESHOLDS[cat]
+            achieved_idx = 0
+            for i, (thresh, _) in enumerate(thresholds):
+                if points >= thresh:
+                    achieved_idx = i
+            current_role = thresholds[achieved_idx][1]
+
+            if achieved_idx + 1 < len(thresholds):
+                low = thresholds[achieved_idx][0]
+                next_thresh, next_role = thresholds[achieved_idx + 1]
+                bar = make_progress_bar(points, low, next_thresh)
+                remaining = next_thresh - points
+                value = (
+                    f"**{current_role}**\n"
+                    f"{points} pts ({vouch_count} vouches)\n"
+                    f"{bar}\n"
+                    f"{remaining} pts to **{next_role}**"
+                )
+            else:
+                value = f"**{current_role}** 👑 (max rank)\n{points} pts ({vouch_count} vouches)"
+        else:
+            value = f"{points} pts ({vouch_count} vouches)"
+
+        embed.add_field(name=CATEGORY_NAMES[cat], value=value, inline=False)
+
+    total = combined_total(user_data)
+    embed.set_footer(text=f"{total} pts combined across all categories")
+
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="profile")
+async def profile(ctx, member: discord.Member = None):
+    """Shows a combined profile card with points, rank, and progress to next rank. Usage: ?profile [@user]"""
+    member = member or ctx.author
+    data = load_data()
+    user_data = data.get(str(member.id), {})
+
+    total = combined_total(user_data)
+    embed = discord.Embed(
+        title=f"{member.display_name}'s Vouch Profile",
+        description=f"**{total} total points**",
+        color=discord.Color.gold(),
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    for cat in CATEGORY_EVENTS:
+        record = user_data.get(cat, {})
+        pts = record.get("total_points", 0)
+        cnt = record.get("total_vouches", 0)
+
+        if cat in ROLE_THRESHOLDS:
+            thresholds = ROLE_THRESHOLDS[cat]
+            current_role, current_threshold, next_role, next_threshold = get_rank_progress(pts, thresholds)
+            bar = progress_bar(pts, current_threshold, next_threshold)
+            if next_role:
+                remaining = next_threshold - pts
+                progress_line = f"{bar}\n{pts}/{next_threshold} pts — {remaining} to **{next_role}**"
+            else:
+                progress_line = f"{bar}\nMax rank reached! 🎉"
+            value = f"**Rank:** {current_role}\n**Points:** {pts} ({cnt} vouches)\n{progress_line}"
+        else:
+            value = f"**Points:** {pts} ({cnt} vouches)"
+
+        embed.add_field(name=CATEGORY_NAMES[cat], value=value, inline=False)
+
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="leaderboard")
@@ -635,6 +759,11 @@ async def backfillhistory(ctx, category: str, member: discord.Member):
     await ctx.send(
         f"**Recent {CATEGORY_NAMES[category]} backfills for {member.display_name}**\n" + "\n".join(lines)
     )
+
+
+@backfillhistory.error
+async def backfillhistory_error(ctx, error):
+    await ctx.send("⚠️ Usage: `?backfillhistory <pve|security|support> @user`")
 
 
 @bot.command(name="revertbackfill", aliases=["undobackfill"])

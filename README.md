@@ -72,12 +72,24 @@ Instead of replying with a message, the bot reacts on the vouch message:
 
 - `?vouches @user [pve|security|support]` — shows totals; with no category,
   shows a combined summary across all three
+- `?profile [@user]` — a combined profile card showing total points, rank,
+  and a progress bar toward the next rank for Host and Support (Security
+  has no rank ladder, so it just shows points). Defaults to your own
+  profile if no user is mentioned.
 - `?leaderboard [n]` — Host (PVE) leaderboard
 - `?sleaderboard [n]` — Security leaderboard
 - `?suleaderboard [n]` — Support leaderboard
 - `?addvouch <pve|security|support> @user <event> [count]` (alias `?backfill`)
   — manually records historical vouches. Requires Manage Server permission.
   Example: `?addvouch security "Security Vouch" 3`
+- `?backfillhistory <pve|security|support> @user` — lists that user's recent
+  backfill entries with their IDs, so you can find one to revert. Requires
+  Manage Server permission.
+- `?revertbackfill <pve|security|support> @user [log_id]` (alias
+  `?undobackfill`) — undoes a backfilled vouch. Leave off `log_id` to
+  revert the most recent backfill for that user/category, or pass an ID
+  from `?backfillhistory` to revert a specific one. Requires Manage Server
+  permission.
 - `?syncvouches` (alias `?scanhistory`) — scans the full history of all
   three vouch channels and rebuilds all vouch data from scratch. Requires
   Manage Server permission. Run this after setup or whenever data resets.
@@ -90,6 +102,48 @@ created the first time the bot starts up, and refresh automatically
 whenever a new vouch is recorded — no need to keep running `?leaderboard`
 manually. If those messages ever get deleted, just restart the bot and
 they'll be recreated.
+
+## Audit log
+
+Every recorded vouch, backfill, and sync gets logged to channel
+`1530317395669815438` — who vouched whom, for what, and how many points.
+Useful for catching disputes or abuse after the fact.
+
+## Auto rank roles
+
+The bot automatically assigns a rank role based on total points, and
+removes the previous rank when someone levels up. **The role names below
+must already exist in your server exactly as written** (case-sensitive) —
+the bot only assigns existing roles, it doesn't create them.
+
+**Host (PVE) points:**
+| Role              | Points |
+|-------------------|--------|
+| Apprentice Hoster  | 0      |
+| Skilled Hoster     | 150    |
+| Master Hoster      | 350    |
+| Divine Hoster      | 750    |
+| Godlike Hoster     | 1250   |
+| True Hoster        | 2000   |
+| No Life Hoster     | 3500   |
+| Absolute Being     | 5000   |
+
+**Support points:**
+| Role                | Points |
+|----------------------|--------|
+| Guardian Link         | 0      |
+| Vigor Warden          | 15     |
+| Soul Reliefer         | 45     |
+| Graceful Commander    | 100    |
+| Hero Of Events        | 200    |
+
+Security has no rank ladder configured yet — only Host and Support have
+role rewards right now.
+
+**Important:** the bot's own role in your server must be positioned
+*above* all of these rank roles in Role Settings, and the bot needs
+**Manage Roles** permission — otherwise Discord won't let it assign them,
+and it'll post a warning in the audit log channel when that happens.
 
 ## Persistent storage (important)
 
