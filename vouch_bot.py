@@ -21,13 +21,18 @@ PVE_CHANNEL_ID = 1529113596657799178
 SECURITY_CHANNEL_ID = 1527834552150659103
 SUPPORT_CHANNEL_ID = 1527834504658550924
 
+# Channel where the 3 live, auto-updating leaderboards get posted
+LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
+
 CHANNEL_CATEGORY = {
     PVE_CHANNEL_ID: "pve",
     SECURITY_CHANNEL_ID: "security",
     SUPPORT_CHANNEL_ID: "support",
 }
 
-# ── PVE events (format: "vouch @user <event>") ──
+CATEGORY_NAMES = {"pve": "Host", "security": "Security", "support": "Support"}
+
+# ── PVE / Host events (format: "vouch @user <event>") ──
 PVE_EVENTS = {
     "Enmity": {"points": 1.5, "cooldown": 0},
     "Elder": {"points": 2, "cooldown": 0},
@@ -99,7 +104,6 @@ PHRASE_ALIASES = {
     "backup vouch": ("support", "Backup Vouch"),
     "depths safe vouch": ("support", "Depths Safe Vouch"),
 }
-# Sort longest-phrase-first so "depths defense vouch" matches before "depths vouch"
 _SORTED_PHRASES = sorted(PHRASE_ALIASES.keys(), key=len, reverse=True)
 _PHRASE_PATTERN = "|".join(re.escape(p) for p in _SORTED_PHRASES)
 PHRASE_VOUCH_PATTERN = re.compile(
@@ -138,7 +142,6 @@ def get_user_record(data, user_id, category):
             "cooldowns": {},
             "log": [],
         }
-    # Backfill any newly added event keys
     for e in CATEGORY_EVENTS[category]:
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
@@ -146,6 +149,13 @@ def get_user_record(data, user_id, category):
 
 def combined_total(user_data):
     return sum(user_data.get(cat, {}).get("total_points", 0) for cat in CATEGORY_EVENTS)
+
+
+def user_records(data):
+    """Yield only real user records, skipping internal bookkeeping keys."""
+    for uid, rec in data.items():
+        if uid.isdigit():
+            yield uid, rec
 
 
 # ─────────────────────────────────────────────────────────────
@@ -165,10 +175,6 @@ def parse_pve_event(text):
 # ─────────────────────────────────────────────────────────────
 
 def record_vouch(data, target_ids, author_id, category, event_name, when=None):
-    """
-    Records a vouch for each target (skipping the author and anyone on cooldown).
-    Returns (recorded_count, cooldown_count, self_dropped_count).
-    """
     when = when or datetime.now(timezone.utc)
     cfg = CATEGORY_EVENTS[category][event_name]
     points = cfg["points"]
@@ -207,6 +213,67 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
 
 
 # ─────────────────────────────────────────────────────────────
+# LIVE LEADERBOARDS
+# ─────────────────────────────────────────────────────────────
+
+def build_leaderboard_lines(data, category, n=10):
+    ranked = sorted(
+        user_records(data),
+        key=lambda kv: kv[1].get(category, {}).get("total_points", 0),
+        reverse=True,
+    )
+    ranked = [(uid, rec) for uid, rec in ranked if rec.get(category, {}).get("total_points", 0) > 0][:n]
+    lines = []
+    for i, (uid, rec) in enumerate(ranked, start=1):
+        pts = rec[category]["total_points"]
+        cnt = rec[category]["total_vouches"]
+        lines.append(f"**{i}.** <@{uid}> — {pts} pts ({cnt} vouches)")
+    return lines
+
+
+async def refresh_live_leaderboards():
+    channel = bot.get_channel(LIVE_LEADERBOARD_CHANNEL_ID)
+    if channel is None:
+        return
+
+    data = load_data()
+    meta = data.get("_live_messages", {})
+    changed = False
+
+    for cat in CATEGORY_EVENTS:
+        lines = build_leaderboard_lines(data, cat, 10)
+        embed = discord.Embed(
+            title=f"🏆 {CATEGORY_NAMES[cat]} Leaderboard",
+            description="\n".join(lines) if lines else "No vouches yet.",
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+
+        msg_id = meta.get(cat)
+        msg = None
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(msg_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                msg = None
+
+        if msg:
+            try:
+                await msg.edit(embed=embed)
+            except discord.HTTPException:
+                msg = None
+
+        if not msg:
+            new_msg = await channel.send(embed=embed)
+            meta[cat] = new_msg.id
+            changed = True
+
+    if changed:
+        data["_live_messages"] = meta
+        save_data(data)
+
+
+# ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
 
@@ -220,6 +287,7 @@ bot = commands.Bot(command_prefix="?", intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
+    await refresh_live_leaderboards()
 
 
 @bot.event
@@ -273,6 +341,7 @@ async def on_message(message):
             await message.add_reaction("⏳")
         if recorded:
             await message.add_reaction("✅")
+            await refresh_live_leaderboards()
         return
 
     await bot.process_commands(message)
@@ -282,7 +351,46 @@ async def on_message(message):
 # COMMANDS
 # ─────────────────────────────────────────────────────────────
 
-CATEGORY_NAMES = {"pve": "PVE", "security": "Security", "support": "Support"}
+async def send_leaderboard(ctx, category, top_n=10):
+    data = load_data()
+    ranked = sorted(
+        user_records(data),
+        key=lambda kv: kv[1].get(category, {}).get("total_points", 0),
+        reverse=True,
+    )
+    ranked = [(uid, rec) for uid, rec in ranked if rec.get(category, {}).get("total_points", 0) > 0][:top_n]
+
+    if not ranked:
+        await ctx.send(f"No {CATEGORY_NAMES[category]} vouches recorded yet.")
+        return
+
+    lines = []
+    for i, (uid, rec) in enumerate(ranked, start=1):
+        member = ctx.guild.get_member(int(uid)) if ctx.guild else None
+        name = member.display_name if member else f"<@{uid}>"
+        pts = rec[category]["total_points"]
+        cnt = rec[category]["total_vouches"]
+        lines.append(f"{i}. {name} — {pts} pts ({cnt} vouches)")
+
+    await ctx.send(f"**🏆 {CATEGORY_NAMES[category]} Leaderboard**\n" + "\n".join(lines))
+
+
+@bot.command(name="leaderboard")
+async def leaderboard(ctx, top_n: int = 10):
+    """Host/PVE leaderboard. Usage: ?leaderboard [n]"""
+    await send_leaderboard(ctx, "pve", top_n)
+
+
+@bot.command(name="sleaderboard")
+async def sleaderboard(ctx, top_n: int = 10):
+    """Security leaderboard. Usage: ?sleaderboard [n]"""
+    await send_leaderboard(ctx, "security", top_n)
+
+
+@bot.command(name="suleaderboard")
+async def suleaderboard(ctx, top_n: int = 10):
+    """Support leaderboard. Usage: ?suleaderboard [n]"""
+    await send_leaderboard(ctx, "support", top_n)
 
 
 @bot.command(name="vouches")
@@ -312,7 +420,6 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
         )
         return
 
-    # No category given: show summary across all three
     total = combined_total(user_data)
     if total == 0:
         await ctx.send(f"{member.display_name} has no vouches yet.")
@@ -326,60 +433,10 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
     await ctx.send("\n".join(lines))
 
 
-@bot.command(name="leaderboard")
-async def leaderboard(ctx, *args):
-    """Usage: ?leaderboard [pve|security|support] [n]"""
-    category = None
-    top_n = 10
-    for a in args:
-        if a.lower() in CATEGORY_EVENTS:
-            category = a.lower()
-        elif a.isdigit():
-            top_n = int(a)
-
-    data = load_data()
-    if not data:
-        await ctx.send("No vouches recorded yet.")
-        return
-
-    if category:
-        ranked = sorted(
-            data.items(),
-            key=lambda kv: kv[1].get(category, {}).get("total_points", 0),
-            reverse=True,
-        )
-        ranked = [(uid, rec) for uid, rec in ranked if rec.get(category, {}).get("total_points", 0) > 0][:top_n]
-        title = f"🏆 {CATEGORY_NAMES[category]} Leaderboard"
-        lines = []
-        for i, (uid, rec) in enumerate(ranked, start=1):
-            member = ctx.guild.get_member(int(uid)) if ctx.guild else None
-            name = member.display_name if member else f"<@{uid}>"
-            pts = rec.get(category, {}).get("total_points", 0)
-            n = rec.get(category, {}).get("total_vouches", 0)
-            lines.append(f"{i}. {name} — {pts} pts ({n} vouches)")
-    else:
-        ranked = sorted(data.items(), key=lambda kv: combined_total(kv[1]), reverse=True)
-        ranked = [(uid, rec) for uid, rec in ranked if combined_total(rec) > 0][:top_n]
-        title = "🏆 Overall Vouch Leaderboard"
-        lines = []
-        for i, (uid, rec) in enumerate(ranked, start=1):
-            member = ctx.guild.get_member(int(uid)) if ctx.guild else None
-            name = member.display_name if member else f"<@{uid}>"
-            lines.append(f"{i}. {name} — {combined_total(rec)} pts")
-
-    if not lines:
-        await ctx.send("No vouches recorded yet.")
-        return
-    await ctx.send(f"**{title}**\n" + "\n".join(lines))
-
-
 @bot.command(name="addvouch", aliases=["backfill"])
 @commands.has_permissions(manage_guild=True)
 async def addvouch(ctx, category: str, member: discord.Member, *, event_and_count: str):
-    """
-    Manually record old vouches. Usage: ?addvouch <pve|security|support> @user <event> [count]
-    Example: ?addvouch security "Security Vouch" 3
-    """
+    """Usage: ?addvouch <pve|security|support> @user <event> [count]"""
     category = category.lower()
     if category not in CATEGORY_EVENTS:
         await ctx.send("⚠️ Category must be one of: pve, security, support")
@@ -423,6 +480,7 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
         "time": datetime.now(timezone.utc).isoformat(),
     })
     save_data(data)
+    await refresh_live_leaderboards()
 
     await ctx.send(
         f"✅ Backfilled **{count}x {event_name}** ({CATEGORY_NAMES[category]}) for {member.display_name} "
@@ -485,6 +543,7 @@ async def syncvouches(ctx):
                 recorded_total += r
 
     save_data(new_data)
+    await refresh_live_leaderboards()
     await status.edit(
         content=f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches across {len(new_data)} users."
     )

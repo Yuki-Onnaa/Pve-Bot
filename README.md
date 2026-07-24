@@ -1,12 +1,10 @@
 # Vouch Counter Discord Bot
 
-Counts vouches by watching for messages like:
+Tracks three separate vouch categories, each in its own channel.
 
-    vouch @username Elder
-    vouch @username Hellmode
-    vouch @username Diluvian W (25)
+## PVE (channel: 1529113596657799178)
 
-Each vouch is worth points based on event type:
+Format: `vouch @user1 @user2 ... <event>`
 
 | Event              | Points |
 |--------------------|--------|
@@ -22,43 +20,81 @@ Each vouch is worth points based on event type:
 | Layer 2 (2)        | 7      |
 | Other Bosses       | 1      |
 
-Matching is case-insensitive and flexible with spacing (e.g. "hell mode",
-"hellmode", "Hell Mode" all work; "diluvian w 25" and "diluvian w (25)" both work).
+No cooldown — vouch as often as needed.
+
+## Security (channel: 1527834552150659103)
+
+Format: `<event> @user1 @user2 ...`
+
+| Command                  | Points | Cooldown |
+|---------------------------|--------|----------|
+| `security vouch @user`    | 1      | 1 hour   |
+| `depths vouch @user`      | 1.5    | 1 hour   |
+| `defense vouch @user`     | 1      | none     |
+| `depths defense vouch @user` | 1.5 | none     |
+
+## Support (channel: 1527834504658550924)
+
+Format: `<event> @user1 @user2 ...`
+
+| Command                     | Points | Cooldown |
+|-------------------------------|--------|----------|
+| `support vouch @user`         | 1      | 1 hour   |
+| `backup vouch @user`          | 2      | 1 hour   |
+| `depths safe vouch @user`     | 5      | 1 hour   |
+
+Cooldowns are per-target, per-event-type: if someone already received that
+specific vouch type within the last hour, further vouches of that type for
+them are skipped (bot reacts ⏳) until the cooldown clears. Defense-type
+vouches have no cooldown, since multiple ganks can happen back to back.
+
+## Reactions
+
+Instead of replying with a message, the bot reacts on the vouch message:
+- ✅ = at least one vouch recorded
+- ⏳ = at least one target was skipped due to being on cooldown for that event
+- 🚫 = you tried to vouch yourself (shown with ✅ if you also vouched others)
+- ❌ = (PVE only) event type wasn't recognized
 
 ## Setup
 
 1. Create a bot at https://discord.com/developers/applications
-   - Go to "Bot" tab, click "Add Bot"
-   - Under "Privileged Gateway Intents", turn ON **Message Content Intent**
-   - Copy the bot token (keep it secret!)
-2. Invite the bot to your server using the OAuth2 URL generator
-   (scope: `bot`; permissions: Send Messages, Read Message History, View Channels, Embed Links)
-3. Install dependencies:
-       pip install -r requirements.txt
-4. Set your token as an environment variable (don't paste it into the code):
-       export DISCORD_TOKEN="your_token_here"
-5. Run it:
-       python vouch_bot.py
+   - "Bot" tab → Add Bot
+   - Turn ON **Message Content Intent**
+   - Copy the bot token
+2. Invite it with scope `bot` and permissions: Send Messages, Read Message
+   History, View Channels, Add Reactions
+3. `pip install -r requirements.txt`
+4. Set your token: `export DISCORD_TOKEN="your_token_here"`
+5. Run: `python vouch_bot.py`
 
 ## Commands
 
-- `vouch @user <event>` — records a vouch (typed as a normal message in the vouch channel).
-  The bot reacts instead of replying with a message:
-  - ✅ = recorded successfully
-  - ❌ = event type not recognized
-  - 🚫 = tried to vouch for yourself
-- `?vouches @user` — shows someone's point total and breakdown by event type
-- `?leaderboard [n]` — shows the top n vouched users by points (default 10)
-- `?addvouch @user <event> [count]` (alias: `?backfill`) — manually records old/historical
-  vouches that weren't originally logged by the bot. Requires Manage Server permission.
-  Example: `?addvouch @Nico Hellmode 3` adds 3 Hellmode vouches at once.
+- `?vouches @user [pve|security|support]` — shows totals; with no category,
+  shows a combined summary across all three
+- `?leaderboard [n]` — Host (PVE) leaderboard
+- `?sleaderboard [n]` — Security leaderboard
+- `?suleaderboard [n]` — Support leaderboard
+- `?addvouch <pve|security|support> @user <event> [count]` (alias `?backfill`)
+  — manually records historical vouches. Requires Manage Server permission.
+  Example: `?addvouch security "Security Vouch" 3`
+- `?syncvouches` (alias `?scanhistory`) — scans the full history of all
+  three vouch channels and rebuilds all vouch data from scratch. Requires
+  Manage Server permission. Run this after setup or whenever data resets.
 
-## Data storage
+## Live leaderboards
 
-Vouch data is saved to `vouches.json` in the same folder, so it persists
-across bot restarts. Back this file up if you move hosts.
+The bot automatically posts and maintains 3 live-updating leaderboard
+embeds (Host, Security, Support) in channel `1530286316628217906`. They're
+created the first time the bot starts up, and refresh automatically
+whenever a new vouch is recorded — no need to keep running `?leaderboard`
+manually. If those messages ever get deleted, just restart the bot and
+they'll be recreated.
 
-## Restricting to one channel
+## Persistent storage (important)
 
-The bot only reads vouch messages from the channel ID set in `VOUCH_CHANNEL_ID`
-near the top of `vouch_bot.py`. Set it to `None` to watch every channel instead.
+Railway wipes its normal filesystem on every redeploy. Attach a **Volume**
+mounted at `/data` (service → ⋯ menu → Attach volume) so `vouches.json`
+survives redeploys and restarts. The bot already reads/writes there by
+default. After attaching the volume, run `?syncvouches` once to recover any
+history from before it was added.
