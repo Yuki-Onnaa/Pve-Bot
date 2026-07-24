@@ -621,9 +621,16 @@ async def backfillhistory(ctx, category: str, member: discord.Member):
         return
 
     lines = []
-    for e in entries[-15:][::-1]:
+    for idx, e in list(enumerate(record["log"]))[-15:][::-1]:
+        if not e.get("backfilled"):
+            continue
+        ref = e.get("id") or f"idx{idx}"
         ts = e["time"][:16].replace("T", " ")
-        lines.append(f"`{e['id']}` — {e.get('count', 1)}x {e['event']} (+{e['points']} pts) by <@{e['by']}> · {ts}")
+        lines.append(f"`{ref}` — {e.get('count', 1)}x {e['event']} (+{e['points']} pts) by <@{e['by']}> · {ts}")
+
+    if not lines:
+        await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} backfill entries.")
+        return
 
     await ctx.send(
         f"**Recent {CATEGORY_NAMES[category]} backfills for {member.display_name}**\n" + "\n".join(lines)
@@ -654,7 +661,8 @@ async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str
 
     if log_id:
         for i, e in enumerate(record["log"]):
-            if e.get("id") == log_id:
+            ref = e.get("id") or f"idx{i}"
+            if ref == log_id:
                 entry = e
                 entry_index = i
                 break
