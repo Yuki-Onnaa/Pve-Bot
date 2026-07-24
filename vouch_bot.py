@@ -18,7 +18,9 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # Set to None to watch every channel the bot can see.
 VOUCH_CHANNEL_ID = 1529113596657799178
 
-DATA_FILE = "vouches.json"
+# Where vouch data is stored. On Railway, mount a Volume and point this at it
+# (e.g. "/data/vouches.json") so data survives redeploys — see README for setup.
+DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
 
 # Canonical event names -> point values
 EVENT_POINTS = {
@@ -76,6 +78,7 @@ def load_data():
 
 
 def save_data(data):
+    os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -275,6 +278,82 @@ async def addvouch_error(ctx, error):
         await ctx.send("⚠️ Couldn't find that member.")
     else:
         await ctx.send(f"⚠️ Usage: `?addvouch @user <event> [count]`")
+
+
+@bot.command(name="syncvouches", aliases=["scanhistory"])
+@commands.has_permissions(manage_guild=True)
+async def syncvouches(ctx):
+    """
+    Scan the vouch channel's full message history and rebuild vouch data
+    from every valid 'vouch @user(s) <event>' message ever sent.
+    This OVERWRITES current data with what's found in the channel history.
+    Requires Manage Server permission.
+    """
+    channel = ctx.guild.get_channel(VOUCH_CHANNEL_ID) if VOUCH_CHANNEL_ID else ctx.channel
+    if channel is None:
+        await ctx.send("⚠️ Couldn't find the configured vouch channel.")
+        return
+
+    status = await ctx.send(f"🔄 Scanning #{channel.name} for past vouches... this may take a bit.")
+
+    new_data = {}
+    scanned = 0
+    recorded = 0
+
+    async for msg in channel.history(limit=None, oldest_first=True):
+        scanned += 1
+        if msg.author.bot:
+            continue
+
+        match = VOUCH_PATTERN.match(msg.content)
+        if not match:
+            continue
+
+        mentions_block = match.group(1)
+        event_text = match.group(2)
+        target_ids = [int(uid) for uid in MENTION_PATTERN.findall(mentions_block)]
+
+        event_name = parse_event(event_text)
+        if event_name is None:
+            continue
+
+        valid_targets = [uid for uid in target_ids if uid != msg.author.id]
+        if not valid_targets:
+            continue
+
+        points = EVENT_POINTS[event_name]
+
+        for target_id in valid_targets:
+            record = get_user_record(new_data, target_id)
+            record["total_points"] += points
+            record["total_vouches"] += 1
+            record["events"][event_name] += 1
+            record["log"].append({
+                "by": msg.author.id,
+                "by_name": str(msg.author),
+                "event": event_name,
+                "points": points,
+                "time": msg.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                "message_id": msg.id,
+            })
+            recorded += 1
+
+    save_data(new_data)
+
+    await status.edit(
+        content=(
+            f"✅ Sync complete. Scanned {scanned} messages, "
+            f"found {recorded} valid vouches across {len(new_data)} users."
+        )
+    )
+
+
+@syncvouches.error
+async def syncvouches_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to sync vouch history.")
+    else:
+        await ctx.send(f"⚠️ Sync failed: {error}")
 
 
 @bot.command(name="leaderboard")
