@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 
 import discord
@@ -574,6 +575,7 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
     record["total_vouches"] += count
     record["events"][event_name] += count
     record["log"].append({
+        "id": uuid.uuid4().hex[:8],
         "by": ctx.author.id, "event": event_name, "points": points * count,
         "count": count, "backfilled": True,
         "time": datetime.now(timezone.utc).isoformat(),
@@ -599,6 +601,109 @@ async def addvouch_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to backfill vouches.")
     else:
         await ctx.send("⚠️ Usage: `?addvouch <pve|security|support> @user <event> [count]`")
+
+
+@bot.command(name="backfillhistory")
+@commands.has_permissions(manage_guild=True)
+async def backfillhistory(ctx, category: str, member: discord.Member):
+    """List recent backfills for a user so you can find the ID to revert. Usage: ?backfillhistory <pve|security|support> @user"""
+    category = category.lower()
+    if category not in CATEGORY_EVENTS:
+        await ctx.send("⚠️ Category must be one of: pve, security, support")
+        return
+
+    data = load_data()
+    record = data.get(str(member.id), {}).get(category)
+    entries = [e for e in (record["log"] if record else []) if e.get("backfilled")]
+
+    if not entries:
+        await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} backfill entries.")
+        return
+
+    lines = []
+    for e in entries[-15:][::-1]:
+        ts = e["time"][:16].replace("T", " ")
+        lines.append(f"`{e['id']}` — {e.get('count', 1)}x {e['event']} (+{e['points']} pts) by <@{e['by']}> · {ts}")
+
+    await ctx.send(
+        f"**Recent {CATEGORY_NAMES[category]} backfills for {member.display_name}**\n" + "\n".join(lines)
+    )
+
+
+@bot.command(name="revertbackfill", aliases=["undobackfill"])
+@commands.has_permissions(manage_guild=True)
+async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str = None):
+    """
+    Undo a backfilled vouch. Usage: ?revertbackfill <pve|security|support> @user [log_id]
+    Omit log_id to revert the most recent backfill for that user/category.
+    Use ?backfillhistory to look up log IDs.
+    """
+    category = category.lower()
+    if category not in CATEGORY_EVENTS:
+        await ctx.send("⚠️ Category must be one of: pve, security, support")
+        return
+
+    data = load_data()
+    record = data.get(str(member.id), {}).get(category)
+    if not record or not record["log"]:
+        await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} vouch history to revert.")
+        return
+
+    entry = None
+    entry_index = None
+
+    if log_id:
+        for i, e in enumerate(record["log"]):
+            if e.get("id") == log_id:
+                entry = e
+                entry_index = i
+                break
+        if entry is None:
+            await ctx.send(f"⚠️ Couldn't find a log entry with id `{log_id}` for {member.display_name}.")
+            return
+        if not entry.get("backfilled"):
+            await ctx.send("⚠️ That entry wasn't a backfill — only backfilled entries can be reverted with this command.")
+            return
+    else:
+        for i in range(len(record["log"]) - 1, -1, -1):
+            if record["log"][i].get("backfilled"):
+                entry = record["log"][i]
+                entry_index = i
+                break
+        if entry is None:
+            await ctx.send(f"⚠️ {member.display_name} has no backfilled entries to revert.")
+            return
+
+    points = entry["points"]
+    count = entry.get("count", 1)
+    event_name = entry["event"]
+
+    record["total_points"] -= points
+    record["total_vouches"] -= count
+    record["events"][event_name] = max(0, record["events"].get(event_name, 0) - count)
+    del record["log"][entry_index]
+
+    save_data(data)
+    await refresh_live_leaderboards()
+    await update_role_for_user(ctx.guild, member.id, category)
+
+    await log_audit(
+        f"↩️ **Reverted backfill** — {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"(-{points} pts) by <@{ctx.author.id}>"
+    )
+
+    await ctx.send(
+        f"✅ Reverted **{count}x {event_name}** ({CATEGORY_NAMES[category]}) for {member.display_name} "
+        f"(-{points} pts, new total: {record['total_points']} pts)"
+    )
+
+
+@revertbackfill.error
+async def revertbackfill_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to revert backfills.")
+    else:
+        await ctx.send("⚠️ Usage: `?revertbackfill <pve|security|support> @user [log_id]`")
 
 
 @bot.command(name="syncvouches", aliases=["scanhistory"])
