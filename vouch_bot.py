@@ -122,7 +122,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="?", intents=intents)
 
 
 @bot.event
@@ -149,16 +149,12 @@ async def on_message(message):
         event_name = parse_event(event_text)
 
         if event_name is None:
-            valid_list = ", ".join(ALL_EVENTS)
-            await message.channel.send(
-                f"⚠️ Couldn't recognize event type `{event_text.strip()}`. "
-                f"Valid events: {valid_list}"
-            )
+            await message.add_reaction("❌")
             return
 
         # Prevent self-vouching (optional — remove this block if not wanted)
         if target_id == message.author.id:
-            await message.channel.send("⚠️ You can't vouch for yourself.")
+            await message.add_reaction("🚫")
             return
 
         points = EVENT_POINTS[event_name]
@@ -177,13 +173,7 @@ async def on_message(message):
         })
         save_data(data)
 
-        target_member = message.guild.get_member(target_id) if message.guild else None
-        target_name = target_member.display_name if target_member else f"<@{target_id}>"
-
-        await message.channel.send(
-            f"✅ Vouch recorded for **{target_name}** — {event_name} (+{points} pts) "
-            f"(total: {record['total_points']} pts, {record['total_vouches']} vouches)"
-        )
+        await message.add_reaction("✅")
         return
 
     await bot.process_commands(message)
@@ -212,6 +202,71 @@ async def vouches(ctx, member: discord.Member = None):
         f"Total: {record['total_points']} pts across {record['total_vouches']} vouches\n"
         f"{breakdown}"
     )
+
+
+@bot.command(name="addvouch", aliases=["backfill"])
+@commands.has_permissions(manage_guild=True)
+async def addvouch(ctx, member: discord.Member, *, event_and_count: str):
+    """
+    Record old/historical vouches for a user without needing the original messages.
+    Usage: ?addvouch @user <event> [count]
+    Examples:
+      ?addvouch @user Elder
+      ?addvouch @user Hellmode 3
+    Requires Manage Server permission.
+    """
+    parts = event_and_count.strip().rsplit(" ", 1)
+    count = 1
+    event_text = event_and_count.strip()
+
+    # Check if the last word is a number (a count was provided)
+    if len(parts) == 2 and parts[1].isdigit():
+        event_text = parts[0]
+        count = int(parts[1])
+
+    event_name = parse_event(event_text)
+    if event_name is None:
+        valid_list = ", ".join(ALL_EVENTS)
+        await ctx.send(
+            f"⚠️ Couldn't recognize event type `{event_text}`. Valid events: {valid_list}"
+        )
+        return
+
+    if count < 1:
+        await ctx.send("⚠️ Count must be at least 1.")
+        return
+
+    points = EVENT_POINTS[event_name]
+    data = load_data()
+    record = get_user_record(data, member.id)
+    record["total_points"] += points * count
+    record["total_vouches"] += count
+    record["events"][event_name] += count
+    record["log"].append({
+        "by": ctx.author.id,
+        "by_name": str(ctx.author),
+        "event": event_name,
+        "points": points * count,
+        "count": count,
+        "backfilled": True,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
+    save_data(data)
+
+    await ctx.send(
+        f"✅ Backfilled **{count}x {event_name}** for {member.display_name} "
+        f"(+{points * count} pts, new total: {record['total_points']} pts)"
+    )
+
+
+@addvouch.error
+async def addvouch_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to backfill vouches.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("⚠️ Couldn't find that member.")
+    else:
+        await ctx.send(f"⚠️ Usage: `?addvouch @user <event> [count]`")
 
 
 @bot.command(name="leaderboard")
