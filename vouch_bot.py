@@ -530,6 +530,19 @@ async def fetch_wiki_context(query, max_chars=800):
     return None
 
 
+def is_chat_enabled():
+    data = load_data()
+    return data.get("_settings", {}).get("chat_enabled", True)
+
+
+def set_chat_enabled(enabled):
+    data = load_data()
+    settings = data.get("_settings", {})
+    settings["chat_enabled"] = enabled
+    data["_settings"] = settings
+    save_data(data)
+
+
 async def handle_chat_mention(message):
     content = re.sub(rf"<@!?{bot.user.id}>", "", message.content).strip()
     if not content:
@@ -605,6 +618,12 @@ async def on_message(message):
         return
 
     if bot.user.mentioned_in(message) and not message.mention_everyone:
+        if not is_chat_enabled():
+            await message.reply(
+                "💤 I'm turned off right now. An admin can bring me back with `?awake`.",
+                mention_author=False,
+            )
+            return
         await handle_chat_mention(message)
         return
 
@@ -727,6 +746,34 @@ async def send_leaderboard(ctx, category, top_n=10):
         lines.append(f"{i}. {name} — {pts} pts ({cnt} vouches)")
 
     await ctx.send(f"**🏆 {CATEGORY_NAMES[category]} Leaderboard**\n" + "\n".join(lines))
+
+
+@bot.command(name="shutdown", aliases=["sleep"])
+@commands.has_permissions(manage_guild=True)
+async def shutdown_cmd(ctx):
+    """Turns off the @mention chat feature. Vouch tracking keeps working normally."""
+    set_chat_enabled(False)
+    await ctx.send("💤 Chat is now off. @mentioning me won't get a reply until `?awake` is run. Vouch tracking still works as normal.")
+
+
+@shutdown_cmd.error
+async def shutdown_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
+
+
+@bot.command(name="awake", aliases=["wakeup"])
+@commands.has_permissions(manage_guild=True)
+async def awake_cmd(ctx):
+    """Turns the @mention chat feature back on."""
+    set_chat_enabled(True)
+    await ctx.send("✅ Chat is back on.")
+
+
+@awake_cmd.error
+async def awake_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
 @bot.command(name="profile")
