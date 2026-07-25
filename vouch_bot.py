@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -307,7 +308,15 @@ def build_leaderboard_lines(data, category, n=10):
     return lines
 
 
+_leaderboard_refresh_lock = asyncio.Lock()
+
+
 async def refresh_live_leaderboards():
+    async with _leaderboard_refresh_lock:
+        await _refresh_live_leaderboards_inner()
+
+
+async def _refresh_live_leaderboards_inner():
     channel = bot.get_channel(LIVE_LEADERBOARD_CHANNEL_ID)
     if channel is None:
         return
@@ -839,6 +848,46 @@ async def profile(ctx, member: discord.Member = None):
         embed.add_field(name=CATEGORY_NAMES[cat], value=value, inline=False)
 
     await ctx.send(embed=embed)
+
+
+@bot.command(name="cleanleaderboards")
+@commands.has_permissions(manage_guild=True)
+async def cleanleaderboards(ctx):
+    """
+    Deletes ALL existing leaderboard embed messages from the bot in the live
+    leaderboard channel (cleans up any duplicates), then posts one fresh
+    copy of each. Requires Manage Server permission.
+    """
+    channel = bot.get_channel(LIVE_LEADERBOARD_CHANNEL_ID)
+    if channel is None:
+        await ctx.send("⚠️ Couldn't find the live leaderboard channel.")
+        return
+
+    status = await ctx.send("🧹 Cleaning up duplicate leaderboard messages...")
+
+    deleted = 0
+    async for msg in channel.history(limit=200):
+        if msg.author.id == bot.user.id and msg.embeds:
+            title = msg.embeds[0].title or ""
+            if "Leaderboard" in title:
+                try:
+                    await msg.delete()
+                    deleted += 1
+                except discord.HTTPException:
+                    pass
+
+    data = load_data()
+    data["_live_messages"] = {}
+    save_data(data)
+
+    await refresh_live_leaderboards()
+    await status.edit(content=f"✅ Removed {deleted} old leaderboard message(s) and posted fresh copies.")
+
+
+@cleanleaderboards.error
+async def cleanleaderboards_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
 @bot.command(name="postleaderboards", aliases=["refreshleaderboards"])
