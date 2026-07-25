@@ -145,6 +145,26 @@ role rewards right now.
 **Manage Roles** permission — otherwise Discord won't let it assign them,
 and it'll post a warning in the audit log channel when that happens.
 
+## Chat with the bot
+
+@mention the bot anywhere and it'll reply conversationally, remembering the
+last several messages in that channel so you can have an actual back-and-forth.
+
+**Setup (free, no credit card):**
+1. Go to https://build.nvidia.com and sign up (free NVIDIA Developer account)
+2. Go to **API Keys** → **Generate API Key**
+3. In Railway → Variables, add:
+   - `NVIDIA_API_KEY` = the key you just generated
+4. Redeploy
+
+Uses `nvidia/llama-3.3-nemotron-super-49b-v1.5` by default (a solid free
+general-purpose model). You can override it by setting an `NVIDIA_MODEL`
+variable to any model ID from the catalog at build.nvidia.com/models.
+The free tier allows roughly 40 requests/minute.
+
+Note: chat memory is in-memory only, scoped per channel, and resets when
+the bot restarts — it doesn't persist to the vouch data file.
+
 ## Persistent storage (important)
 
 Railway wipes its normal filesystem on every redeploy. Attach a **Volume**

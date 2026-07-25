@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -12,6 +13,19 @@ from discord.ext import commands
 # ─────────────────────────────────────────────────────────────
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
+
+# For the @mention chat feature — free API key from build.nvidia.com (NVIDIA NIM).
+# No credit card required. Sign up → API Keys → Generate Key.
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
+NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5")
+CHAT_SYSTEM_PROMPT = (
+    "You are the Discord bot for a Deepwoken gaming community server. Your main job is "
+    "tracking Host/Security/Support vouches, but when someone @mentions you directly, chat "
+    "with them casually and helpfully like a friendly community bot. Keep replies fairly "
+    "short (a few sentences) unless the person clearly wants more detail. You can mention "
+    "that you also track vouches if relevant, but you don't need to bring it up unprompted."
+)
 
 # Where vouch data is stored. On Railway, mount a Volume and point this at it
 # (e.g. "/data/vouches.json") so data survives redeploys.
@@ -27,6 +41,10 @@ LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
 
 # Channel where every vouch / backfill / sync gets logged
 AUDIT_LOG_CHANNEL_ID = 1530317395669815438
+
+# Deepwoken Fandom wiki, used by the ?wiki command
+WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
+WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
 
 CHANNEL_CATEGORY = {
     PVE_CHANNEL_ID: "pve",
@@ -363,6 +381,64 @@ async def update_role_for_user(guild, user_id, category):
 
 
 # ─────────────────────────────────────────────────────────────
+# @MENTION CHAT (calls the Claude API directly)
+# ─────────────────────────────────────────────────────────────
+
+# In-memory only — resets on restart, scoped per channel, capped length
+CHAT_HISTORY = {}
+CHAT_HISTORY_MAX_MESSAGES = 20  # ~10 back-and-forth turns
+
+
+async def call_llm(history):
+    if not NVIDIA_API_KEY:
+        return "⚠️ Chat isn't set up yet — an admin needs to add an `NVIDIA_API_KEY` variable."
+
+    headers = {
+        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + history
+    payload = {
+        "model": NVIDIA_MODEL,
+        "messages": messages,
+        "max_tokens": 400,
+        "temperature": 0.7,
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(NVIDIA_API_URL, json=payload, headers=headers, timeout=30) as resp:
+                data = await resp.json()
+    except Exception:
+        return "⚠️ Couldn't reach the chat API right now. Try again in a bit."
+
+    try:
+        return data["choices"][0]["message"]["content"].strip() or "…"
+    except (KeyError, IndexError, TypeError):
+        err = data.get("error", {}).get("message", "unknown error") if isinstance(data, dict) else "unknown error"
+        return f"⚠️ Chat error: {err}"
+
+
+async def handle_chat_mention(message):
+    content = re.sub(rf"<@!?{bot.user.id}>", "", message.content).strip()
+    if not content:
+        content = "Hey!"
+
+    channel_id = message.channel.id
+    history = CHAT_HISTORY.setdefault(channel_id, [])
+    history.append({"role": "user", "content": content})
+    history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
+
+    async with message.channel.typing():
+        reply_text = await call_llm(history)
+
+    history.append({"role": "assistant", "content": reply_text})
+    history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
+
+    await message.reply(reply_text[:1900], mention_author=False)
+
+
+# ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
 
@@ -382,6 +458,10 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        return
+
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        await handle_chat_mention(message)
         return
 
     category = CHANNEL_CATEGORY.get(message.channel.id)
