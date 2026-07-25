@@ -24,14 +24,12 @@ NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
 WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
 WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
 
-CHAT_SYSTEM_PROMPT = (
-    "You are the Discord bot for a Deepwoken gaming community server. Your main job is "
-    "tracking Host/Security/Support vouches, but when someone @mentions you directly, chat "
-    "with them casually and helpfully like a friendly community bot. Keep replies fairly "
-    "short (a few sentences) unless the person clearly wants more detail.\n\n"
+# Core behavior rules that apply no matter which persona is active
+CHAT_CORE_RULES = (
     "Every message you receive includes one or more '[Vouch Data — Name]' blocks with real, "
     "accurate vouch totals for the person messaging you (and anyone else they @mentioned). "
-    "Use that data to answer questions about vouch counts, ranks, or totals — never guess or "
+    "Use that data ONLY if the person actually asks about vouches, ranks, or totals — do not "
+    "bring up vouch tracking or their stats unprompted in casual conversation. Never guess or "
     "make up numbers. If someone asks about a person NOT included in a Vouch Data block, say "
     "you don't have their stats handy and suggest they use `?vouches @user`.\n\n"
     "You do not have verified, up-to-date knowledge of specific Deepwoken game mechanics — "
@@ -45,10 +43,63 @@ CHAT_SYSTEM_PROMPT = (
     "Always respond in English only, regardless of what language appears anywhere else."
 )
 
+# Swappable tone/personality presets — admins pick one with ?persona <name>
+PERSONA_STYLES = {
+    "default": (
+        "You are the Discord bot for a Deepwoken gaming community server. When someone "
+        "@mentions you, chat with them casually and helpfully like a friendly community "
+        "member. Keep replies fairly short (a few sentences) unless they clearly want more "
+        "detail. You happen to also track vouches, but that's not what this conversation is "
+        "about unless they bring it up."
+    ),
+    "hype": (
+        "You are the Discord bot for a Deepwoken gaming community server, with a high-energy "
+        "hype-man personality — think gaming caster energy, lots of enthusiasm, exclamation "
+        "points, hyping people up. Keep replies short and punchy. You happen to also track "
+        "vouches, but only bring that up if asked."
+    ),
+    "chill": (
+        "You are the Discord bot for a Deepwoken gaming community server, with a laid-back, "
+        "chill personality — relaxed, low-key, casual slang, not overly enthusiastic about "
+        "anything. Keep replies short. You happen to also track vouches, but only bring that "
+        "up if asked."
+    ),
+    "sarcastic": (
+        "You are the Discord bot for a Deepwoken gaming community server, with a dry, witty, "
+        "lightly sarcastic personality — playful teasing, deadpan humor, never actually mean. "
+        "Keep replies short. You happen to also track vouches, but only bring that up if asked."
+    ),
+    "formal": (
+        "You are the Discord bot for a Deepwoken gaming community server, with a polite, "
+        "professional, formal tone — like a helpful assistant, no slang, proper grammar. Keep "
+        "replies concise. You happen to also track vouches, but only bring that up if asked."
+    ),
+}
+DEFAULT_PERSONA = "default"
+
+
+def get_active_persona():
+    data = load_data()
+    return data.get("_settings", {}).get("persona", DEFAULT_PERSONA)
+
+
+def set_active_persona(name):
+    data = load_data()
+    settings = data.get("_settings", {})
+    settings["persona"] = name
+    data["_settings"] = settings
+    save_data(data)
+
+
+def build_system_prompt(persona_name):
+    style = PERSONA_STYLES.get(persona_name, PERSONA_STYLES[DEFAULT_PERSONA])
+    return style + "\n\n" + CHAT_CORE_RULES
+
+
 # Special persona for one specific user — swearing allowed, playful tone.
 # Still no slurs, hate speech, harassment, or anything targeting others.
 UNFILTERED_USER_ID = 1387930623766827140
-UNFILTERED_SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT + (
+UNFILTERED_EXTRA = (
     "\n\nSpecial note: you're talking to the server owner right now. With them specifically, "
     "you can swear/curse casually and freely if it fits the vibe — no need to censor yourself "
     "or hold back on profanity. Also lean into a cute, playful egirl-style personality with "
@@ -166,6 +217,19 @@ ROLE_THRESHOLDS = {
         (100, "Graceful Commander"),
         (200, "Hero Of Events"),
     ],
+    "security": [
+        (5, "Sergeant"),
+        (15, "Veteran"),
+        (30, "Vanguard"),
+    ],
+}
+
+# What each category's role ladder is measured against — "points" for Host/Support,
+# but Security's ranks are defined in raw vouch COUNT, not weighted points.
+ROLE_THRESHOLD_METRIC = {
+    "pve": "points",
+    "support": "points",
+    "security": "points",
 }
 
 # Phrase -> (category, canonical event name), for the "<event> @user" style commands
@@ -391,13 +455,21 @@ async def update_role_for_user(guild, user_id, category):
 
     data = load_data()
     record = data.get(str(user_id), {}).get(category)
-    points = record["total_points"] if record else 0
+    metric = ROLE_THRESHOLD_METRIC.get(category, "points")
+    if metric == "vouches":
+        value = record["total_vouches"] if record else 0
+    else:
+        value = record["total_points"] if record else 0
 
     thresholds = ROLE_THRESHOLDS[category]
-    achieved_role_name = thresholds[0][1]
+    achieved_role_name = None
     for threshold, role_name in thresholds:
-        if points >= threshold:
+        if value >= threshold:
             achieved_role_name = role_name
+
+    if achieved_role_name is None:
+        # Hasn't reached the lowest rank yet — nothing to assign or remove
+        return
 
     member = guild.get_member(user_id)
     if member is None:
@@ -443,7 +515,7 @@ async def call_llm(history, system_prompt=None):
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
         "Content-Type": "application/json",
     }
-    messages = [{"role": "system", "content": system_prompt or CHAT_SYSTEM_PROMPT}] + history
+    messages = [{"role": "system", "content": system_prompt or build_system_prompt(DEFAULT_PERSONA)}] + history
     payload = {
         "model": NVIDIA_MODEL,
         "messages": messages,
@@ -634,7 +706,8 @@ async def handle_chat_mention(message):
     }
 
     async with message.channel.typing():
-        active_prompt = UNFILTERED_SYSTEM_PROMPT if message.author.id == UNFILTERED_USER_ID else CHAT_SYSTEM_PROMPT
+        base_prompt = build_system_prompt(get_active_persona())
+        active_prompt = base_prompt + UNFILTERED_EXTRA if message.author.id == UNFILTERED_USER_ID else base_prompt
         reply_text = await call_llm(api_messages, system_prompt=active_prompt)
 
     history.append({"role": "assistant", "content": reply_text})
@@ -743,7 +816,10 @@ async def on_message(message):
 # ─────────────────────────────────────────────────────────────
 
 def get_rank_progress(points, thresholds):
-    """Returns (current_role, current_threshold, next_role, next_threshold)."""
+    """Returns (current_role, current_threshold, next_role, next_threshold). current_role is None if below the lowest threshold."""
+    if points < thresholds[0][0]:
+        return None, None, None, None
+
     current_role, current_threshold = thresholds[0][1], thresholds[0][0]
     next_role, next_threshold = None, None
     for i, (threshold, role_name) in enumerate(thresholds):
@@ -834,14 +910,24 @@ async def profile(ctx, member: discord.Member = None):
 
         if cat in ROLE_THRESHOLDS:
             thresholds = ROLE_THRESHOLDS[cat]
-            current_role, current_threshold, next_role, next_threshold = get_rank_progress(pts, thresholds)
-            bar = progress_bar(pts, current_threshold, next_threshold)
-            if next_role:
-                remaining = next_threshold - pts
-                progress_line = f"{bar}\n{pts}/{next_threshold} pts — {remaining} to **{next_role}**"
+            metric = ROLE_THRESHOLD_METRIC.get(cat, "points")
+            metric_value = cnt if metric == "vouches" else pts
+            unit = "vouches" if metric == "vouches" else "pts"
+
+            current_role, current_threshold, next_role, next_threshold = get_rank_progress(metric_value, thresholds)
+            if current_role is None:
+                # Hasn't reached the lowest rank yet
+                first_threshold, first_role = thresholds[0]
+                remaining = first_threshold - metric_value
+                value = f"**Points:** {pts} ({cnt} vouches)\n{remaining} {unit} to **{first_role}**"
             else:
-                progress_line = f"{bar}\nMax rank reached! 🎉"
-            value = f"**Rank:** {current_role}\n**Points:** {pts} ({cnt} vouches)\n{progress_line}"
+                bar = progress_bar(metric_value, current_threshold, next_threshold)
+                if next_role:
+                    remaining = next_threshold - metric_value
+                    progress_line = f"{bar}\n{metric_value}/{next_threshold} {unit} — {remaining} to **{next_role}**"
+                else:
+                    progress_line = f"{bar}\nMax rank reached! 🎉"
+                value = f"**Rank:** {current_role}\n**Points:** {pts} ({cnt} vouches)\n{progress_line}"
         else:
             value = f"**Points:** {pts} ({cnt} vouches)"
 
