@@ -459,12 +459,20 @@ def clean_wiki_query(text):
 
 
 async def fetch_wiki_context(query, max_chars=800):
-    """Search the Deepwoken wiki and return (title, extract, url), or None if nothing found."""
-    query = clean_wiki_query(query)
+    """
+    Search the Deepwoken wiki, then scan full page text (not just the intro)
+    of the top candidates for the actual term, since many things (like
+    talents) live as a section inside a larger page rather than their own
+    article. Returns (title, snippet, url), or None if nothing usable found.
+    """
+    cleaned = clean_wiki_query(query)
+    # Also pull out the most distinctive words from the raw query to search for within page text
+    search_terms = [w for w in re.findall(r"[a-zA-Z0-9]+", query.lower()) if len(w) > 2]
+
     async with aiohttp.ClientSession() as session:
         search_params = {
-            "action": "query", "list": "search", "srsearch": query,
-            "format": "json", "srlimit": 1, "srnamespace": 0,
+            "action": "query", "list": "search", "srsearch": cleaned,
+            "format": "json", "srlimit": 3, "srnamespace": 0,
         }
         try:
             async with session.get(WIKI_API_URL, params=search_params, timeout=8) as resp:
@@ -472,31 +480,54 @@ async def fetch_wiki_context(query, max_chars=800):
         except Exception:
             return None
 
-        results = search_data.get("query", {}).get("search", [])
-        if not results:
-            return None
-        title = results[0]["title"]
-
-        extract_params = {
-            "action": "query", "prop": "extracts", "exintro": True,
-            "explaintext": True, "titles": title, "format": "json",
-        }
-        try:
-            async with session.get(WIKI_API_URL, params=extract_params, timeout=8) as resp:
-                extract_data = await resp.json()
-        except Exception:
+        candidates = [r["title"] for r in search_data.get("query", {}).get("search", [])]
+        if not candidates:
             return None
 
-    pages = extract_data.get("query", {}).get("pages", {})
-    page = next(iter(pages.values()), {})
-    extract = (page.get("extract") or "").strip()
-    if not extract:
-        return None
-    if len(extract) > max_chars:
-        extract = extract[:max_chars].rsplit(" ", 1)[0].rstrip(".,;: ") + "…"
+        for title in candidates:
+            extract_params = {
+                "action": "query", "prop": "extracts", "explaintext": True,
+                "titles": title, "format": "json",
+            }
+            try:
+                async with session.get(WIKI_API_URL, params=extract_params, timeout=12) as resp:
+                    extract_data = await resp.json()
+            except Exception:
+                continue
 
-    url = WIKI_BASE_URL + title.replace(" ", "_")
-    return title, extract, url
+            pages = extract_data.get("query", {}).get("pages", {})
+            page = next(iter(pages.values()), {})
+            full_text = (page.get("extract") or "")
+            if not full_text:
+                continue
+
+            # Look for the most distinctive query word(s) inside the full page text
+            lower_text = full_text.lower()
+            match_pos = -1
+            for term in sorted(search_terms, key=len, reverse=True):
+                pos = lower_text.find(term)
+                if pos != -1:
+                    match_pos = pos
+                    break
+
+            url = WIKI_BASE_URL + title.replace(" ", "_")
+
+            if match_pos == -1:
+                # Term not found in this page's text at all — try the next candidate
+                continue
+
+            half = max_chars // 2
+            start = max(0, match_pos - half)
+            end = min(len(full_text), match_pos + half)
+            snippet = full_text[start:end].strip()
+            if start > 0:
+                snippet = "…" + snippet
+            if end < len(full_text):
+                snippet = snippet + "…"
+
+            return title, snippet, url
+
+    return None
 
 
 async def handle_chat_mention(message):
