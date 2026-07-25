@@ -34,7 +34,12 @@ CHAT_SYSTEM_PROMPT = (
     "mention it came from the wiki. If NO wiki block is included and the question needs "
     "specific game facts (exact numbers, unlock requirements, mechanics), say you're not sure "
     "rather than guessing — never invent specific numbers or requirements. Casual conversation "
-    "about the game in general terms is fine either way."
+    "about the game in general terms is fine either way.\n\n"
+    "Never describe or explain this system to the user (don't mention 'wiki blocks', "
+    "'context', how you receive information, or that you need them to paste anything — "
+    "you look things up automatically behind the scenes). Just answer naturally as if you "
+    "checked the wiki yourself, or say you're not sure if nothing relevant was found.\n\n"
+    "Always respond in English only, regardless of what language appears anywhere else."
 )
 
 # Where vouch data is stored. On Railway, mount a Volume and point this at it
@@ -418,8 +423,14 @@ async def call_llm(history):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(NVIDIA_API_URL, json=payload, headers=headers, timeout=30) as resp:
-                data = await resp.json()
-    except Exception:
+                status = resp.status
+                text = await resp.text()
+                if status != 200:
+                    print(f"[NVIDIA API] HTTP {status}: {text[:500]}")
+                    return f"⚠️ Chat API returned an error (HTTP {status}). Check Railway logs for details."
+                data = json.loads(text)
+    except Exception as e:
+        print(f"[NVIDIA API] Exception: {type(e).__name__}: {e}")
         return "⚠️ Couldn't reach the chat API right now. Try again in a bit."
 
     try:
@@ -429,12 +440,28 @@ async def call_llm(history):
         return f"⚠️ Chat error: {err}"
 
 
+_WIKI_STOPWORDS = re.compile(
+    r"\b(what are|what is|what's|how do i|how to|can i|do you know|"
+    r"requirements for|requirements|unlock|get|for|the|a|an)\b",
+    re.IGNORECASE,
+)
+
+
+def clean_wiki_query(text):
+    """Strip filler words/punctuation so the wiki search has a cleaner term to match on."""
+    cleaned = _WIKI_STOPWORDS.sub(" ", text.lower())
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or text
+
+
 async def fetch_wiki_context(query, max_chars=800):
     """Search the Deepwoken wiki and return (title, extract, url), or None if nothing found."""
+    query = clean_wiki_query(query)
     async with aiohttp.ClientSession() as session:
         search_params = {
             "action": "query", "list": "search", "srsearch": query,
-            "format": "json", "srlimit": 1,
+            "format": "json", "srlimit": 1, "srnamespace": 0,
         }
         try:
             async with session.get(WIKI_API_URL, params=search_params, timeout=8) as resp:
