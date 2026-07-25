@@ -19,12 +19,22 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5")
+# Deepwoken Fandom wiki — used to ground chat answers in real info instead of guessing
+WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
+WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
+
 CHAT_SYSTEM_PROMPT = (
     "You are the Discord bot for a Deepwoken gaming community server. Your main job is "
     "tracking Host/Security/Support vouches, but when someone @mentions you directly, chat "
     "with them casually and helpfully like a friendly community bot. Keep replies fairly "
     "short (a few sentences) unless the person clearly wants more detail. You can mention "
-    "that you also track vouches if relevant, but you don't need to bring it up unprompted."
+    "that you also track vouches if relevant, but you don't need to bring it up unprompted.\n\n"
+    "When a message includes a block starting with '[Deepwoken Wiki — ...]', that's real "
+    "content pulled live from the Deepwoken Wiki — use it to answer accurately, and you can "
+    "mention it came from the wiki. If NO wiki block is included and the question needs "
+    "specific game facts (exact numbers, unlock requirements, mechanics), say you're not sure "
+    "rather than guessing — never invent specific numbers or requirements. Casual conversation "
+    "about the game in general terms is fine either way."
 )
 
 # Where vouch data is stored. On Railway, mount a Volume and point this at it
@@ -419,6 +429,46 @@ async def call_llm(history):
         return f"⚠️ Chat error: {err}"
 
 
+async def fetch_wiki_context(query, max_chars=800):
+    """Search the Deepwoken wiki and return (title, extract, url), or None if nothing found."""
+    async with aiohttp.ClientSession() as session:
+        search_params = {
+            "action": "query", "list": "search", "srsearch": query,
+            "format": "json", "srlimit": 1,
+        }
+        try:
+            async with session.get(WIKI_API_URL, params=search_params, timeout=8) as resp:
+                search_data = await resp.json()
+        except Exception:
+            return None
+
+        results = search_data.get("query", {}).get("search", [])
+        if not results:
+            return None
+        title = results[0]["title"]
+
+        extract_params = {
+            "action": "query", "prop": "extracts", "exintro": True,
+            "explaintext": True, "titles": title, "format": "json",
+        }
+        try:
+            async with session.get(WIKI_API_URL, params=extract_params, timeout=8) as resp:
+                extract_data = await resp.json()
+        except Exception:
+            return None
+
+    pages = extract_data.get("query", {}).get("pages", {})
+    page = next(iter(pages.values()), {})
+    extract = (page.get("extract") or "").strip()
+    if not extract:
+        return None
+    if len(extract) > max_chars:
+        extract = extract[:max_chars].rsplit(" ", 1)[0].rstrip(".,;: ") + "…"
+
+    url = WIKI_BASE_URL + title.replace(" ", "_")
+    return title, extract, url
+
+
 async def handle_chat_mention(message):
     content = re.sub(rf"<@!?{bot.user.id}>", "", message.content).strip()
     if not content:
@@ -429,8 +479,24 @@ async def handle_chat_mention(message):
     history.append({"role": "user", "content": content})
     history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
 
+    # Try to ground the answer in real wiki content for substantive questions
+    wiki_context = None
+    if len(content.split()) >= 2:
+        try:
+            wiki_context = await fetch_wiki_context(content)
+        except Exception:
+            wiki_context = None
+
+    api_messages = history.copy()
+    if wiki_context:
+        title, extract, url = wiki_context
+        api_messages[-1] = {
+            "role": "user",
+            "content": f"{content}\n\n[Deepwoken Wiki — {title}]\n{extract}\n(Source: {url})",
+        }
+
     async with message.channel.typing():
-        reply_text = await call_llm(history)
+        reply_text = await call_llm(api_messages)
 
     history.append({"role": "assistant", "content": reply_text})
     history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
