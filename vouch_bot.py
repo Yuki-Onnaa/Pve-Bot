@@ -44,6 +44,18 @@ CHAT_SYSTEM_PROMPT = (
     "Always respond in English only, regardless of what language appears anywhere else."
 )
 
+# Special persona for one specific user — swearing allowed, playful tone.
+# Still no slurs, hate speech, harassment, or anything targeting others.
+UNFILTERED_USER_ID = 1387930623766827140
+UNFILTERED_SYSTEM_PROMPT = CHAT_SYSTEM_PROMPT + (
+    "\n\nSpecial note: you're talking to the server owner right now. With them specifically, "
+    "you can swear/curse casually and freely if it fits the vibe — no need to censor yourself "
+    "or hold back on profanity. Also lean into a cute, playful egirl-style personality with "
+    "them: casual, teasing, lots of personality, emoticons/kaomoji welcome (e.g. :3, >_<, ~). "
+    "This applies ONLY to swearing and tone — you still never use slurs, hate speech, or "
+    "anything targeting or harassing other people, and all your other rules still apply."
+)
+
 # Where vouch data is stored. On Railway, mount a Volume and point this at it
 # (e.g. "/data/vouches.json") so data survives redeploys.
 DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
@@ -406,7 +418,7 @@ CHAT_HISTORY = {}
 CHAT_HISTORY_MAX_MESSAGES = 20  # ~10 back-and-forth turns
 
 
-async def call_llm(history):
+async def call_llm(history, system_prompt=None):
     if not NVIDIA_API_KEY:
         return "⚠️ Chat isn't set up yet — an admin needs to add an `NVIDIA_API_KEY` variable."
 
@@ -414,7 +426,7 @@ async def call_llm(history):
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
         "Content-Type": "application/json",
     }
-    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}] + history
+    messages = [{"role": "system", "content": system_prompt or CHAT_SYSTEM_PROMPT}] + history
     payload = {
         "model": NVIDIA_MODEL,
         "messages": messages,
@@ -605,7 +617,8 @@ async def handle_chat_mention(message):
     }
 
     async with message.channel.typing():
-        reply_text = await call_llm(api_messages)
+        active_prompt = UNFILTERED_SYSTEM_PROMPT if message.author.id == UNFILTERED_USER_ID else CHAT_SYSTEM_PROMPT
+        reply_text = await call_llm(api_messages, system_prompt=active_prompt)
 
     history.append({"role": "assistant", "content": reply_text})
     history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
