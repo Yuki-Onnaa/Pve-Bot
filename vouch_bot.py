@@ -565,6 +565,26 @@ async def handle_chat_mention(message):
     if not content:
         content = "Hey!"
 
+    # Direct leaderboard request — skip the LLM and post the real embed straight away
+    lower = content.lower()
+    if "leaderboard" in lower:
+        if "security" in lower:
+            category = "security"
+        elif "support" in lower:
+            category = "support"
+        else:
+            category = "pve"
+
+        data = load_data()
+        lines = build_leaderboard_lines(data, category, 10)
+        embed = discord.Embed(
+            title=f"🏆 {CATEGORY_NAMES[category]} Leaderboard",
+            description="\n".join(lines) if lines else "No vouches yet.",
+            color=discord.Color.blurple(),
+        )
+        await message.reply(embed=embed, mention_author=False)
+        return
+
     channel_id = message.channel.id
     history = CHAT_HISTORY.setdefault(channel_id, [])
     history.append({"role": "user", "content": content})
@@ -810,6 +830,20 @@ async def profile(ctx, member: discord.Member = None):
         embed.add_field(name=CATEGORY_NAMES[cat], value=value, inline=False)
 
     await ctx.send(embed=embed)
+
+
+@bot.command(name="postleaderboards", aliases=["refreshleaderboards"])
+@commands.has_permissions(manage_guild=True)
+async def postleaderboards(ctx):
+    """Force-posts/refreshes the 3 live leaderboard embeds immediately. Requires Manage Server permission."""
+    await refresh_live_leaderboards()
+    await ctx.send("✅ Live leaderboards posted/refreshed.")
+
+
+@postleaderboards.error
+async def postleaderboards_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
 @bot.command(name="leaderboard")
