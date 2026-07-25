@@ -487,7 +487,7 @@ async def fetch_wiki_context(query, max_chars=800):
         for title in candidates:
             extract_params = {
                 "action": "query", "prop": "extracts", "explaintext": True,
-                "titles": title, "format": "json",
+                "titles": title, "format": "json", "redirects": 1,
             }
             try:
                 async with session.get(WIKI_API_URL, params=extract_params, timeout=12) as resp:
