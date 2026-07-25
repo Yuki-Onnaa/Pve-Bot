@@ -27,21 +27,20 @@ CHAT_SYSTEM_PROMPT = (
     "You are the Discord bot for a Deepwoken gaming community server. Your main job is "
     "tracking Host/Security/Support vouches, but when someone @mentions you directly, chat "
     "with them casually and helpfully like a friendly community bot. Keep replies fairly "
-    "short (a few sentences) unless the person clearly wants more detail. You can mention "
-    "that you also track vouches if relevant, but you don't need to bring it up unprompted.\n\n"
-    "When a message includes a block starting with '[Deepwoken Wiki — ...]', that's real "
-    "content pulled live from the Deepwoken Wiki — use ONLY that content to answer, and you "
-    "can mention it came from the wiki. When a message instead includes a block saying no "
-    "wiki article was found, you MUST NOT state specific game facts, numbers, or requirements "
-    "— say plainly that you don't have verified info on that and suggest checking the wiki or "
-    "an experienced player. NEVER claim something came from the wiki unless an actual wiki "
-    "block was provided to you in that message. Making up specific numbers or crafting "
-    "systems that weren't given to you is a serious error — when in doubt, admit you don't "
-    "know. Casual conversation about the game in general terms is fine either way.\n\n"
-    "Never describe or explain this system to the user (don't mention 'wiki blocks', "
-    "'context', how you receive information, or that you need them to paste anything — "
-    "you look things up automatically behind the scenes). Just answer naturally as if you "
-    "checked the wiki yourself, or say you're not sure if nothing relevant was found.\n\n"
+    "short (a few sentences) unless the person clearly wants more detail.\n\n"
+    "Every message you receive includes one or more '[Vouch Data — Name]' blocks with real, "
+    "accurate vouch totals for the person messaging you (and anyone else they @mentioned). "
+    "Use that data to answer questions about vouch counts, ranks, or totals — never guess or "
+    "make up numbers. If someone asks about a person NOT included in a Vouch Data block, say "
+    "you don't have their stats handy and suggest they use `?vouches @user`.\n\n"
+    "You do not have verified, up-to-date knowledge of specific Deepwoken game mechanics — "
+    "exact stat requirements, unlock conditions, talents, etc. Never invent specific numbers "
+    "or mechanics you aren't certain about; say you're not sure and suggest checking the "
+    "Deepwoken Wiki or an experienced player instead. Casual conversation about the game in "
+    "general terms is fine either way.\n\n"
+    "Never describe or explain this system to the user (don't mention 'Vouch Data blocks', "
+    "'context', or how you receive information — you just know it automatically). Answer "
+    "naturally as if you already knew their stats.\n\n"
     "Always respond in English only, regardless of what language appears anywhere else."
 )
 
@@ -481,6 +480,8 @@ async def fetch_wiki_context(query, max_chars=800):
             return None
 
         candidates = [r["title"] for r in search_data.get("query", {}).get("search", [])]
+        if "Talents" not in candidates:
+            candidates.append("Talents")
         if not candidates:
             return None
 
@@ -543,6 +544,22 @@ def set_chat_enabled(enabled):
     save_data(data)
 
 
+def get_vouch_summary_text(user_id, display_name):
+    data = load_data()
+    user_data = data.get(str(user_id), {})
+    total = combined_total(user_data)
+
+    if total == 0:
+        return f"[Vouch Data — {display_name}]\nNo vouches recorded yet."
+
+    lines = [f"[Vouch Data — {display_name}]", f"Total: {total} pts"]
+    for cat in CATEGORY_EVENTS:
+        record = user_data.get(cat)
+        if record and record["total_vouches"]:
+            lines.append(f"{CATEGORY_NAMES[cat]}: {record['total_points']} pts ({record['total_vouches']} vouches)")
+    return "\n".join(lines)
+
+
 async def handle_chat_mention(message):
     content = re.sub(rf"<@!?{bot.user.id}>", "", message.content).strip()
     if not content:
@@ -553,38 +570,19 @@ async def handle_chat_mention(message):
     history.append({"role": "user", "content": content})
     history[:] = history[-CHAT_HISTORY_MAX_MESSAGES:]
 
-    # Try to ground the answer in real wiki content for substantive questions
-    wiki_context = None
-    searched = False
-    if len(content.split()) >= 2:
-        searched = True
-        try:
-            wiki_context = await fetch_wiki_context(content)
-        except Exception as e:
-            print(f"[Wiki] Exception during search: {type(e).__name__}: {e}")
-            wiki_context = None
+    # Give the model real vouch data: the asker's own stats, plus anyone else they @mentioned
+    target_users = [(message.author.id, message.author.display_name)]
+    for m in message.mentions:
+        if m.id != bot.user.id and m.id != message.author.id:
+            target_users.append((m.id, m.display_name))
+
+    vouch_blocks = "\n\n".join(get_vouch_summary_text(uid, name) for uid, name in target_users)
 
     api_messages = history.copy()
-    if wiki_context:
-        title, extract, url = wiki_context
-        print(f"[Wiki] Query='{content}' -> matched '{title}'")
-        api_messages[-1] = {
-            "role": "user",
-            "content": f"{content}\n\n[Deepwoken Wiki — {title}]\n{extract}\n(Source: {url})",
-        }
-    elif searched:
-        print(f"[Wiki] Query='{content}' -> no match found")
-        api_messages[-1] = {
-            "role": "user",
-            "content": (
-                f"{content}\n\n"
-                "[No matching Deepwoken Wiki article was found for this question. "
-                "If answering requires specific game facts, numbers, or requirements you "
-                "aren't certain about, you MUST say you're not sure and suggest checking the "
-                "wiki directly — do not guess or invent details, and do not claim this came "
-                "from the wiki.]"
-            ),
-        }
+    api_messages[-1] = {
+        "role": "user",
+        "content": f"{content}\n\n{vouch_blocks}",
+    }
 
     async with message.channel.typing():
         reply_text = await call_llm(api_messages)
