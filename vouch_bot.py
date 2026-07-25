@@ -340,6 +340,14 @@ async def refresh_live_leaderboards():
                 msg = None
 
         if not msg:
+            # Whatever happened (deleted, edit failed, etc.) — clean up any old message
+            # before posting a new one, so we never end up with duplicates in the channel.
+            if msg_id:
+                try:
+                    old_msg = await channel.fetch_message(msg_id)
+                    await old_msg.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
             new_msg = await channel.send(embed=embed)
             meta[cat] = new_msg.id
             changed = True
@@ -757,26 +765,14 @@ def progress_bar(points, current_threshold, next_threshold, length=10):
 
 async def send_leaderboard(ctx, category, top_n=10):
     data = load_data()
-    ranked = sorted(
-        user_records(data),
-        key=lambda kv: kv[1].get(category, {}).get("total_points", 0),
-        reverse=True,
+    lines = build_leaderboard_lines(data, category, top_n)
+
+    embed = discord.Embed(
+        title=f"🏆 {CATEGORY_NAMES[category]} Leaderboard",
+        description="\n".join(lines) if lines else "No vouches yet.",
+        color=discord.Color.blurple(),
     )
-    ranked = [(uid, rec) for uid, rec in ranked if rec.get(category, {}).get("total_points", 0) > 0][:top_n]
-
-    if not ranked:
-        await ctx.send(f"No {CATEGORY_NAMES[category]} vouches recorded yet.")
-        return
-
-    lines = []
-    for i, (uid, rec) in enumerate(ranked, start=1):
-        member = ctx.guild.get_member(int(uid)) if ctx.guild else None
-        name = member.display_name if member else f"<@{uid}>"
-        pts = rec[category]["total_points"]
-        cnt = rec[category]["total_vouches"]
-        lines.append(f"{i}. {name} — {pts} pts ({cnt} vouches)")
-
-    await ctx.send(f"**🏆 {CATEGORY_NAMES[category]} Leaderboard**\n" + "\n".join(lines))
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="shutdown", aliases=["sleep"])
