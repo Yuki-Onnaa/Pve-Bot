@@ -30,11 +30,14 @@ CHAT_SYSTEM_PROMPT = (
     "short (a few sentences) unless the person clearly wants more detail. You can mention "
     "that you also track vouches if relevant, but you don't need to bring it up unprompted.\n\n"
     "When a message includes a block starting with '[Deepwoken Wiki — ...]', that's real "
-    "content pulled live from the Deepwoken Wiki — use it to answer accurately, and you can "
-    "mention it came from the wiki. If NO wiki block is included and the question needs "
-    "specific game facts (exact numbers, unlock requirements, mechanics), say you're not sure "
-    "rather than guessing — never invent specific numbers or requirements. Casual conversation "
-    "about the game in general terms is fine either way.\n\n"
+    "content pulled live from the Deepwoken Wiki — use ONLY that content to answer, and you "
+    "can mention it came from the wiki. When a message instead includes a block saying no "
+    "wiki article was found, you MUST NOT state specific game facts, numbers, or requirements "
+    "— say plainly that you don't have verified info on that and suggest checking the wiki or "
+    "an experienced player. NEVER claim something came from the wiki unless an actual wiki "
+    "block was provided to you in that message. Making up specific numbers or crafting "
+    "systems that weren't given to you is a serious error — when in doubt, admit you don't "
+    "know. Casual conversation about the game in general terms is fine either way.\n\n"
     "Never describe or explain this system to the user (don't mention 'wiki blocks', "
     "'context', how you receive information, or that you need them to paste anything — "
     "you look things up automatically behind the scenes). Just answer naturally as if you "
@@ -508,18 +511,35 @@ async def handle_chat_mention(message):
 
     # Try to ground the answer in real wiki content for substantive questions
     wiki_context = None
+    searched = False
     if len(content.split()) >= 2:
+        searched = True
         try:
             wiki_context = await fetch_wiki_context(content)
-        except Exception:
+        except Exception as e:
+            print(f"[Wiki] Exception during search: {type(e).__name__}: {e}")
             wiki_context = None
 
     api_messages = history.copy()
     if wiki_context:
         title, extract, url = wiki_context
+        print(f"[Wiki] Query='{content}' -> matched '{title}'")
         api_messages[-1] = {
             "role": "user",
             "content": f"{content}\n\n[Deepwoken Wiki — {title}]\n{extract}\n(Source: {url})",
+        }
+    elif searched:
+        print(f"[Wiki] Query='{content}' -> no match found")
+        api_messages[-1] = {
+            "role": "user",
+            "content": (
+                f"{content}\n\n"
+                "[No matching Deepwoken Wiki article was found for this question. "
+                "If answering requires specific game facts, numbers, or requirements you "
+                "aren't certain about, you MUST say you're not sure and suggest checking the "
+                "wiki directly — do not guess or invent details, and do not claim this came "
+                "from the wiki.]"
+            ),
         }
 
     async with message.channel.typing():
