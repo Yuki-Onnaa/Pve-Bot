@@ -18,7 +18,7 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # No credit card required. Sign up → API Keys → Generate Key.
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5")
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-405b-instruct")
 # Deepwoken Fandom wiki — used to ground chat answers in real info instead of guessing
 WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
 WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
