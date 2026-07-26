@@ -1055,7 +1055,7 @@ async def testeventping(ctx, *, event_name: str = None):
 
     role = discord.utils.get(ctx.guild.roles, name=event_name) if ctx.guild else None
     mention = role.mention if role else f"**{event_name}** (⚠️ no matching role found!)"
-    await channel.send(f"⏰ {mention} — **{event_name}** is starting now! (test ping)")
+    await channel.send(f"⏰ {mention} **{event_name}** is starting now! (test ping)")
     await ctx.send(f"✅ Test ping sent to <#{EVENT_PING_CHANNEL_ID}>.")
 
 
