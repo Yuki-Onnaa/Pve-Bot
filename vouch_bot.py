@@ -4,10 +4,11 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -122,6 +123,31 @@ LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
 
 # Channel where every vouch / backfill / sync gets logged
 AUDIT_LOG_CHANNEL_ID = 1530317395669815438
+
+# ── Scheduled world-event pings ──
+EVENT_PING_CHANNEL_ID = 1529142467658649640
+EVENT_PING_TZ = ZoneInfo("Africa/Tripoli")  # Libya (Sabha) — UTC+2, no DST
+
+# Times are HH:MM in Africa/Tripoli local time. Each event pings a role with
+# the SAME NAME as the event (e.g. a role literally called "Carnival of Hearts").
+EVENT_PING_SCHEDULE = {
+    "Carnival of Hearts": [
+        "07:00", "08:30", "10:00", "11:30", "13:00", "14:30", "16:00", "17:30",
+        "19:00", "20:30", "22:00", "23:30", "01:00", "02:30", "04:00", "05:30",
+    ],
+    "Interluminary Parasol": [
+        "07:30", "09:00", "10:30", "12:00", "13:30", "15:00", "16:30", "18:00",
+        "19:30", "21:00", "22:30", "00:00", "01:30", "03:00", "04:30", "06:00",
+    ],
+    "Battle Royale": [
+        "08:00", "09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30",
+        "20:00", "21:30", "23:00", "00:30", "02:00", "03:30", "05:00", "06:30",
+    ],
+}
+
+# Tracks the last minute each event was pinged, to avoid double-pinging
+# if the check loop happens to tick more than once within the same minute
+_event_last_ping_minute = {}
 
 # Deepwoken Fandom wiki, used by the ?wiki command
 WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
@@ -727,10 +753,43 @@ intents.members = True
 bot = commands.Bot(command_prefix="?", intents=intents)
 
 
+@tasks.loop(seconds=30)
+async def event_ping_loop():
+    channel = bot.get_channel(EVENT_PING_CHANNEL_ID)
+    if channel is None:
+        return
+
+    now = datetime.now(EVENT_PING_TZ)
+    current_hm = now.strftime("%H:%M")
+
+    for event_name, times in EVENT_PING_SCHEDULE.items():
+        if current_hm not in times:
+            continue
+        if _event_last_ping_minute.get(event_name) == current_hm:
+            continue  # already pinged this exact minute
+        _event_last_ping_minute[event_name] = current_hm
+
+        role = discord.utils.get(channel.guild.roles, name=event_name) if channel.guild else None
+        mention = role.mention if role else f"**{event_name}**"
+        try:
+            await channel.send(f"⏰ {mention} — **{event_name}** is starting now!")
+        except discord.HTTPException as e:
+            print(f"[EventPing] Failed to send ping for {event_name}: {e}")
+        if role is None:
+            print(f"[EventPing] No role named '{event_name}' found in the server — pinged with plain text instead.")
+
+
+@event_ping_loop.before_loop
+async def before_event_ping_loop():
+    await bot.wait_until_ready()
+
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
     await refresh_live_leaderboards()
+    if not event_ping_loop.is_running():
+        event_ping_loop.start()
 
 
 @bot.event
@@ -976,6 +1035,32 @@ async def cleanleaderboards_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
+@bot.command(name="testeventping")
+@commands.has_permissions(manage_guild=True)
+async def testeventping(ctx, *, event_name: str = None):
+    """Manually fires an event ping right now, to test role/channel setup. Usage: ?testeventping <event name>"""
+    if not event_name or event_name not in EVENT_PING_SCHEDULE:
+        valid = ", ".join(EVENT_PING_SCHEDULE.keys())
+        await ctx.send(f"⚠️ Usage: `?testeventping <event name>`. Valid: {valid}")
+        return
+
+    channel = bot.get_channel(EVENT_PING_CHANNEL_ID)
+    if channel is None:
+        await ctx.send("⚠️ Couldn't find the event ping channel.")
+        return
+
+    role = discord.utils.get(ctx.guild.roles, name=event_name) if ctx.guild else None
+    mention = role.mention if role else f"**{event_name}** (⚠️ no matching role found!)"
+    await channel.send(f"⏰ {mention} — **{event_name}** is starting now! (test ping)")
+    await ctx.send(f"✅ Test ping sent to <#{EVENT_PING_CHANNEL_ID}>.")
+
+
+@testeventping.error
+async def testeventping_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
+
+
 @bot.command(name="postleaderboards", aliases=["refreshleaderboards"])
 @commands.has_permissions(manage_guild=True)
 async def postleaderboards(ctx):
@@ -988,6 +1073,32 @@ async def postleaderboards(ctx):
 async def postleaderboards_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
+
+
+@bot.command(name="persona")
+@commands.has_permissions(manage_guild=True)
+async def persona_cmd(ctx, name: str = None):
+    """Switch the bot's chat personality. Usage: ?persona <name>. See ?personas for options."""
+    if name is None or name.lower() not in PERSONA_STYLES:
+        available = ", ".join(PERSONA_STYLES.keys())
+        await ctx.send(f"⚠️ Usage: `?persona <name>`. Available: {available}")
+        return
+    set_active_persona(name.lower())
+    await ctx.send(f"✅ Personality switched to **{name.lower()}**.")
+
+
+@persona_cmd.error
+async def persona_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to do that.")
+
+
+@bot.command(name="personas")
+async def personas_cmd(ctx):
+    """Lists available chat personalities and shows which one is active."""
+    active = get_active_persona()
+    lines = [f"**{name}**{' (active)' if name == active else ''}" for name in PERSONA_STYLES]
+    await ctx.send("**Available personas:**\n" + "\n".join(lines))
 
 
 @bot.command(name="leaderboard")

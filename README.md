@@ -103,6 +103,10 @@ whenever a new vouch is recorded — no need to keep running `?leaderboard`
 manually. If those messages ever get deleted, just restart the bot and
 they'll be recreated.
 
+- `?postleaderboards` (alias `?refreshleaderboards`) — manually forces the
+  3 live leaderboard embeds to post/refresh immediately, instead of waiting
+  for a new vouch or a restart. Requires Manage Server permission.
+
 ## Audit log
 
 Every recorded vouch, backfill, and sync gets logged to channel
@@ -150,6 +154,29 @@ and it'll post a warning in the audit log channel when that happens.
 @mention the bot anywhere and it'll reply conversationally, remembering the
 last several messages in that channel so you can have an actual back-and-forth.
 
+It automatically knows your real vouch totals (and anyone else's you
+@mention alongside it), so you can ask things like "how many vouches do I
+have" or "what's @Nico's total" and get an accurate answer pulled straight
+from the vouch data — no guessing. If you ask about someone you didn't
+@mention, it'll say it doesn't have their stats handy and point you to
+`?vouches @user`.
+
+You can also just ask for a leaderboard in chat — e.g. "show me the
+security leaderboard" or "@bot leaderboard" — and it'll post the real
+leaderboard embed directly (skipping the AI entirely for speed and
+accuracy). Mention "security" or "support" to get that one; otherwise it
+defaults to Host.
+
+It does NOT have real knowledge of specific Deepwoken game mechanics
+(exact stat requirements, talents, etc.) — it'll admit when it's unsure
+instead of making things up rather than guess wrong.
+
+- `?shutdown` (alias `?sleep`) — turns off @mention chat. Vouch tracking,
+  leaderboards, and everything else keeps working normally. Requires
+  Manage Server permission. The setting persists across restarts.
+- `?awake` (alias `?wakeup`) — turns chat back on. Requires Manage Server
+  permission.
+
 **Setup (free, no credit card):**
 1. Go to https://build.nvidia.com and sign up (free NVIDIA Developer account)
 2. Go to **API Keys** → **Generate API Key**
@@ -157,13 +184,41 @@ last several messages in that channel so you can have an actual back-and-forth.
    - `NVIDIA_API_KEY` = the key you just generated
 4. Redeploy
 
-Uses `nvidia/llama-3.3-nemotron-super-49b-v1.5` by default (a solid free
-general-purpose model). You can override it by setting an `NVIDIA_MODEL`
-variable to any model ID from the catalog at build.nvidia.com/models.
-The free tier allows roughly 40 requests/minute.
+Uses `meta/llama-3.1-70b-instruct` by default — bigger and more capable
+than the original 49B Nemotron, and confirmed available on the free hosted
+endpoint (NVIDIA's 405B Llama model is currently listed as
+"download/self-host only" on their catalog and returns a 404 through the
+hosted API, so it's not usable here). You can override the model by setting
+an `NVIDIA_MODEL` variable to any model ID from the catalog at
+build.nvidia.com/models — just check the model's catalog page says it
+supports live API calls, not just download, before switching to it. The
+free tier allows roughly 40 requests/minute.
 
 Note: chat memory is in-memory only, scoped per channel, and resets when
 the bot restarts — it doesn't persist to the vouch data file.
+
+## Scheduled event pings
+
+The bot automatically pings a role in channel `1529142467658649640` at the
+exact scheduled times for three recurring Deepwoken world events, based on
+Libya (Africa/Tripoli, UTC+2) local time:
+
+- **Carnival of Hearts**
+- **Interluminary Parasol**
+- **Battle Royale**
+
+Each event pings a Discord role with the **exact same name** as the event
+(e.g. a role literally called "Carnival of Hearts" must exist in the
+server) — same pattern as the rank roles. If no matching role is found, it
+still posts the ping with the event name in bold instead of a mention, and
+logs a warning so you know to create the role.
+
+- `?testeventping <event name>` — manually fires a ping right now to test
+  the role/channel setup, without waiting for the actual scheduled time.
+  Requires Manage Server permission.
+
+To change the times, timezone, or channel, edit `EVENT_PING_SCHEDULE`,
+`EVENT_PING_TZ`, and `EVENT_PING_CHANNEL_ID` near the top of `vouch_bot.py`.
 
 ## Persistent storage (important)
 
