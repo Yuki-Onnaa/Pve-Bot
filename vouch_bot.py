@@ -776,7 +776,7 @@ async def event_ping_loop():
         role = discord.utils.get(channel.guild.roles, name=event_name) if channel.guild else None
         mention = role.mention if role else f"**{event_name}**"
         try:
-            await channel.send(f"⏰ {mention} — **{event_name}** is starting now!")
+            await channel.send(f"⏰ {mention} **{event_name}** is starting now!")
         except discord.HTTPException as e:
             print(f"[EventPing] Failed to send ping for {event_name}: {e}")
         if role is None:
