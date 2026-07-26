@@ -153,6 +153,14 @@ and it'll post a warning in the audit log channel when that happens.
 
 @mention the bot anywhere and it'll reply conversationally, remembering the
 last several messages in that channel so you can have an actual back-and-forth.
+It's built to feel like a member of the server rather than an assistant —
+it doesn't lead with "how can I help," has opinions, and won't bring up
+vouch tracking unless you actually ask about it.
+
+It also occasionally jumps into conversation on its own — without being
+@mentioned — in channel `1478405937080307806`, roughly once every 10-15
+messages, reading the recent chat and chiming in like a regular member
+would. This only happens in that one channel.
 
 It automatically knows your real vouch totals (and anyone else's you
 @mention alongside it), so you can ask things like "how many vouches do I
@@ -171,11 +179,29 @@ It does NOT have real knowledge of specific Deepwoken game mechanics
 (exact stat requirements, talents, etc.) — it'll admit when it's unsure
 instead of making things up rather than guess wrong.
 
-- `?shutdown` (alias `?sleep`) — turns off @mention chat. Vouch tracking,
-  leaderboards, and everything else keeps working normally. Requires
-  Manage Server permission. The setting persists across restarts.
+- `?shutdown` (alias `?sleep`) — turns off @mention chat and the passive
+  chime-ins. Vouch tracking, leaderboards, and everything else keeps
+  working normally. Requires Manage Server permission. The setting
+  persists across restarts.
 - `?awake` (alias `?wakeup`) — turns chat back on. Requires Manage Server
   permission.
+- `?persona <name>` — switches the bot's personality. Options: `default`,
+  `hype`, `chill`, `sarcastic`, `formal`. Requires Manage Server permission.
+- `?personas` — lists available personas and shows which one is active.
+
+### Memory
+
+The bot can permanently remember specific facts you teach it, surviving
+restarts (stored alongside the vouch data, so make sure the persistent
+Volume is set up — see below).
+
+- `?addmemory <text>` (alias `?remember`) — teaches the bot something to
+  remember permanently, e.g. `?addmemory Our server was founded in 2024`.
+  Requires Manage Server permission.
+- `?memories` — lists everything currently remembered, with IDs. Anyone
+  can run this.
+- `?removememory <id>` (alias `?forget`) — removes a specific memory by
+  ID (get the ID from `?memories`). Requires Manage Server permission.
 
 **Setup (free, no credit card):**
 1. Go to https://build.nvidia.com and sign up (free NVIDIA Developer account)
@@ -206,6 +232,7 @@ Libya (Africa/Tripoli, UTC+2) local time:
 - **Carnival of Hearts**
 - **Interluminary Parasol**
 - **Battle Royale**
+- **Doom of Caeranthil**
 
 Each event pings a Discord role with the **exact same name** as the event
 (e.g. a role literally called "Carnival of Hearts" must exist in the

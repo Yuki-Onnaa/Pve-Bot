@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import re
 import uuid
 from datetime import datetime, timezone
@@ -47,33 +48,36 @@ CHAT_CORE_RULES = (
 # Swappable tone/personality presets — admins pick one with ?persona <name>
 PERSONA_STYLES = {
     "default": (
-        "You are the Discord bot for a Deepwoken gaming community server. When someone "
-        "@mentions you, chat with them casually and helpfully like a friendly community "
-        "member. Keep replies fairly short (a few sentences) unless they clearly want more "
-        "detail. You happen to also track vouches, but that's not what this conversation is "
-        "about unless they bring it up."
+        "You're a member of this Deepwoken Discord server, not an assistant or a customer "
+        "service bot. Talk like a regular person hanging out — have opinions, disagree "
+        "sometimes, joke around, don't default to being maximally helpful or agreeable. "
+        "Never say things like 'How can I help you' or 'How can I assist you today' — that's "
+        "assistant-speak, not how a person talks. Keep replies short, like a real chat message, "
+        "not a paragraph. You happen to know vouch stuff, but that's not your personality or "
+        "your job, it's just something you know."
     ),
     "hype": (
-        "You are the Discord bot for a Deepwoken gaming community server, with a high-energy "
-        "hype-man personality — think gaming caster energy, lots of enthusiasm, exclamation "
-        "points, hyping people up. Keep replies short and punchy. You happen to also track "
-        "vouches, but only bring that up if asked."
+        "You're a member of this Deepwoken Discord server with big hype-man energy — think "
+        "gaming caster hyping up plays, lots of enthusiasm, exclamation points. You're not an "
+        "assistant, you're just a hyped-up regular in the server. Keep replies short and "
+        "punchy, like real chat messages. You happen to know vouch stuff, but don't lead with it."
     ),
     "chill": (
-        "You are the Discord bot for a Deepwoken gaming community server, with a laid-back, "
-        "chill personality — relaxed, low-key, casual slang, not overly enthusiastic about "
-        "anything. Keep replies short. You happen to also track vouches, but only bring that "
-        "up if asked."
+        "You're a member of this Deepwoken Discord server with a laid-back, low-key vibe — "
+        "relaxed, casual slang, not trying hard. You're not an assistant, just someone chilling "
+        "in the server. Keep replies short. You happen to know vouch stuff, but don't lead with it."
     ),
     "sarcastic": (
-        "You are the Discord bot for a Deepwoken gaming community server, with a dry, witty, "
-        "lightly sarcastic personality — playful teasing, deadpan humor, never actually mean. "
-        "Keep replies short. You happen to also track vouches, but only bring that up if asked."
+        "You're a member of this Deepwoken Discord server with a dry, witty, sarcastic streak — "
+        "playful teasing, deadpan humor, never actually mean. You're not an assistant, you're "
+        "just a regular with an attitude. Keep replies short. You happen to know vouch stuff, "
+        "but don't lead with it."
     ),
     "formal": (
-        "You are the Discord bot for a Deepwoken gaming community server, with a polite, "
-        "professional, formal tone — like a helpful assistant, no slang, proper grammar. Keep "
-        "replies concise. You happen to also track vouches, but only bring that up if asked."
+        "You're a member of this Deepwoken Discord server who happens to type more formally "
+        "and properly than most people — but you're still just a person in the server, not a "
+        "customer service assistant. No 'how may I assist you' energy. Keep replies concise. "
+        "You happen to know vouch stuff, but don't lead with it."
     ),
 }
 DEFAULT_PERSONA = "default"
@@ -92,9 +96,47 @@ def set_active_persona(name):
     save_data(data)
 
 
+def get_memories():
+    data = load_data()
+    return data.get("_memories", [])
+
+
+def add_memory(text, added_by):
+    data = load_data()
+    memories = data.get("_memories", [])
+    memories.append({
+        "id": uuid.uuid4().hex[:8],
+        "text": text,
+        "added_by": added_by,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
+    memories = memories[-50:]  # cap so the system prompt doesn't balloon forever
+    data["_memories"] = memories
+    save_data(data)
+
+
+def remove_memory(memory_id):
+    data = load_data()
+    memories = data.get("_memories", [])
+    new_memories = [m for m in memories if m["id"] != memory_id]
+    removed = len(new_memories) != len(memories)
+    data["_memories"] = new_memories
+    save_data(data)
+    return removed
+
+
 def build_system_prompt(persona_name):
     style = PERSONA_STYLES.get(persona_name, PERSONA_STYLES[DEFAULT_PERSONA])
-    return style + "\n\n" + CHAT_CORE_RULES
+    prompt = style + "\n\n" + CHAT_CORE_RULES
+
+    memories = get_memories()
+    if memories:
+        memory_lines = "\n".join(f"- {m['text']}" for m in memories)
+        prompt += (
+            "\n\nThings you remember and know to be true about this server (refer to these "
+            "naturally when relevant, don't just recite the list):\n" + memory_lines
+        )
+    return prompt
 
 
 # Special persona for one specific user — swearing allowed, playful tone.
@@ -796,6 +838,69 @@ async def on_ready():
         event_ping_loop.start()
 
 
+# ── Passive "hanging out" chime-ins in one general channel ──
+CHIME_IN_CHANNEL_ID = 1478405937080307806
+_chime_in_counter = 0
+_chime_in_threshold = random.randint(10, 15)
+
+
+def _reset_chime_threshold():
+    global _chime_in_threshold
+    _chime_in_threshold = random.randint(10, 15)
+
+
+async def maybe_chime_in(message):
+    global _chime_in_counter
+
+    if message.channel.id != CHIME_IN_CHANNEL_ID:
+        return
+    if not is_chat_enabled():
+        return
+    if message.content.startswith(bot.command_prefix):
+        return  # don't count or trigger on bot commands
+
+    _chime_in_counter += 1
+    if _chime_in_counter < _chime_in_threshold:
+        return
+
+    _chime_in_counter = 0
+    _reset_chime_threshold()
+
+    recent_lines = []
+    try:
+        async for msg in message.channel.history(limit=6):
+            if msg.author.bot:
+                continue
+            recent_lines.append(f"{msg.author.display_name}: {msg.content}")
+    except discord.HTTPException:
+        pass
+    recent_lines.reverse()
+    context_text = "\n".join(recent_lines) if recent_lines else "(no recent messages)"
+
+    prompt_messages = [{
+        "role": "user",
+        "content": (
+            f"Recent chat in this channel:\n{context_text}\n\n"
+            "Jump into this conversation naturally with a short, casual message — like a "
+            "regular server member randomly deciding to say something. Don't summarize the "
+            "conversation and don't address it like an assistant would. Just react or "
+            "contribute like a person casually chiming in. One or two sentences max."
+        ),
+    }]
+
+    try:
+        reply_text = await call_llm(prompt_messages, system_prompt=build_system_prompt(get_active_persona()))
+    except Exception as e:
+        print(f"[ChimeIn] Failed: {type(e).__name__}: {e}")
+        return
+
+    if reply_text and not reply_text.startswith("⚠️"):
+        try:
+            await message.channel.send(reply_text[:1900])
+        except discord.HTTPException:
+            pass
+
+
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -810,6 +915,8 @@ async def on_message(message):
             return
         await handle_chat_mention(message)
         return
+
+    await maybe_chime_in(message)
 
     category = CHANNEL_CATEGORY.get(message.channel.id)
     if category is None:
@@ -1077,6 +1184,56 @@ async def postleaderboards(ctx):
 async def postleaderboards_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
+
+
+@bot.command(name="addmemory", aliases=["remember"])
+@commands.has_permissions(manage_guild=True)
+async def addmemory(ctx, *, text: str = None):
+    """Teaches the bot a permanent fact it'll remember even after restarts. Usage: ?addmemory <text>"""
+    if not text:
+        await ctx.send("⚠️ Usage: `?addmemory <text>` — e.g. `?addmemory Our server was founded in 2024`")
+        return
+    add_memory(text, ctx.author.id)
+    await ctx.send(f"🧠 Got it, I'll remember: \"{text}\"")
+
+
+@addmemory.error
+async def addmemory_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to add memories.")
+
+
+@bot.command(name="memories")
+async def memories_cmd(ctx):
+    """Lists everything the bot currently remembers."""
+    memories = get_memories()
+    if not memories:
+        await ctx.send("I don't have any saved memories yet.")
+        return
+    lines = [f"`{m['id']}` — {m['text']}" for m in memories]
+    text = "\n".join(lines)
+    if len(text) > 1900:
+        text = text[:1900] + "\n…(truncated)"
+    await ctx.send(f"**🧠 Things I remember:**\n{text}")
+
+
+@bot.command(name="removememory", aliases=["forget"])
+@commands.has_permissions(manage_guild=True)
+async def removememory(ctx, memory_id: str = None):
+    """Removes a saved memory by ID. Usage: ?removememory <id> — get IDs from ?memories"""
+    if not memory_id:
+        await ctx.send("⚠️ Usage: `?removememory <id>` — get IDs from `?memories`")
+        return
+    if remove_memory(memory_id):
+        await ctx.send(f"🗑️ Forgot memory `{memory_id}`.")
+    else:
+        await ctx.send(f"⚠️ Couldn't find a memory with id `{memory_id}`.")
+
+
+@removememory.error
+async def removememory_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to remove memories.")
 
 
 @bot.command(name="persona")
