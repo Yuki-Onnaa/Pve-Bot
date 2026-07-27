@@ -21,7 +21,7 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # No credit card required. Sign up → API Keys → Generate Key.
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "mistralai/mistral-small-3.1-24b-instruct-2503")
 # Deepwoken Fandom wiki — used to ground chat answers in real info instead of guessing
 WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
 WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
@@ -796,7 +796,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="?", intents=intents)
+bot = commands.Bot(command_prefix="?", intents=intents, help_command=None)
 
 
 @tasks.loop(seconds=30)
@@ -908,10 +908,6 @@ async def on_message(message):
 
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not is_chat_enabled():
-            await message.reply(
-                "💤 I'm turned off right now. An admin can bring me back with `?awake`.",
-                mention_author=False,
-            )
             return
         await handle_chat_mention(message)
         return
@@ -1204,8 +1200,9 @@ async def addmemory_error(ctx, error):
 
 
 @bot.command(name="memories")
+@commands.has_permissions(manage_guild=True)
 async def memories_cmd(ctx):
-    """Lists everything the bot currently remembers."""
+    """Lists everything the bot currently remembers. Requires Manage Server permission."""
     memories = get_memories()
     if not memories:
         await ctx.send("I don't have any saved memories yet.")
@@ -1215,6 +1212,12 @@ async def memories_cmd(ctx):
     if len(text) > 1900:
         text = text[:1900] + "\n…(truncated)"
     await ctx.send(f"**🧠 Things I remember:**\n{text}")
+
+
+@memories_cmd.error
+async def memories_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to view memories.")
 
 
 @bot.command(name="removememory", aliases=["forget"])
