@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import json
 import os
 import random
@@ -833,6 +834,14 @@ async def before_event_ping_loop():
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
+    # Start the web dashboard in a background thread
+    try:
+        from dashboard import run_dashboard
+        t = threading.Thread(target=run_dashboard, daemon=True)
+        t.start()
+        print("[Dashboard] Started")
+    except Exception as e:
+        print(f"[Dashboard] Failed to start: {e}")
     await refresh_live_leaderboards()
     if not event_ping_loop.is_running():
         event_ping_loop.start()
