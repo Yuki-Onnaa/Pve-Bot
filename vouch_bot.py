@@ -986,6 +986,72 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
+@bot.event
+async def on_message_edit(before, after):
+    """If someone edits a message in a vouch channel into a valid vouch format, count it."""
+    if after.author.bot:
+        return
+
+    category = CHANNEL_CATEGORY.get(after.channel.id)
+    if category is None:
+        return
+
+    if before.content == after.content:
+        return
+
+    data = load_data()
+    recorded_ids, cooldown_ids, self_dropped = [], [], 0
+    event_name = None
+    handled = False
+
+    if category == "pve":
+        match = PVE_VOUCH_PATTERN.match(after.content)
+        if match:
+            handled = True
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(1))]
+            event_name = parse_pve_event(match.group(2))
+            if event_name is None:
+                await after.add_reaction("❌")
+                return
+            recorded_ids, cooldown_ids, self_dropped = record_vouch(
+                data, target_ids, after.author.id, "pve", event_name
+            )
+    else:
+        match = PHRASE_VOUCH_PATTERN.match(after.content)
+        if match:
+            handled = True
+            phrase = normalize(match.group(1))
+            category, event_name = PHRASE_ALIASES[phrase]
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
+            recorded_ids, cooldown_ids, self_dropped = record_vouch(
+                data, target_ids, after.author.id, category, event_name
+            )
+
+    if not handled:
+        return
+
+    save_data(data)
+
+    if self_dropped and not recorded_ids and not cooldown_ids:
+        await after.add_reaction("🚫")
+        return
+    if self_dropped:
+        await after.add_reaction("🚫")
+    if cooldown_ids:
+        await after.add_reaction("⏳")
+    if recorded_ids:
+        await after.add_reaction("✅")
+        points = CATEGORY_EVENTS[category][event_name]["points"]
+        targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
+        await log_audit(
+            f"✏️ **Edit vouch — {CATEGORY_NAMES[category]} — {event_name}** (+{points} pts each)\n"
+            f"By: <@{after.author.id}> → {targets_str}"
+        )
+        await refresh_live_leaderboards()
+        for target_id in recorded_ids:
+            await update_role_for_user(after.guild, target_id, category)
+
+
 # ─────────────────────────────────────────────────────────────
 # RANK PROGRESS HELPERS
 # ─────────────────────────────────────────────────────────────

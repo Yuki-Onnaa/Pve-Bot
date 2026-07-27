@@ -500,7 +500,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 }
 body{background:var(--bg);color:var(--text);font-family:var(--sans);display:flex;height:100vh;overflow:hidden;}
 /* Sidebar */
-.sidebar{width:220px;min-width:220px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 0;overflow-y:auto;}
+.sidebar{width:220px;min-width:220px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 0;overflow-y:auto;transition:transform 0.25s ease,width 0.25s ease;z-index:100;}
+.sidebar.collapsed{transform:translateX(-220px);width:0;min-width:0;padding:0;border:none;overflow:hidden;}
+.hamburger{background:none;border:none;color:var(--text);font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px;line-height:1;}
+.hamburger:hover{background:rgba(255,255,255,0.05);}
+@media(max-width:700px){.sidebar{position:fixed;top:0;left:0;height:100vh;}.sidebar.collapsed{transform:translateX(-220px);}.overlay{display:block!important;}}
 .sidebar-logo{padding:0 20px 24px;border-bottom:1px solid var(--border);}
 .sidebar-logo .icon{width:36px;height:36px;background:linear-gradient(135deg,var(--blue),var(--purple));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px;}
 .sidebar-logo h2{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);letter-spacing:0.5px;}
@@ -600,9 +604,10 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 </style>
 </head>
 <body>
+<div id="overlay" onclick="toggleSidebar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99;"></div>
 
 <!-- SIDEBAR -->
-<aside class="sidebar">
+<aside class="sidebar collapsed" id="sidebar">
   <div class="sidebar-logo">
     <div class="icon">◆</div>
     <h2>MATZYS OVERSEER</h2>
@@ -628,6 +633,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 <!-- MAIN -->
 <main class="main">
   <div class="topbar">
+    <button class="hamburger" onclick="toggleSidebar()">☰</button>
     <h1 id="page-title">Overview</h1>
     <span class="badge" id="persona-badge">default</span>
     <span class="badge green" id="chat-badge">Chat ON</span>
@@ -799,8 +805,23 @@ function showAlert(el, msg, type='success') {
   setTimeout(()=>el.innerHTML='', 3000);
 }
 
+// ── Sidebar ──
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const ov = document.getElementById('overlay');
+  const collapsed = sb.classList.toggle('collapsed');
+  ov.style.display = collapsed ? 'none' : 'block';
+}
+function closeSidebarOnMobile() {
+  if(window.innerWidth <= 700) {
+    document.getElementById('sidebar').classList.add('collapsed');
+    document.getElementById('overlay').style.display = 'none';
+  }
+}
+
 // ── Navigation ──
 function showSection(name) {
+  closeSidebarOnMobile();
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
   document.getElementById('sec-'+name).classList.add('active');
