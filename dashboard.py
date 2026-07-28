@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from functools import wraps
 
-import requests
+import urllib.error
+import urllib.request
 from flask import Flask, session, redirect, request, jsonify, render_template_string
 
 # ─────────────────────────────────────────────────────────────
@@ -141,13 +142,12 @@ def is_admin_guild(guild):
         return False
 
 def discord_get(path, token):
-    r = requests.get(
+    req = urllib.request.Request(
         f"{API_BASE}{path}",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=15,
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "MatzysOverseer (dashboard, 1.0)"},
     )
-    r.raise_for_status()
-    return r.json()
+    with urllib.request.urlopen(req, timeout=15) as res:
+        return json.loads(res.read().decode())
 
 def admin_required(f):
     """Blocks anything that isn't a Discord-authenticated server administrator."""
@@ -204,24 +204,30 @@ def oauth_callback():
     if not code:
         return fail("Discord didn't return a login code. Try again.")
 
+    payload = urllib.parse.urlencode({
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+    }).encode()
+    token_req = urllib.request.Request(
+        f"{API_BASE}/oauth2/token",
+        data=payload,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "MatzysOverseer (dashboard, 1.0)",
+        },
+    )
     try:
-        token_res = requests.post(
-            f"{API_BASE}/oauth2/token",
-            data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": DISCORD_REDIRECT_URI,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
-        )
-        token_res.raise_for_status()
-        access_token = token_res.json()["access_token"]
+        with urllib.request.urlopen(token_req, timeout=15) as res:
+            access_token = json.loads(res.read().decode())["access_token"]
         user = discord_get("/users/@me", access_token)
         guilds = discord_get("/users/@me/guilds", access_token)
-    except requests.RequestException:
+    except urllib.error.HTTPError as e:
+        print(f"[Dashboard] Discord OAuth error {e.code}: {e.read()[:300]}")
+        return fail("Discord rejected the login. Check your client ID, secret and redirect URI.")
+    except (urllib.error.URLError, TimeoutError):
         return fail("Couldn't reach Discord. Try again in a moment.")
     except (KeyError, ValueError):
         return fail("Discord returned an unexpected response. Try again.")
