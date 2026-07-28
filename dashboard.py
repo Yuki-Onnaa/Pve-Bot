@@ -30,6 +30,9 @@ ALLOWED_USER_IDS = {
     u.strip() for u in os.environ.get("ALLOWED_USER_IDS", "").split(",") if u.strip()
 }
 
+# Embedded dashboard logo (base64 so it needs no hosting).
+LOGO_SRC = "data:image/jpeg;base64,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"
+
 API_BASE = "https://discord.com/api/v10"
 CDN_BASE = "https://cdn.discordapp.com"
 PERM_ADMINISTRATOR = 0x8
@@ -621,13 +624,12 @@ body{background:var(--bg);color:var(--text);font-family:'Poppins',system-ui,sans
   background:radial-gradient(circle,rgba(47,155,245,0.35),transparent 62%);filter:blur(40px);pointer-events:none}
 .card{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:18px;
   padding:40px 32px;width:100%;max-width:420px;text-align:center}
-.mark{width:56px;height:56px;margin:0 auto 20px;border-radius:16px;display:flex;align-items:center;
-  justify-content:center;font-size:24px;background:linear-gradient(140deg,#2f9bf5,#1567c9);
-  box-shadow:0 8px 30px rgba(47,155,245,0.35)}
-h1{font-size:24px;font-weight:700;letter-spacing:-0.4px}
+.mark{width:72px;height:72px;margin:0 auto 22px;border-radius:20px;display:block;object-fit:cover;
+  border:1px solid var(--border);box-shadow:0 10px 34px rgba(0,0,0,.5)}
+h1{font-size:26px;font-weight:700;letter-spacing:-0.6px}
 h1 span{color:var(--blue)}
 p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
-.discord-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin-top:28px;
+.discord-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin-top:30px;
   background:#5865f2;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:600;
   font-family:inherit;cursor:pointer;text-decoration:none;transition:transform .15s,background .15s}
 .discord-btn:hover{background:#4752c4;transform:translateY(-1px)}
@@ -643,9 +645,8 @@ p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
 <body>
 <div class="glow"></div>
 <div class="card">
-  <div class="mark">&#9670;</div>
+  <img class="mark" src="__LOGO__" alt="">
   <h1>Matzys <span>Overseer</span></h1>
-  <p class="sub">Sign in with Discord. You need the Administrator permission in the server to get in.</p>
 
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
@@ -661,7 +662,7 @@ p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
   {% endif %}
 </div>
 </body>
-</html>"""
+</html>""".replace("__LOGO__", LOGO_SRC)
 
 # ─────────────────────────────────────────────────────────────
 # DASHBOARD HTML
@@ -698,8 +699,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   display:flex;align-items:center;justify-content:center;line-height:0;transition:background .15s}
 .icon-btn:hover{background:rgba(255,255,255,.06)}
 .icon-btn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
-.brand{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
-  font-size:16px;background:linear-gradient(140deg,#2f9bf5,#1567c9);box-shadow:0 6px 18px rgba(47,155,245,.3);flex-shrink:0}
+.brand{width:34px;height:34px;border-radius:11px;display:block;object-fit:cover;flex-shrink:0;
+  border:1px solid var(--border)}
 .spacer{flex:1}
 
 /* Guild picker pill */
@@ -746,7 +747,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   color:var(--muted);font-size:14px;font-weight:500;transition:all .15s}
 .nav-item:hover{color:var(--text);background:var(--card)}
 .nav-item.active{color:var(--blue);background:rgba(47,155,245,.12)}
-.nav-item .ic{font-size:15px;width:20px;text-align:center}
+.nav-item .ic{width:19px;height:19px;flex-shrink:0}
+.menu-item .mi{width:17px;height:17px;flex-shrink:0}
 .drawer-foot{padding:14px 18px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;margin-right:7px;
   animation:pulse 2.4s infinite}
@@ -772,7 +774,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .feature{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;
   display:flex;flex-direction:column;transition:border-color .18s,transform .18s}
 .feature:hover{border-color:var(--border-2);transform:translateY(-2px)}
-.feature .ic{font-size:22px;margin-bottom:18px}
+.feature .ic{margin-bottom:18px;color:var(--blue);line-height:0}
+.feature .ic svg{width:26px;height:26px}
 .feature h3{font-size:20px;font-weight:600;margin-bottom:10px}
 .feature p{color:var(--muted);font-size:15px;line-height:1.5;flex:1}
 .feature .btn{margin-top:20px;align-self:flex-start}
@@ -874,20 +877,20 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <!-- DRAWER -->
 <aside class="drawer" id="drawer">
   <div class="drawer-head">
-    <div class="brand">&#9670;</div>
+    <img class="brand" src="__LOGO__" alt="">
     <div><h2>Matzys Overseer</h2><p>Admin dashboard</p></div>
   </div>
   <nav class="nav">
     <div class="nav-label">Main</div>
-    <div class="nav-item active" data-sec="home" onclick="showSection('home',this)"><span class="ic">&#8962;</span> Home</div>
-    <div class="nav-item" data-sec="overview" onclick="showSection('overview',this)"><span class="ic">&#9707;</span> Overview</div>
-    <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><span class="ic">&#127942;</span> Leaderboards</div>
-    <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><span class="ic">&#9673;</span> Members</div>
+    <div class="nav-item active" data-sec="home" onclick="showSection('home',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg> Home</div>
+    <div class="nav-item" data-sec="overview" onclick="showSection('overview',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg> Overview</div>
+    <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg> Leaderboards</div>
+    <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</div>
     <div class="nav-label">Bot</div>
-    <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><span class="ic">&#128203;</span> Audit log</div>
-    <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><span class="ic">&#129504;</span> Memories</div>
-    <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><span class="ic">&#9200;</span> Event schedule</div>
-    <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><span class="ic">&#9881;</span> Settings</div>
+    <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
+    <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
+    <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
+    <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
   </nav>
   <div class="drawer-foot">
     <div><span class="dot"></span><span id="bot-label">Checking bot…</span></div>
@@ -899,11 +902,11 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <button class="icon-btn" onclick="openDrawer()" aria-label="Open menu">
     <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
   </button>
-  <div class="brand">&#9670;</div>
+  <img class="brand" src="__LOGO__" alt="">
   <div class="spacer"></div>
   <div class="picker">
     <button class="pill" id="guild-pill" onclick="toggleMenu('guild-menu')">
-      <span class="fallback" id="guild-icon">&#9670;</span>
+      <span class="fallback" id="guild-icon">&nbsp;</span>
       <span class="name" id="guild-name">Loading…</span>
       <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
     </button>
@@ -919,9 +922,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </button>
     <div class="menu" id="user-menu">
       <div class="menu-label" id="user-handle">Signed in</div>
-      <div class="menu-item" onclick="showSection('settings')"><span>&#9881;</span> Settings</div>
+      <div class="menu-item" onclick="showSection('settings')"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
       <div class="menu-sep"></div>
-      <a class="menu-item danger" href="/logout"><span>&#8617;</span> Sign out</a>
+      <a class="menu-item danger" href="/logout"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg> Sign out</a>
     </div>
   </div>
 </header>
@@ -936,37 +939,37 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <div class="cards">
       <article class="feature">
-        <div class="ic">&#127942;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg></div>
         <h3>Leaderboards</h3>
         <p>See who is on top for hosting, security and support, ranked by the points your bot has handed out.</p>
         <button class="btn btn-soft" onclick="showSection('leaderboard')">Open leaderboards</button>
       </article>
       <article class="feature">
-        <div class="ic">&#9673;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
         <h3>Members</h3>
         <p>Look up any member, add a vouch by hand, or revert one that shouldn't have counted.</p>
         <button class="btn btn-soft" onclick="showSection('users')">Manage members</button>
       </article>
       <article class="feature">
-        <div class="ic">&#128203;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg></div>
         <h3>Audit log</h3>
         <p>Every vouch, who gave it and when. Backfilled entries are marked so you can spot them fast.</p>
         <button class="btn btn-soft" onclick="showSection('audit')">View audit log</button>
       </article>
       <article class="feature">
-        <div class="ic">&#129504;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
         <h3>Memories</h3>
         <p>Teach the bot facts it should keep in mind during chats, and drop the ones it no longer needs.</p>
         <button class="btn btn-soft" onclick="showSection('memories')">Edit memories</button>
       </article>
       <article class="feature">
-        <div class="ic">&#9200;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg></div>
         <h3>Event schedule</h3>
         <p>Check the ping times for every recurring event so nobody misses a run.</p>
         <button class="btn btn-soft" onclick="showSection('events')">View schedule</button>
       </article>
       <article class="feature">
-        <div class="ic">&#9881;</div>
+        <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg></div>
         <h3>Settings</h3>
         <p>Point the bot at the right channels, pick its persona, and switch chat on or off.</p>
         <button class="btn btn-soft" onclick="showSection('settings')">Open settings</button>
@@ -1458,7 +1461,7 @@ loadStatus();
 setInterval(loadStatus, 30000);
 </script>
 </body>
-</html>"""
+</html>""".replace("__LOGO__", LOGO_SRC)
 
 # ─────────────────────────────────────────────────────────────
 # ENTRY POINT
