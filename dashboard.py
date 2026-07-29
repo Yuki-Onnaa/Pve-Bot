@@ -2686,6 +2686,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item active" data-sec="home" onclick="showSection('home',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg> Home</div>
     <div class="nav-item" data-sec="overview" onclick="showSection('overview',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg> Overview</div>
     <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg> Leaderboards</div>
+    <a class="nav-item" href="/members" style="text-decoration:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Member directory</a>
     <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</div>
     <div class="nav-label">Bot</div>
     <div class="nav-item" data-sec="activity" onclick="showSection('activity',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg> Site activity</div>
@@ -2840,6 +2841,15 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="tab active" onclick="switchLbTab('pve',this)">Host</div>
       <div class="tab" onclick="switchLbTab('security',this)">Security</div>
       <div class="tab" onclick="switchLbTab('support',this)">Support</div>
+      <div class="tab" onclick="switchLbTab('givers',this)">Vouchers</div>
+    </div>
+    <div class="filters" id="lb-giver-range" style="display:none">
+      <select id="lb-days" onchange="loadGiverBoard()">
+        <option value="0">All time</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
     </div>
     <div class="card"><div class="table-wrap" id="lb-table-wrap"><div class="empty">Loading…</div></div></div>
   </section>
@@ -3230,11 +3240,43 @@ async function loadLeaderboard(){
 }
 function switchLbTab(cat, el){
   currentLbCat = cat;
-  document.querySelectorAll('.tabs .tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('#sec-leaderboard .tabs .tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  renderLbTable(cat);
+  const isGivers = cat === 'givers';
+  document.getElementById('lb-giver-range').style.display = isGivers ? 'flex' : 'none';
+  if(isGivers){ loadGiverBoard(); } else { renderLbTable(cat); }
+}
+
+let giverBoard = null;
+async function loadGiverBoard(){
+  const wrap = document.getElementById('lb-table-wrap');
+  wrap.innerHTML = '<div class="empty">Loading…</div>';
+  const days = document.getElementById('lb-days').value;
+  const d = await api('/api/givers?days=' + days);
+  giverBoard = d;
+  if(!d || !d.givers || !d.givers.length){
+    wrap.innerHTML = '<div class="empty">No vouches have been given in this window.</div>';
+    return;
+  }
+  wrap.innerHTML =
+    '<table><thead><tr><th>#</th><th>Voucher</th><th>Given</th><th>Members</th>' +
+    '<th>Points issued</th><th>Last</th></tr></thead><tbody>' +
+    d.givers.map(function(g,i){
+      const who = g.uid
+        ? memberCell({uid:g.uid, name:g.name, avatar:g.avatar, resolved:g.resolved})
+        : '<div class="member"><span class="ph">?</span><div class="who"><div class="nm">' +
+          esc(g.name) + '</div><div class="id">no id</div></div></div>';
+      return '<tr><td style="color:var(--dim)">' + (i+1) + '</td>' +
+        '<td>' + who + '</td>' +
+        '<td class="mono" style="color:var(--text);font-weight:600">' + fmt(g.given) + '</td>' +
+        '<td class="mono">' + g.people + '</td>' +
+        '<td class="mono">' + fmt(g.points) + '</td>' +
+        '<td class="mono" style="font-size:11px;color:var(--muted)">' +
+        String(g.last || '').substring(0,10) + '</td></tr>';
+    }).join('') + '</tbody></table>';
 }
 function renderLbTable(cat){
+  if(cat === 'givers'){ loadGiverBoard(); return; }
   const rows = (lbData[cat]||[]);
   const wrap = document.getElementById('lb-table-wrap');
   if(!rows.length){wrap.innerHTML='<div class="empty">No vouches recorded yet.</div>';return;}
