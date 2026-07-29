@@ -875,49 +875,103 @@ def clean_wiki_query(text):
     return cleaned or text
 
 
+# Fandom sits behind Cloudflare and rejects requests with a default python
+# user agent, so identify ourselves properly.
+WIKI_HEADERS = {
+    "User-Agent": os.environ.get(
+        "WIKI_USER_AGENT",
+        "MatzysOverseer/1.0 (Discord bot; +https://github.com/) aiohttp",
+    ),
+    "Accept": "application/json",
+}
+
+# Set when a lookup fails for a reason other than "no results", so callers can
+# tell a broken search apart from a genuine miss.
+WIKI_LAST_ERROR = None
+
+
+async def _wiki_get(session, params, timeout=10):
+    """One call to the wiki API. Returns parsed JSON or None, and records why it failed."""
+    global WIKI_LAST_ERROR
+    try:
+        async with session.get(WIKI_API_URL, params=params, timeout=timeout) as resp:
+            body = await resp.text()
+            if resp.status != 200:
+                WIKI_LAST_ERROR = f"HTTP {resp.status}"
+                print(f"[Wiki] HTTP {resp.status} from {WIKI_API_URL} :: {body[:300]}")
+                return None
+            try:
+                return json.loads(body)
+            except ValueError:
+                WIKI_LAST_ERROR = "not JSON"
+                print(f"[Wiki] Non-JSON response :: {body[:300]}")
+                return None
+    except asyncio.TimeoutError:
+        WIKI_LAST_ERROR = "timed out"
+        print("[Wiki] Request timed out")
+    except Exception as e:
+        WIKI_LAST_ERROR = f"{type(e).__name__}"
+        print(f"[Wiki] Request failed: {type(e).__name__}: {e}")
+    return None
+
+
+def _squash(text):
+    """Lowercase with everything but letters and digits removed."""
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+async def _wiki_search_titles(session, cleaned, raw_query):
+    """Full text search, falling back to opensearch which is more forgiving."""
+    data = await _wiki_get(session, {
+        "action": "query", "list": "search", "srsearch": cleaned,
+        "format": "json", "srlimit": 5, "srnamespace": 0,
+    }, timeout=10)
+    titles = [r["title"] for r in (data or {}).get("query", {}).get("search", [])]
+    if titles:
+        return titles
+
+    # opensearch handles partial and misspelled names better than full text search
+    data = await _wiki_get(session, {
+        "action": "opensearch", "search": cleaned or raw_query,
+        "limit": 5, "namespace": 0, "format": "json",
+    }, timeout=10)
+    if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list):
+        return data[1]
+    return []
+
+
 async def fetch_wiki_context(query, max_chars=900, max_sources=3):
     """
     Search the wiki, then scan the full text of the top candidates for the
     actual term, since many things (talents especially) live as a section
     inside a bigger page rather than their own article.
-    Returns a list of {title, snippet, url}, best match first. Empty if nothing fits.
+    Returns a list of {title, snippet, url}, best match first.
     """
+    global WIKI_LAST_ERROR
+    WIKI_LAST_ERROR = None
+
     cleaned = clean_wiki_query(query)
     search_terms = [w for w in re.findall(r"[a-zA-Z0-9]+", query.lower()) if len(w) > 2]
     if not search_terms:
         return []
 
     results = []
-    async with aiohttp.ClientSession() as session:
-        search_params = {
-            "action": "query", "list": "search", "srsearch": cleaned,
-            "format": "json", "srlimit": 5, "srnamespace": 0,
-        }
-        try:
-            async with session.get(WIKI_API_URL, params=search_params, timeout=8) as resp:
-                search_data = await resp.json()
-        except Exception as e:
-            print(f"[Wiki] Search failed: {type(e).__name__}: {e}")
-            return []
-
-        candidates = [r["title"] for r in search_data.get("query", {}).get("search", [])]
+    async with aiohttp.ClientSession(headers=WIKI_HEADERS) as session:
+        candidates = await _wiki_search_titles(session, cleaned, query)
         if not candidates:
             return []
 
         for title in candidates:
             if len(results) >= max_sources:
                 break
-            extract_params = {
-                "action": "query", "prop": "extracts", "explaintext": True,
+            data = await _wiki_get(session, {
+                "action": "query", "prop": "extracts", "explaintext": 1,
                 "titles": title, "format": "json", "redirects": 1,
-            }
-            try:
-                async with session.get(WIKI_API_URL, params=extract_params, timeout=12) as resp:
-                    extract_data = await resp.json()
-            except Exception:
+            }, timeout=14)
+            if not data:
                 continue
 
-            pages = extract_data.get("query", {}).get("pages", {})
+            pages = data.get("query", {}).get("pages", {})
             page = next(iter(pages.values()), {})
             full_text = page.get("extract") or ""
             if not full_text:
@@ -926,8 +980,15 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
             url = WIKI_BASE_URL + title.replace(" ", "_")
             lower_text = full_text.lower()
 
-            # if the page title itself is what they asked about, the intro is the answer
-            title_is_match = any(t in title.lower() for t in search_terms if len(t) > 3)
+            # "brickwall" should still match a page called "Brick Wall", so compare
+            # with spaces and punctuation stripped out on both sides
+            squashed_title = _squash(title)
+            squashed_query = _squash(query)
+            title_is_match = (
+                squashed_query and squashed_title
+                and (squashed_query in squashed_title or squashed_title in squashed_query)
+            ) or any(_squash(t) and _squash(t) in squashed_title
+                     for t in search_terms if len(t) > 3)
 
             match_pos = -1
             for term in sorted(search_terms, key=len, reverse=True):
@@ -935,6 +996,14 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
                 if pos != -1:
                     match_pos = pos
                     break
+            if match_pos == -1:
+                # try the squashed form against squashed text, for run-together names
+                squashed_text = _squash(full_text)
+                for term in sorted(search_terms, key=len, reverse=True):
+                    st = _squash(term)
+                    if st and st in squashed_text:
+                        match_pos = 0
+                        break
 
             if title_is_match and match_pos < 0:
                 match_pos = 0
@@ -951,6 +1020,23 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
                 snippet = snippet + "..."
 
             results.append({"title": title, "snippet": snippet, "url": url})
+
+        # search found pages but none contained the term verbatim; the top hit is
+        # still the best guess, so return its intro rather than nothing
+        if not results and candidates:
+            data = await _wiki_get(session, {
+                "action": "query", "prop": "extracts", "explaintext": 1,
+                "titles": candidates[0], "format": "json", "redirects": 1,
+            }, timeout=14)
+            pages = (data or {}).get("query", {}).get("pages", {})
+            page = next(iter(pages.values()), {})
+            intro = (page.get("extract") or "").strip()
+            if intro:
+                results.append({
+                    "title": candidates[0],
+                    "snippet": intro[:max_chars] + ("..." if len(intro) > max_chars else ""),
+                    "url": WIKI_BASE_URL + candidates[0].replace(" ", "_"),
+                })
 
     return results
 
@@ -2066,10 +2152,16 @@ async def slash_ask(interaction: discord.Interaction, question: str):
         sources = []
 
     if not sources:
-        await interaction.followup.send(
-            f"I could not find anything on the wiki for **{question[:100]}**. "
-            "Try naming the talent, mantra or boss directly."
-        )
+        if WIKI_LAST_ERROR:
+            await interaction.followup.send(
+                f"The wiki search is not responding right now ({WIKI_LAST_ERROR}). "
+                "An admin can check the Railway logs for lines starting with [Wiki]."
+            )
+        else:
+            await interaction.followup.send(
+                f"I could not find anything on the wiki for **{question[:100]}**. "
+                "Try naming the talent, mantra or boss directly."
+            )
         return
 
     prompt = f"{question}\n\n{format_wiki_context(sources)}"
@@ -2090,6 +2182,21 @@ async def slash_ask(interaction: discord.Interaction, question: str):
     )
     embed.set_footer(text="Answered from the wiki. Check the source if it matters.")
     await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="wikitest", description="Check the wiki connection (admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_wikitest(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    sources = await fetch_wiki_context("Talents")
+    if sources:
+        lines = "\n".join(f"- {s['title']} ({len(s['snippet'])} chars)" for s in sources)
+        await interaction.followup.send(
+            f"Wiki is reachable. Searching for 'Talents' returned:\n{lines}", ephemeral=True)
+    else:
+        await interaction.followup.send(
+            f"Wiki lookup failed. Reason: `{WIKI_LAST_ERROR or 'no results'}`\n"
+            f"API URL: `{WIKI_API_URL}`", ephemeral=True)
 
 
 @bot.tree.command(name="commands", description="List the server's custom ?commands")
