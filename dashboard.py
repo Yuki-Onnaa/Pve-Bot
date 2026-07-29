@@ -51,7 +51,7 @@ app.config.update(
 CATEGORY_NAMES = {"pve": "Host", "security": "Security", "support": "Support"}
 ALL_CATEGORIES = list(CATEGORY_NAMES.keys())
 
-CATEGORY_EVENTS = {
+FALLBACK_EVENT_POINTS = {
     "pve": {
         "Enmity": 1.5, "Elder": 2, "Titus": 3, "Hellmode": 15,
         "Deep Champion": 15, "Diluvian W (25)": 3, "Diluvian W (50)": 10,
@@ -65,6 +65,8 @@ CATEGORY_EVENTS = {
         "Support Vouch": 1, "Backup Vouch": 2, "Depths Safe Vouch": 5,
     },
 }
+
+CATEGORY_EVENTS = FALLBACK_EVENT_POINTS  # kept for older references
 
 PERSONAS = ["default", "hype", "chill", "sarcastic", "formal"]
 
@@ -137,11 +139,11 @@ def ensure_user_cat(data, uid, category):
 
 _bridge = {
     "bot": None, "loop": None, "guild_id": None,
-    "thresholds": {}, "metric": {}, "resync": None,
+    "thresholds": {}, "metric": {}, "resync": None, "events": {},
 }
 _name_cache = {}
 
-def set_bot(bot, loop=None, thresholds=None, metric=None, resync=None, guild_id=None):
+def set_bot(bot, loop=None, thresholds=None, metric=None, resync=None, guild_id=None, events=None):
     """Called once from the bot's on_ready so the dashboard can resolve names etc."""
     _bridge["bot"] = bot
     _bridge["loop"] = loop
@@ -149,7 +151,42 @@ def set_bot(bot, loop=None, thresholds=None, metric=None, resync=None, guild_id=
     _bridge["metric"] = metric or {}
     _bridge["resync"] = resync
     _bridge["guild_id"] = guild_id
+    _bridge["events"] = events or {}
     _name_cache.clear()
+
+
+# ─────────────────────────────────────────────────────────────
+# ECONOMY (event points and rank ladders, editable from the dashboard)
+# Stored overrides win; the bot's constants are the fallback.
+# ─────────────────────────────────────────────────────────────
+
+def default_event_points():
+    """The bot's CATEGORY_EVENTS flattened to {category: {event: points}}."""
+    if _bridge["events"]:
+        return {
+            cat: {name: cfg.get("points", 0) for name, cfg in events.items()}
+            for cat, events in _bridge["events"].items()
+        }
+    return {cat: dict(events) for cat, events in FALLBACK_EVENT_POINTS.items()}
+
+
+def default_ranks():
+    return {cat: [list(row) for row in ladder] for cat, ladder in (_bridge["thresholds"] or {}).items()}
+
+
+def get_economy(data=None):
+    """Merged view of event points and rank ladders."""
+    data = load_data() if data is None else data
+    stored = data.get("_economy", {})
+    events = default_event_points()
+    events.update({c: dict(v) for c, v in (stored.get("events") or {}).items()})
+    ranks = default_ranks()
+    ranks.update({c: [list(r) for r in v] for c, v in (stored.get("ranks") or {}).items()})
+    return {"events": events, "ranks": ranks}
+
+
+def event_points(category, event, data=None):
+    return get_economy(data)["events"].get(category, {}).get(event, 0)
 
 def resolve_user(uid):
     """Discord display name + avatar for a user ID, falling back to the raw ID."""
@@ -177,9 +214,9 @@ def resolve_user(uid):
             pass
     return info
 
-def rank_progress(category, points, vouches):
+def rank_progress(category, points, vouches, data=None):
     """Current rank role, next rank and how far along the user is."""
-    ladder = _bridge["thresholds"].get(category) or []
+    ladder = get_economy(data)["ranks"].get(category) or []
     if not ladder:
         return None
     value = vouches if _bridge["metric"].get(category) == "vouches" else points
@@ -593,13 +630,15 @@ def api_add_vouch():
 
     if not uid.isdigit():
         return jsonify({"error": "Invalid user ID"}), 400
-    if category not in CATEGORY_EVENTS:
+    if category not in ALL_CATEGORIES:
         return jsonify({"error": "Invalid category"}), 400
-    if event_name not in CATEGORY_EVENTS[category]:
+
+    data = load_data()
+    economy = get_economy(data)
+    if event_name not in economy["events"].get(category, {}):
         return jsonify({"error": f"Invalid event for {category}"}), 400
 
-    points = CATEGORY_EVENTS[category][event_name]
-    data = load_data()
+    points = economy["events"][category][event_name]
     record = ensure_user_cat(data, uid, category)
     record["total_points"] += points * count
     record["total_vouches"] += count
@@ -861,6 +900,110 @@ def api_roles_resync():
     except Exception as exc:
         return jsonify({"error": f"Resync failed: {exc}"}), 500
     return jsonify({"ok": True, **(result or {})})
+
+# ── API: Points and ranks ──
+
+@app.route("/api/economy", methods=["GET"])
+@admin_required
+def api_economy_get():
+    economy = get_economy()
+    return jsonify({
+        "events": economy["events"],
+        "ranks": economy["ranks"],
+        "metric": _bridge["metric"] or {},
+        "category_names": CATEGORY_NAMES,
+        "defaults": {"events": default_event_points(), "ranks": default_ranks()},
+    })
+
+
+@app.route("/api/economy", methods=["POST"])
+@admin_required
+def api_economy_save():
+    body = request.json or {}
+    section = body.get("section")
+    category = body.get("category")
+    if category not in ALL_CATEGORIES:
+        return jsonify({"error": "Unknown category."}), 400
+
+    data = load_data()
+    economy = data.setdefault("_economy", {})
+
+    if section == "events":
+        rows = body.get("events") or []
+        cleaned = {}
+        for row in rows:
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            if len(name) > 60:
+                return jsonify({"error": f"'{name[:20]}...' is too long (60 characters max)."}), 400
+            if name in cleaned:
+                return jsonify({"error": f"'{name}' is listed twice."}), 400
+            try:
+                points = round(float(row.get("points", 0)), 2)
+            except (ValueError, TypeError):
+                return jsonify({"error": f"'{name}' needs a number for points."}), 400
+            if points < 0 or points > 1000:
+                return jsonify({"error": f"'{name}' must be between 0 and 1000 points."}), 400
+            cleaned[name] = int(points) if points == int(points) else points
+        if not cleaned:
+            return jsonify({"error": "Keep at least one event in this category."}), 400
+
+        removed = [e for e in get_economy(data)["events"].get(category, {}) if e not in cleaned]
+        economy.setdefault("events", {})[category] = cleaned
+        save_data(data)
+        return jsonify({"ok": True, "removed": removed, "count": len(cleaned)})
+
+    if section == "ranks":
+        rows = body.get("ranks") or []
+        cleaned = []
+        seen_names = set()
+        for row in rows:
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            if len(name) > 90:
+                return jsonify({"error": f"'{name[:20]}...' is too long for a role name."}), 400
+            if name.lower() in seen_names:
+                return jsonify({"error": f"'{name}' is listed twice."}), 400
+            seen_names.add(name.lower())
+            try:
+                at = round(float(row.get("at", 0)), 2)
+            except (ValueError, TypeError):
+                return jsonify({"error": f"'{name}' needs a number to unlock at."}), 400
+            if at < 0:
+                return jsonify({"error": f"'{name}' cannot unlock below zero."}), 400
+            cleaned.append([int(at) if at == int(at) else at, name])
+
+        cleaned.sort(key=lambda r: r[0])
+        for i in range(1, len(cleaned)):
+            if cleaned[i][0] == cleaned[i - 1][0]:
+                return jsonify({
+                    "error": f"'{cleaned[i][1]}' and '{cleaned[i-1][1]}' both unlock at {cleaned[i][0]}."
+                }), 400
+
+        economy.setdefault("ranks", {})[category] = cleaned
+        save_data(data)
+        return jsonify({"ok": True, "count": len(cleaned), "ranks_changed": True})
+
+    return jsonify({"error": "Nothing to save."}), 400
+
+
+@app.route("/api/economy/reset", methods=["POST"])
+@admin_required
+def api_economy_reset():
+    body = request.json or {}
+    section = body.get("section")
+    category = body.get("category")
+    if category not in ALL_CATEGORIES or section not in ("events", "ranks"):
+        return jsonify({"error": "Unknown category or section."}), 400
+    data = load_data()
+    economy = data.get("_economy", {})
+    if category in economy.get(section, {}):
+        del economy[section][category]
+        save_data(data)
+    return jsonify({"ok": True})
+
 
 # ── API: Custom ? commands ──
 
@@ -1495,6 +1638,22 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .prefix-wrap span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--dim);
   font-family:var(--mono);font-size:14px;pointer-events:none}
 .prefix-wrap input{padding-left:28px!important;font-family:var(--mono)}
+.eco-row{display:flex;gap:9px;align-items:center;margin-bottom:9px}
+.eco-row input{background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;
+  color:var(--text);font-size:13.5px;font-family:var(--sans);outline:none;min-width:0}
+.eco-row input:focus{border-color:var(--moon)}
+.eco-row .nm{flex:1}
+.eco-row .num{width:104px;font-family:var(--mono);text-align:right}
+.eco-row .del{background:none;border:1px solid var(--border);color:var(--dim);border-radius:10px;
+  width:38px;height:38px;flex-shrink:0;cursor:pointer;font-size:16px;line-height:1;transition:all .15s}
+.eco-row .del:hover{color:var(--red);border-color:rgba(217,136,145,.4)}
+.eco-head{display:flex;gap:9px;padding:0 4px 8px;font-size:11px;letter-spacing:.9px;
+  text-transform:uppercase;color:var(--dim)}
+.eco-head .nm{flex:1}
+.eco-head .num{width:104px;text-align:right}
+.eco-head .sp{width:38px;flex-shrink:0}
+.eco-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px;align-items:center}
+.eco-note{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:14px}
 .alert{border-radius:12px;padding:13px 16px;font-size:13.5px;line-height:1.5}
 .alert-warn{background:rgba(216,187,134,.1);border:1px solid rgba(216,187,134,.24);color:var(--amber)}
 .alert-success{background:rgba(147,179,161,.1);border:1px solid rgba(147,179,161,.24);color:var(--sage)}
@@ -1548,6 +1707,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg> Leaderboards</div>
     <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</div>
     <div class="nav-label">Bot</div>
+    <div class="nav-item" data-sec="economy" onclick="showSection('economy',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg> Points &amp; ranks</div>
     <div class="nav-item" data-sec="commands" onclick="showSection('commands',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg> Commands</div>
     <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
     <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
@@ -1601,6 +1761,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <p>find commonly used dashboard pages below.</p>
     </div>
     <div class="cards">
+      <article class="feature">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg></div>
+        <h3>Points &amp; ranks</h3>
+        <p>Change what each event is worth and where every rank role unlocks, without touching the code.</p>
+        <button class="btn btn-soft" onclick="showSection('economy')">Tune the economy</button>
+      </article>
       <article class="feature">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg></div>
         <h3>Custom commands</h3>
@@ -1775,6 +1941,42 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div id="events-content"><div class="empty">Loading…</div></div>
   </section>
 
+  <!-- ECONOMY -->
+  <section id="sec-economy" class="section">
+    <div class="section-head"><h2>Points &amp; ranks</h2></div>
+    <div class="tabs" id="eco-tabs">
+      <div class="tab active" data-eco="pve">Host</div>
+      <div class="tab" data-eco="security">Security</div>
+      <div class="tab" data-eco="support">Support</div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Event points</div>
+      <div class="eco-note" id="ev-note">What each vouch is worth in this category.</div>
+      <div class="eco-head"><span class="nm">Event</span><span class="num">Points</span><span class="sp"></span></div>
+      <div id="ev-rows"></div>
+      <div class="eco-actions">
+        <button class="btn btn-ghost btn-sm" id="ev-add">Add event</button>
+        <button class="btn btn-primary" id="ev-save">Save event points</button>
+        <button class="btn btn-ghost btn-sm" id="ev-reset">Reset to defaults</button>
+      </div>
+      <div id="ev-result"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Rank ladder</div>
+      <div class="eco-note" id="rk-note">Role names must match your Discord roles exactly.</div>
+      <div class="eco-head"><span class="nm">Role name</span><span class="num" id="rk-unit">Unlocks at</span><span class="sp"></span></div>
+      <div id="rk-rows"></div>
+      <div class="eco-actions">
+        <button class="btn btn-ghost btn-sm" id="rk-add">Add rank</button>
+        <button class="btn btn-primary" id="rk-save">Save rank ladder</button>
+        <button class="btn btn-ghost btn-sm" id="rk-reset">Reset to defaults</button>
+      </div>
+      <div id="rk-result"></div>
+    </div>
+  </section>
+
   <!-- COMMANDS -->
   <section id="sec-commands" class="section">
     <div class="section-head"><h2>Custom commands</h2></div>
@@ -1881,7 +2083,7 @@ let currentDetailCat = 'pve';
 let currentLbCat = 'pve';
 let me = null;
 
-const CATEGORY_EVENTS = {
+let CATEGORY_EVENTS = {
   pve: {"Enmity":1.5,"Elder":2,"Titus":3,"Hellmode":15,"Deep Champion":15,"Diluvian W (25)":3,"Diluvian W (50)":10,"Parasol":5,"Layer 2 (1)":3,"Layer 2 (2)":7,"Other Bosses":1},
   security: {"Security Vouch":1,"Depths Vouch":1.5,"Defense Vouch":1,"Depths Defense Vouch":1.5},
   support: {"Support Vouch":1,"Backup Vouch":2,"Depths Safe Vouch":5}
@@ -1972,6 +2174,7 @@ function showSection(name, el){
   if(name==='users') loadUsers();
   if(name==='overview'){loadStatus();loadChart();}
   if(name==='commands') loadCommands();
+  if(name==='economy') loadEconomy();
 }
 
 // ── Status ──
@@ -2182,6 +2385,107 @@ async function loadEvents(){
     '<div class="times-grid">'+times.map(t=>'<span class="time-chip">'+t+'</span>').join('')+'</div></div>').join('');
 }
 
+// ── Points and ranks ──
+let ECONOMY = null;
+let ecoCat = 'pve';
+
+function ecoRow(name, value, numMin){
+  const row = document.createElement('div');
+  row.className = 'eco-row';
+  const a = document.createElement('input');
+  a.className = 'nm'; a.value = name == null ? '' : name; a.placeholder = 'Name';
+  const b = document.createElement('input');
+  b.className = 'num'; b.type = 'number'; b.step = '0.5'; b.min = String(numMin);
+  b.value = value == null ? '' : value;
+  const x = document.createElement('button');
+  x.className = 'del'; x.type = 'button'; x.title = 'Remove'; x.textContent = '\u00d7';
+  x.onclick = function(){ row.remove(); };
+  row.appendChild(a); row.appendChild(b); row.appendChild(x);
+  return row;
+}
+function readRows(id, valueKey){
+  const out = [];
+  document.getElementById(id).querySelectorAll('.eco-row').forEach(function(r){
+    const name = r.querySelector('.nm').value.trim();
+    const num = r.querySelector('.num').value;
+    if(!name && num === '') return;
+    const item = {name: name};
+    item[valueKey] = num === '' ? 0 : Number(num);
+    out.push(item);
+  });
+  return out;
+}
+async function loadEconomy(){
+  ECONOMY = await api('/api/economy');
+  if(!ECONOMY || !ECONOMY.events) return;
+  CATEGORY_EVENTS = ECONOMY.events;
+  renderEconomy();
+}
+function renderEconomy(){
+  if(!ECONOMY) return;
+  const events = ECONOMY.events[ecoCat] || {};
+  const ranks = ECONOMY.ranks[ecoCat] || [];
+  const metric = (ECONOMY.metric || {})[ecoCat] === 'vouches' ? 'vouches' : 'points';
+
+  const ev = document.getElementById('ev-rows');
+  ev.innerHTML = '';
+  Object.keys(events).forEach(function(name){ ev.appendChild(ecoRow(name, events[name], 0)); });
+
+  const rk = document.getElementById('rk-rows');
+  rk.innerHTML = '';
+  ranks.forEach(function(r){ rk.appendChild(ecoRow(r[1], r[0], 0)); });
+
+  document.getElementById('rk-unit').textContent = 'Unlocks at (' + metric + ')';
+  document.getElementById('rk-note').textContent =
+    'Measured in ' + metric + '. Role names must match your Discord roles exactly.';
+  if(!ranks.length) rk.innerHTML = '<div class="empty">No rank ladder for this category yet.</div>';
+}
+async function saveEconomy(section){
+  const el = document.getElementById(section === 'events' ? 'ev-result' : 'rk-result');
+  const body = {section: section, category: ecoCat};
+  if(section === 'events') body.events = readRows('ev-rows', 'points');
+  else body.ranks = readRows('rk-rows', 'at');
+  const r = await api('/api/economy', {method:'POST', body: JSON.stringify(body)});
+  if(!r.ok){ showAlert(el, r.error || 'Could not save.', 'err'); return; }
+  if(section === 'events'){
+    let msg = 'Saved ' + r.count + ' events. New vouches use these values right away.';
+    if(r.removed && r.removed.length){
+      msg += ' Removed: ' + r.removed.map(esc).join(', ') + '. Past vouches keep their original points.';
+    }
+    showAlert(el, msg, 'success');
+  } else {
+    showAlert(el, 'Saved ' + r.count + ' ranks. Run a resync in Settings to apply them to everyone now.', 'success');
+  }
+  await loadEconomy();
+}
+async function resetEconomy(section){
+  if(!confirm('Reset this section back to the values in the bot code?')) return;
+  await api('/api/economy/reset', {method:'POST', body: JSON.stringify({section: section, category: ecoCat})});
+  await loadEconomy();
+}
+document.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('eco-tabs').addEventListener('click', function(e){
+    const tab = e.target.closest('[data-eco]');
+    if(!tab) return;
+    ecoCat = tab.dataset.eco;
+    document.querySelectorAll('#eco-tabs .tab').forEach(function(t){ t.classList.remove('active'); });
+    tab.classList.add('active');
+    renderEconomy();
+  });
+  document.getElementById('ev-add').onclick = function(){
+    document.getElementById('ev-rows').appendChild(ecoRow('', '', 0));
+  };
+  document.getElementById('rk-add').onclick = function(){
+    const rk = document.getElementById('rk-rows');
+    if(rk.querySelector('.empty')) rk.innerHTML = '';
+    rk.appendChild(ecoRow('', '', 0));
+  };
+  document.getElementById('ev-save').onclick = function(){ saveEconomy('events'); };
+  document.getElementById('rk-save').onclick = function(){ saveEconomy('ranks'); };
+  document.getElementById('ev-reset').onclick = function(){ resetEconomy('events'); };
+  document.getElementById('rk-reset').onclick = function(){ resetEconomy('ranks'); };
+});
+
 // ── Chart ──
 async function loadChart(){
   const days = document.getElementById('chart-days').value;
@@ -2338,6 +2642,7 @@ async function saveSettings(){
 // ── Init ──
 loadMe();
 loadStatus();
+loadEconomy();
 setInterval(loadStatus, 30000);
 </script>
 </body>

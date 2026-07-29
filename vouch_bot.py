@@ -342,6 +342,47 @@ def save_data(data):
         json.dump(data, f, indent=2)
 
 
+# ─────────────────────────────────────────────────────────────
+# ECONOMY
+# The dashboard can override event points and rank ladders. Anything it has
+# not overridden falls back to the constants above.
+# ─────────────────────────────────────────────────────────────
+
+def get_events(category, data=None):
+    """{event name: {points, cooldown}} for a category, with dashboard overrides applied."""
+    base = CATEGORY_EVENTS.get(category, {})
+    data = load_data() if data is None else data
+    override = (data.get("_economy", {}).get("events") or {}).get(category)
+    if not override:
+        return base
+    merged = {}
+    for name, points in override.items():
+        cfg = dict(base.get(name) or {"cooldown": 0})
+        cfg["points"] = points
+        merged[name] = cfg
+    return merged
+
+
+def get_event_points(category, event, data=None):
+    return (get_events(category, data).get(event) or {}).get("points", 0)
+
+
+def get_thresholds(category, data=None):
+    """The live rank ladder as a list of (threshold, role name)."""
+    data = load_data() if data is None else data
+    override = (data.get("_economy", {}).get("ranks") or {}).get(category)
+    if override:
+        return [(row[0], row[1]) for row in override]
+    return ROLE_THRESHOLDS.get(category, [])
+
+
+def get_all_role_names(category, data=None):
+    """Every role this ladder has ever used, so renamed ranks still get cleaned up."""
+    names = {name for _, name in ROLE_THRESHOLDS.get(category, [])}
+    names.update(name for _, name in get_thresholds(category, data))
+    return names
+
+
 def get_user_record(data, user_id, category):
     uid = str(user_id)
     if uid not in data:
@@ -350,11 +391,11 @@ def get_user_record(data, user_id, category):
         data[uid][category] = {
             "total_points": 0,
             "total_vouches": 0,
-            "events": {e: 0 for e in CATEGORY_EVENTS[category]},
+            "events": {e: 0 for e in get_events(category, data)},
             "cooldowns": {},
             "log": [],
         }
-    for e in CATEGORY_EVENTS[category]:
+    for e in get_events(category, data):
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
 
@@ -391,7 +432,7 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
     Returns (recorded_target_ids, cooldown_target_ids, self_dropped_count).
     """
     when = when or datetime.now(timezone.utc)
-    cfg = CATEGORY_EVENTS[category][event_name]
+    cfg = get_events(category).get(event_name) or {"points": 0, "cooldown": 0}
     points = cfg["points"]
     cooldown = cfg["cooldown"]
 
@@ -535,7 +576,7 @@ async def update_role_for_user(guild, user_id, category):
     else:
         value = record["total_points"] if record else 0
 
-    thresholds = ROLE_THRESHOLDS[category]
+    thresholds = get_thresholds(category, data)
     achieved_role_name = None
     for threshold, role_name in thresholds:
         if value >= threshold:
@@ -554,7 +595,7 @@ async def update_role_for_user(guild, user_id, category):
         except discord.HTTPException:
             return
 
-    category_role_names = {name for _, name in thresholds}
+    category_role_names = get_all_role_names(category, data)
     roles_to_remove = [r for r in member.roles if r.name in category_role_names and r.name != achieved_role_name]
     role_to_add = discord.utils.get(guild.roles, name=achieved_role_name)
 
@@ -930,6 +971,7 @@ async def on_ready():
             thresholds=ROLE_THRESHOLDS,
             metric=ROLE_THRESHOLD_METRIC,
             resync=resync_all_roles,
+            events=CATEGORY_EVENTS,
         )
         t = threading.Thread(target=dashboard.run_dashboard, daemon=True)
         t.start()
@@ -1072,7 +1114,7 @@ async def on_message(message):
 
         if recorded_ids:
             await message.add_reaction("✅")
-            points = CATEGORY_EVENTS[category][event_name]["points"]
+            points = get_event_points(category, event_name, data)
             targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
             await log_audit(
                 f"✅ **{CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
@@ -1141,7 +1183,7 @@ async def on_message_edit(before, after):
         await after.add_reaction("⏳")
     if recorded_ids:
         await after.add_reaction("✅")
-        points = CATEGORY_EVENTS[category][event_name]["points"]
+        points = get_event_points(category, event_name, data)
         targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
         await log_audit(
             f"✏️ **Edit vouch - {CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
@@ -1250,7 +1292,7 @@ async def profile(ctx, member: discord.Member = None):
         cnt = record.get("total_vouches", 0)
 
         if cat in ROLE_THRESHOLDS:
-            thresholds = ROLE_THRESHOLDS[cat]
+            thresholds = get_thresholds(cat)
             metric = ROLE_THRESHOLD_METRIC.get(cat, "points")
             metric_value = cnt if metric == "vouches" else pts
             unit = "vouches" if metric == "vouches" else "pts"
@@ -1475,7 +1517,7 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
             await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} vouches yet.")
             return
         lines = [
-            f"  {e}: {c} × {CATEGORY_EVENTS[category][e]['points']} = {c * CATEGORY_EVENTS[category][e]['points']} pts"
+            f"  {e}: {c} × {get_event_points(category, e)} = {c * get_event_points(category, e)} pts"
             for e, c in record["events"].items() if c
         ]
         await ctx.send(
@@ -1519,13 +1561,13 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
     else:
         match_name = normalize(event_text)
         event_name = None
-        for canonical in CATEGORY_EVENTS[category]:
+        for canonical in get_events(category):
             if normalize(canonical) == match_name:
                 event_name = canonical
                 break
 
     if event_name is None:
-        valid_list = ", ".join(CATEGORY_EVENTS[category].keys())
+        valid_list = ", ".join(get_events(category).keys())
         await ctx.send(f"⚠️ Couldn't recognize event `{event_text}`. Valid: {valid_list}")
         return
 
@@ -1533,7 +1575,7 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
         await ctx.send("⚠️ Count must be at least 1.")
         return
 
-    points = CATEGORY_EVENTS[category][event_name]["points"]
+    points = get_event_points(category, event_name, data)
     data = load_data()
     record = get_user_record(data, member.id, category)
     record["total_points"] += points * count
@@ -1772,7 +1814,7 @@ CATEGORY_CHOICES = [
 
 async def event_autocomplete(interaction: discord.Interaction, current: str):
     category = getattr(interaction.namespace, "category", None) or "pve"
-    events = CATEGORY_EVENTS.get(category, {})
+    events = get_events(category)
     matches = [e for e in events if current.lower() in e.lower()][:25]
     return [app_commands.Choice(name=f"{e} ({events[e]['points']} pts)", value=e) for e in matches]
 
@@ -1816,9 +1858,10 @@ async def slash_rank(interaction: discord.Interaction, member: discord.Member = 
     data = load_data()
     record = data.get(str(member.id), {})
     lines = []
-    for category, ladder in ROLE_THRESHOLDS.items():
+    for category in ROLE_THRESHOLDS:
+        ladder = get_thresholds(category, data)
         cat_rec = record.get(category)
-        if not cat_rec:
+        if not cat_rec or not ladder:
             continue
         metric = ROLE_THRESHOLD_METRIC.get(category, "points")
         value = cat_rec["total_vouches"] if metric == "vouches" else cat_rec["total_points"]
@@ -1858,7 +1901,7 @@ async def slash_addvouch(interaction: discord.Interaction,
                          event: str,
                          count: int = 1):
     cat = category.value
-    if event not in CATEGORY_EVENTS.get(cat, {}):
+    if event not in get_events(cat):
         await interaction.response.send_message(f"`{event}` isn't a {CATEGORY_NAMES[cat]} event.", ephemeral=True)
         return
     count = max(1, min(50, count))
@@ -1866,7 +1909,7 @@ async def slash_addvouch(interaction: discord.Interaction,
 
     data = load_data()
     record = get_user_record(data, member.id, cat)
-    points = CATEGORY_EVENTS[cat][event]["points"]
+    points = get_event_points(cat, event, data)
     record["total_points"] += points * count
     record["total_vouches"] += count
     record["events"][event] = record["events"].get(event, 0) + count
