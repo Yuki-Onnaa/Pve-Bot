@@ -763,6 +763,48 @@ def _own_history(uid, args):
     return rows
 
 
+@app.route("/members")
+@member_required
+def members_page():
+    record_visit(session["user"]["id"], "members")
+    return render_template_string(MEMBERS_HTML, user=session["user"], is_admin=is_admin())
+
+
+@app.route("/api/members")
+@member_required
+def api_members():
+    """Everyone with at least one vouch, for the member directory."""
+    data = load_data()
+    me = str(session["user"]["id"])
+    rows = []
+    for uid, rec in user_records(data):
+        totals = {cat: round(rec.get(cat, {}).get("total_points", 0), 1) for cat in ALL_CATEGORIES}
+        vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+        total = round(combined_total(rec), 1)
+        if total <= 0 and vouches <= 0:
+            continue
+
+        top_cat = max(totals, key=lambda c: totals[c])
+        rank = None
+        if totals[top_cat] > 0:
+            progress = rank_progress(top_cat, totals[top_cat],
+                                     rec.get(top_cat, {}).get("total_vouches", 0), data)
+            if progress and progress.get("current"):
+                rank = {"name": progress["current"], "category": CATEGORY_NAMES[top_cat]}
+
+        who = resolve_user(uid)
+        rows.append({
+            "uid": uid, "name": who["name"], "avatar": who["avatar"], "resolved": who["resolved"],
+            "total": total, "vouches": vouches, "totals": totals, "rank": rank,
+            "is_me": uid == me,
+        })
+
+    rows.sort(key=lambda r: r["total"], reverse=True)
+    for i, row in enumerate(rows):
+        row["position"] = i + 1
+    return jsonify({"members": rows[:500], "count": len(rows)})
+
+
 @app.route("/u/<uid>")
 @member_required
 def public_profile_page(uid):
@@ -1720,6 +1762,7 @@ tr:last-child td{border-bottom:none}
   <span class="brand-name">Matzys Overseer</span>
   <div class="spacer"></div>
   {% if viewing %}<a class="hlink" href="/profile">My profile</a>{% endif %}
+  <a class="hlink" href="/members">Members</a>
   {% if is_admin %}<a class="hlink" href="/">Dashboard</a>{% endif %}
   <a class="hlink" href="/logout">Sign out</a>
   <span class="hlink avatar"><img src="{{ user.avatar }}" alt=""></span>
@@ -1996,6 +2039,211 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('f-export').onclick = function(){
     window.location.href = '/api/profile/history.csv?' + histQuery();
   };
+});
+load();
+</script>
+</body>
+</html>""".replace("__LOGO__", LOGO_SRC)
+
+
+# ─────────────────────────────────────────────────────────────
+# MEMBERS DIRECTORY (any signed-in member)
+# ─────────────────────────────────────────────────────────────
+
+MEMBERS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Members - Matzys Overseer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0b0e;--header:#101216;--card:#15181d;--card-2:#1c2027;--border:#242830;--border-2:#343a45;
+  --moon:#e8edf4;--steel:#8d9bb5;--sage:#93b3a1;--red:#d98891;--amber:#d8bb86;
+  --text:#f4f6f9;--muted:#98a1ae;--dim:#646c79;
+  --mono:'JetBrains Mono',monospace;--sans:'Poppins',system-ui,sans-serif;--radius:16px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100dvh;
+  display:flex;flex-direction:column;overflow-x:hidden}
+:focus-visible{outline:2px solid var(--moon);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.petals{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.petal{position:absolute;top:-12vh;width:var(--w);height:var(--h);
+  background:linear-gradient(140deg,#ffffff,#c9d2e0);
+  border-radius:100% 0 100% 0;opacity:0;
+  animation:petal-fall var(--dur) linear var(--delay) infinite;will-change:transform,opacity}
+@keyframes petal-fall{
+  0%{transform:translate3d(0,-12vh,0) rotate(0deg) scale(.9);opacity:0}
+  12%{opacity:var(--o)}
+  88%{opacity:var(--o)}
+  100%{transform:translate3d(var(--drift),112vh,0) rotate(var(--spin)) scale(1);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.petals{display:none}}
+.header{position:sticky;top:0;z-index:50;background:var(--header);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;padding:10px 16px}
+.brand{width:34px;height:34px;border-radius:11px;display:block;object-fit:cover;flex-shrink:0;
+  border:1px solid var(--border)}
+.brand-name{font-size:14px;font-weight:600}
+.spacer{flex:1}
+.hlink{color:var(--muted);text-decoration:none;font-size:13.5px;padding:8px 12px;border-radius:10px}
+.hlink:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.hlink.avatar{padding:0}
+.hlink.avatar img{width:34px;height:34px;border-radius:50%;display:block;border:1px solid var(--border)}
+.content{flex:1;padding:26px 20px 40px;max-width:900px;width:100%;margin:0 auto;position:relative;z-index:1}
+.hero{position:relative;padding:14px 0 24px}
+.hero::before{content:'';position:absolute;top:-90px;right:-16%;width:min(78vw,520px);height:min(78vw,520px);
+  border-radius:50%;background:radial-gradient(circle,rgba(226,233,243,.28),rgba(226,233,243,.04) 55%,transparent 70%);
+  filter:blur(26px);pointer-events:none;z-index:-1}
+.hero h1{font-size:clamp(30px,7.5vw,44px);font-weight:700;letter-spacing:-1.2px;line-height:1.1}
+.hero p{margin-top:10px;font-size:clamp(15px,3.6vw,19px);color:#c9d0da;line-height:1.35}
+.controls{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+.controls input{flex:1;min-width:180px;background:var(--card-2);border:1px solid var(--border);
+  border-radius:11px;padding:11px 14px;color:var(--text);font-size:14px;font-family:var(--sans);outline:none}
+.controls input:focus{border-color:var(--moon)}
+.tabs{display:flex;gap:3px;background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:4px;overflow-x:auto;margin-bottom:16px}
+.tab{padding:8px 16px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:500;color:var(--muted);
+  white-space:nowrap;transition:all .15s;border:none;background:none;font-family:var(--sans)}
+.tab.active{background:var(--card-2);color:var(--text)}
+.row{display:flex;align-items:center;gap:13px;padding:13px 15px;background:var(--card);
+  border:1px solid var(--border);border-radius:13px;margin-bottom:8px;text-decoration:none;
+  color:var(--text);transition:border-color .15s,transform .15s}
+.row:hover{border-color:var(--border-2);transform:translateY(-1px)}
+.row.me{border-color:var(--moon)}
+.pos{font-family:var(--mono);font-size:12.5px;color:var(--dim);width:30px;flex-shrink:0}
+.row img,.row .ph{width:38px;height:38px;border-radius:50%;flex-shrink:0;background:var(--card-2)}
+.row .ph{display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--muted);font-weight:600}
+.who{flex:1;min-width:0}
+.who .nm{font-size:14.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who .rk{font-size:11.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pts{text-align:right;flex-shrink:0}
+.pts b{display:block;font-family:var(--mono);font-size:15px;font-weight:600}
+.pts span{font-size:11px;color:var(--dim)}
+.tag{font-size:10px;color:var(--bg);background:var(--moon);border-radius:5px;padding:2px 6px;
+  margin-left:7px;font-weight:600;vertical-align:middle}
+.empty{text-align:center;padding:44px 20px;color:var(--dim);font-size:13.5px;line-height:1.6}
+.footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:22px 20px 30px;
+  text-align:center;color:var(--dim);font-size:13px}
+.footer a{color:var(--dim);text-decoration:none;margin:0 5px}
+.footer a:hover{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="petals" aria-hidden="true">
+  <i class="petal" style="left:93.7%;--w:7px;--h:6px;--o:0.11;--dur:31.0s;--delay:-2.8s;--drift:3.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:1.8%;--w:6px;--h:5px;--o:0.11;--dur:18.5s;--delay:-12.7s;--drift:10.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:61.7%;--w:6px;--h:5px;--o:0.11;--dur:27.0s;--delay:-1.5s;--drift:-7.4vw;--spin:-300deg"></i>
+  <i class="petal" style="left:11.5%;--w:13px;--h:11px;--o:0.21;--dur:26.7s;--delay:-16.8s;--drift:6.5vw;--spin:360deg"></i>
+  <i class="petal" style="left:55.7%;--w:9px;--h:7px;--o:0.12;--dur:29.1s;--delay:-16.9s;--drift:4.6vw;--spin:720deg"></i>
+  <i class="petal" style="left:51.7%;--w:11px;--h:10px;--o:0.19;--dur:32.7s;--delay:-10.8s;--drift:-6.5vw;--spin:540deg"></i>
+  <i class="petal" style="left:76.8%;--w:11px;--h:8px;--o:0.16;--dur:25.4s;--delay:-10.3s;--drift:-0.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:9.9%;--w:5px;--h:4px;--o:0.25;--dur:19.6s;--delay:-14.7s;--drift:-12.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:54.4%;--w:13px;--h:12px;--o:0.26;--dur:22.8s;--delay:-10.5s;--drift:0.9vw;--spin:720deg"></i>
+  <i class="petal" style="left:82.8%;--w:5px;--h:5px;--o:0.19;--dur:28.3s;--delay:-1.8s;--drift:7.0vw;--spin:-300deg"></i>
+  <i class="petal" style="left:81.0%;--w:11px;--h:9px;--o:0.18;--dur:28.4s;--delay:-0.7s;--drift:-0.1vw;--spin:540deg"></i>
+  <i class="petal" style="left:9.8%;--w:9px;--h:7px;--o:0.25;--dur:19.2s;--delay:-7.4s;--drift:-2.3vw;--spin:720deg"></i>
+  <i class="petal" style="left:14.8%;--w:5px;--h:4px;--o:0.16;--dur:19.3s;--delay:-12.9s;--drift:2.5vw;--spin:720deg"></i>
+  <i class="petal" style="left:67.0%;--w:7px;--h:6px;--o:0.15;--dur:18.4s;--delay:-4.5s;--drift:5.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:81.9%;--w:8px;--h:6px;--o:0.16;--dur:19.5s;--delay:-16.0s;--drift:4.3vw;--spin:-420deg"></i>
+  <i class="petal" style="left:67.7%;--w:6px;--h:5px;--o:0.22;--dur:28.5s;--delay:-1.6s;--drift:13.0vw;--spin:-300deg"></i>
+</div>
+<header class="header">
+  <img class="brand" src="__LOGO__" alt="">
+  <span class="brand-name">Matzys Overseer</span>
+  <div class="spacer"></div>
+  <a class="hlink" href="/profile">My profile</a>
+  {% if is_admin %}<a class="hlink" href="/">Dashboard</a>{% endif %}
+  <a class="hlink" href="/logout">Sign out</a>
+  <span class="hlink avatar"><img src="{{ user.avatar }}" alt=""></span>
+</header>
+
+<main class="content">
+  <div class="hero">
+    <h1>Members</h1>
+    <p id="sub">Everyone with a vouch. Tap anyone to see their record.</p>
+  </div>
+
+  <div class="controls">
+    <input id="q" placeholder="Search by name" autocomplete="off">
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-sort="total">Total</button>
+    <button class="tab" data-sort="pve">Host</button>
+    <button class="tab" data-sort="security">Security</button>
+    <button class="tab" data-sort="support">Support</button>
+  </div>
+
+  <div id="list"><div class="empty">Loading...</div></div>
+</main>
+
+<footer class="footer">
+  <span>&copy; 2026 Matzys Overseer</span>
+  <a href="/profile">My profile</a>
+</footer>
+
+<script>
+let MEMBERS = [];
+let sortKey = 'total';
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
+
+async function load(){
+  try {
+    const r = await fetch('/api/members');
+    if(r.status === 401){ window.location.href = '/login'; return; }
+    const d = await r.json();
+    MEMBERS = d.members || [];
+    document.getElementById('sub').textContent =
+      d.count + ' member' + (d.count === 1 ? '' : 's') + ' with a vouch. Tap anyone to see their record.';
+  } catch (e) {
+    document.getElementById('list').innerHTML = '<div class="empty">Could not load members. Try refreshing.</div>';
+    return;
+  }
+  render();
+}
+
+function render(){
+  const q = document.getElementById('q').value.toLowerCase().trim();
+  let rows = MEMBERS.slice();
+  if(sortKey !== 'total'){
+    rows = rows.filter(function(m){ return (m.totals[sortKey] || 0) > 0; });
+    rows.sort(function(a,b){ return (b.totals[sortKey] || 0) - (a.totals[sortKey] || 0); });
+  }
+  if(q) rows = rows.filter(function(m){
+    return (m.name || '').toLowerCase().indexOf(q) !== -1 || m.uid.indexOf(q) !== -1;
+  });
+
+  const el = document.getElementById('list');
+  if(!rows.length){
+    el.innerHTML = '<div class="empty">' + (q ? 'Nobody matches that search.' : 'No members here yet.') + '</div>';
+    return;
+  }
+  el.innerHTML = rows.map(function(m, i){
+    const pic = m.avatar ? '<img alt="" src="' + m.avatar + '">'
+                         : '<span class="ph">' + esc((m.name || '?').slice(0,1).toUpperCase()) + '</span>';
+    const value = sortKey === 'total' ? m.total : (m.totals[sortKey] || 0);
+    const rank = m.rank ? esc(m.rank.name) + ' \u00b7 ' + esc(m.rank.category) : 'No rank yet';
+    return '<a class="row' + (m.is_me ? ' me' : '') + '" href="/u/' + encodeURIComponent(m.uid) + '">' +
+      '<span class="pos">#' + (i + 1) + '</span>' + pic +
+      '<span class="who"><span class="nm">' + esc(m.resolved ? m.name : 'Unknown member') +
+      (m.is_me ? '<span class="tag">you</span>' : '') + '</span>' +
+      '<span class="rk">' + rank + '</span></span>' +
+      '<span class="pts"><b>' + fmt(value) + '</b><span>points</span></span></a>';
+  }).join('');
+}
+
+document.getElementById('q').addEventListener('input', render);
+document.getElementById('tabs').addEventListener('click', function(e){
+  const tab = e.target.closest('[data-sort]');
+  if(!tab) return;
+  sortKey = tab.dataset.sort;
+  document.querySelectorAll('#tabs .tab').forEach(function(t){ t.classList.remove('active'); });
+  tab.classList.add('active');
+  render();
 });
 load();
 </script>
@@ -2342,6 +2590,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </button>
     <div class="menu" id="user-menu">
       <div class="menu-label" id="user-handle">Signed in</div>
+      <a class="menu-item" href="/members"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</a>
       <a class="menu-item" href="/profile"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/></svg> My profile</a>
       <div class="menu-item" onclick="showSection('settings')"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
       <div class="menu-sep"></div>
