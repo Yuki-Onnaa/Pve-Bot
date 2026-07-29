@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import threading
+import time
 import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -130,6 +131,65 @@ def ensure_user_cat(data, uid, category):
     for e in CATEGORY_EVENTS[category]:
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
+
+# ─────────────────────────────────────────────────────────────
+# SITE ACTIVITY
+# Page loads are counted in memory and flushed to disk periodically, so a busy
+# day does not mean rewriting the whole JSON file on every request.
+# ─────────────────────────────────────────────────────────────
+
+ANALYTICS_RETENTION_DAYS = 120
+_visit_buffer = {}
+_visit_lock = threading.Lock()
+_last_flush = [0.0]
+
+
+def record_visit(uid, page):
+    """Count one page view. Cheap: memory only, flushed on a timer."""
+    day = datetime.now(timezone.utc).date().isoformat()
+    with _visit_lock:
+        bucket = _visit_buffer.setdefault(day, {})
+        entry = bucket.setdefault(str(uid), {"views": 0, "pages": {}})
+        entry["views"] += 1
+        entry["pages"][page] = entry["pages"].get(page, 0) + 1
+        due = (time.time() - _last_flush[0]) > 45 or sum(
+            len(v) for v in _visit_buffer.values()
+        ) > 40
+    if due:
+        flush_visits()
+
+
+def flush_visits():
+    """Fold the in-memory counts into the data file."""
+    with _visit_lock:
+        if not _visit_buffer:
+            _last_flush[0] = time.time()
+            return
+        pending = {day: {u: dict(v) for u, v in users.items()} for day, users in _visit_buffer.items()}
+        _visit_buffer.clear()
+        _last_flush[0] = time.time()
+
+    data = load_data()
+    analytics = data.setdefault("_analytics", {})
+    days = analytics.setdefault("days", {})
+    last_seen = analytics.setdefault("last_seen", {})
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for day, users in pending.items():
+        stored_day = days.setdefault(day, {})
+        for uid, entry in users.items():
+            slot = stored_day.setdefault(uid, {"views": 0, "pages": {}})
+            slot["views"] += entry["views"]
+            for page, count in entry["pages"].items():
+                slot["pages"][page] = slot["pages"].get(page, 0) + count
+            last_seen[uid] = now_iso
+
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
+    for day in [d for d in days if d < cutoff]:
+        del days[day]
+
+    save_data(data)
+
 
 # ─────────────────────────────────────────────────────────────
 # BOT BRIDGE
@@ -431,12 +491,14 @@ def index():
         return redirect("/login")
     if not is_admin():
         return redirect("/profile")
+    record_visit(session["user"]["id"], "dashboard")
     return render_template_string(DASHBOARD_HTML)
 
 
 @app.route("/profile")
 @member_required
 def profile_page():
+    record_visit(session["user"]["id"], "profile")
     return render_template_string(PROFILE_HTML, user=session["user"], is_admin=is_admin())
 
 
@@ -455,18 +517,62 @@ def api_profile():
     this_week = 0.0
     last_week = 0.0
 
+    economy = get_economy(data)
+    days = 30
+    today = now.date()
+    labels = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    day_index = {d: i for i, d in enumerate(labels)}
+    series = {}
+
     for cat in ALL_CATEGORIES:
         cat_rec = record.get(cat) or {}
         points = cat_rec.get("total_points", 0)
         vouches = cat_rec.get("total_vouches", 0)
+        metric = (_bridge["metric"] or {}).get(cat, "points")
+        value = vouches if metric == "vouches" else points
 
-        # leaderboard position within this category
-        ranked = sorted(
-            (r.get(cat, {}).get("total_points", 0) for _, r in user_records(data)),
-            reverse=True,
+        # leaderboard position and the people either side of you
+        board = sorted(
+            ((uid2, r.get(cat, {}).get("total_points", 0)) for uid2, r in user_records(data)),
+            key=lambda kv: kv[1], reverse=True,
         )
-        ranked = [p for p in ranked if p > 0]
-        position = ranked.index(points) + 1 if points > 0 and points in ranked else None
+        board = [row for row in board if row[1] > 0]
+        ranked = [p for _, p in board]
+        position = None
+        rivals = {"above": None, "below": None}
+        for i, (uid2, pts) in enumerate(board):
+            if uid2 == uid:
+                position = i + 1
+                if i > 0:
+                    who = resolve_user(board[i - 1][0])
+                    rivals["above"] = {"name": who["name"], "gap": round(board[i - 1][1] - pts, 1)}
+                if i + 1 < len(board):
+                    who = resolve_user(board[i + 1][0])
+                    rivals["below"] = {"name": who["name"], "gap": round(pts - board[i + 1][1], 1)}
+                break
+
+        # every rank still ahead of you, and what it would take
+        ladder = economy["ranks"].get(cat) or []
+        events = economy["events"].get(cat) or {}
+        best = sorted(((p, n) for n, p in events.items() if p > 0), reverse=True)[:4]
+        goals = []
+        for at, role_name in ladder:
+            if at <= value:
+                continue
+            short = round(at - value, 1)
+            if metric == "vouches":
+                routes = [{"event": "any vouch", "need": int(short) + (1 if short % 1 else 0)}]
+            else:
+                routes = [{"event": n, "need": int(-(-short // p))} for p, n in best]
+            goals.append({"role": role_name, "at": at, "short": short, "routes": routes})
+
+        # daily points for the chart
+        daily = [0.0] * days
+        for entry in cat_rec.get("log", []):
+            day = str(entry.get("time", ""))[:10]
+            if day in day_index:
+                daily[day_index[day]] += float(entry.get("points", 0) or 0)
+        series[cat] = [round(v, 1) for v in daily]
 
         for entry in cat_rec.get("log", []):
             when = entry.get("time", "")
@@ -486,13 +592,25 @@ def api_profile():
             "name": CATEGORY_NAMES[cat],
             "points": round(points, 1),
             "vouches": vouches,
+            "metric": metric,
             "position": position,
             "of": len(ranked),
-            "rank": rank_progress(cat, points, vouches),
+            "rivals": rivals,
+            "goals": goals,
+            "rank": rank_progress(cat, points, vouches, data),
             "events": {k: v for k, v in (cat_rec.get("events") or {}).items() if v > 0},
         })
 
     recent.sort(key=lambda e: e["time"], reverse=True)
+
+    # personal bests, from the same log entries
+    by_day = {}
+    for e in recent:
+        by_day[e["time"][:10]] = by_day.get(e["time"][:10], 0) + e["points"]
+    best_day = max(by_day.items(), key=lambda kv: kv[1]) if by_day else None
+    active_days = len(by_day)
+    first_seen = min((e["time"] for e in recent), default="")
+
     return jsonify({
         "user": session["user"],
         "total": round(combined_total(record), 1),
@@ -501,7 +619,72 @@ def api_profile():
         "this_week": round(this_week, 1),
         "last_week": round(last_week, 1),
         "has_data": bool(record),
+        "chart": {"labels": labels, "series": series},
+        "bests": {
+            "best_day": {"date": best_day[0], "points": round(best_day[1], 1)} if best_day else None,
+            "active_days": active_days,
+            "first_seen": first_seen[:10],
+            "total_vouches": sum(c["vouches"] for c in categories),
+        },
     })
+
+
+def _own_history(uid, args):
+    """Every vouch this member has received, newest first, with filters applied."""
+    data = load_data()
+    record = data.get(str(uid), {})
+    category = args.get("category", "")
+    q = args.get("q", "").lower().strip()
+    try:
+        days = int(args.get("days", 0))
+    except (ValueError, TypeError):
+        days = 0
+    cutoff = ""
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = []
+    for cat in ALL_CATEGORIES:
+        if category and cat != category:
+            continue
+        for e in (record.get(cat) or {}).get("log", []):
+            when = e.get("time", "")
+            if cutoff and when < cutoff:
+                continue
+            event = str(e.get("event", ""))
+            by = e.get("by_name") or ""
+            if q and q not in event.lower() and q not in by.lower():
+                continue
+            rows.append({
+                "category": cat, "category_name": CATEGORY_NAMES[cat], "event": event,
+                "points": float(e.get("points", 0) or 0), "count": e.get("count", 1),
+                "by": by, "time": when, "backfilled": e.get("backfilled", False),
+            })
+    rows.sort(key=lambda r: r["time"], reverse=True)
+    return rows
+
+
+@app.route("/api/profile/history")
+@member_required
+def api_profile_history():
+    rows = _own_history(session["user"]["id"], request.args)
+    return jsonify({"rows": rows[:500], "total": len(rows),
+                    "points": round(sum(r["points"] for r in rows), 1)})
+
+
+@app.route("/api/profile/history.csv")
+@member_required
+def api_profile_history_csv():
+    rows = _own_history(session["user"]["id"], request.args)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["time", "category", "event", "points", "count", "given_by", "backfilled"])
+    for r in rows:
+        writer.writerow([r["time"], r["category_name"], r["event"], r["points"],
+                         r["count"], r["by"], "yes" if r["backfilled"] else "no"])
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return Response(buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=my-vouches-{stamp}.csv"})
 
 # ── API: Session ──
 
@@ -901,6 +1084,69 @@ def api_roles_resync():
         return jsonify({"error": f"Resync failed: {exc}"}), 500
     return jsonify({"ok": True, **(result or {})})
 
+# ── API: Site activity (admins only) ──
+
+@app.route("/api/analytics")
+@admin_required
+def api_analytics():
+    flush_visits()
+    try:
+        days = max(7, min(ANALYTICS_RETENTION_DAYS, int(request.args.get("days", 30))))
+    except (ValueError, TypeError):
+        days = 30
+
+    data = load_data()
+    analytics = data.get("_analytics", {})
+    stored = analytics.get("days", {})
+    last_seen = analytics.get("last_seen", {})
+
+    today = datetime.now(timezone.utc).date()
+    labels = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    views = []
+    uniques = []
+    per_user = {}
+    page_totals = {}
+
+    for day in labels:
+        bucket = stored.get(day, {})
+        views.append(sum(u.get("views", 0) for u in bucket.values()))
+        uniques.append(len(bucket))
+        for uid, entry in bucket.items():
+            slot = per_user.setdefault(uid, {"views": 0, "days": 0})
+            slot["views"] += entry.get("views", 0)
+            slot["days"] += 1
+            for page, count in (entry.get("pages") or {}).items():
+                page_totals[page] = page_totals.get(page, 0) + count
+
+    people = []
+    for uid, slot in per_user.items():
+        who = resolve_user(uid)
+        people.append({
+            "uid": uid, "name": who["name"], "avatar": who["avatar"], "resolved": who["resolved"],
+            "views": slot["views"], "days": slot["days"],
+            "last_seen": last_seen.get(uid, ""),
+        })
+    people.sort(key=lambda p: p["views"], reverse=True)
+
+    # anyone who has signed in before but not in this window
+    dormant = [uid for uid in last_seen if uid not in per_user]
+
+    return jsonify({
+        "labels": labels,
+        "views": views,
+        "uniques": uniques,
+        "people": people[:100],
+        "pages": page_totals,
+        "totals": {
+            "views": sum(views),
+            "people": len(per_user),
+            "dormant": len(dormant),
+            "busiest": max(zip(views, labels))[1] if any(views) else None,
+            "per_day": round(sum(views) / max(1, days), 1),
+        },
+    })
+
+
 # ── API: Points and ranks ──
 
 @app.route("/api/economy", methods=["GET"])
@@ -1275,6 +1521,41 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
 .act .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0}
 .act .main{font-size:13.5px;line-height:1.45}
 .act .meta{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+.bests{display:flex;flex-wrap:wrap;gap:18px;padding:16px 18px;background:var(--card);
+  border:1px solid var(--border);border-radius:var(--radius);margin-bottom:22px}
+.bests div{font-size:12px;color:var(--muted)}
+.bests b{display:block;font-family:var(--mono);font-size:16px;color:var(--text);font-weight:600;margin-bottom:2px}
+.rivals{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.rival{background:var(--card-2);border:1px solid var(--border);border-radius:9px;padding:7px 11px;font-size:12px;color:var(--muted)}
+.rival b{color:var(--text)}
+.goals{margin-top:16px;border-top:1px solid var(--border);padding-top:14px}
+.goal{margin-bottom:12px}
+.goal:last-child{margin-bottom:0}
+.goal .g-top{font-size:13px;margin-bottom:6px}
+.goal .g-top b{font-weight:600}
+.routes{display:flex;flex-wrap:wrap;gap:6px}
+.route{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:4px 9px;
+  font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.route b{color:var(--text)}
+.chart-wrap{width:100%;overflow:hidden}
+.chart-wrap svg{width:100%;height:auto;display:block}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--muted)}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px}
+.filters{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.filters select,.filters input{background:var(--card-2);border:1px solid var(--border);border-radius:10px;
+  padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--sans);outline:none}
+.filters input{min-width:150px}
+.filters select:focus,.filters input:focus{border-color:var(--moon)}
+.btn{padding:9px 16px;border-radius:10px;border:none;cursor:pointer;font-size:13px;font-weight:500;
+  font-family:var(--sans);background:var(--card-2);color:var(--text);transition:background .15s}
+.btn:hover{background:#262b33}
+.hist-sum{font-size:12.5px;color:var(--muted);margin-bottom:12px;font-family:var(--mono)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 10px;color:var(--dim);font-weight:500;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.9px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+.table-wrap{overflow-x:auto}
 .empty{text-align:center;padding:40px 20px;color:var(--dim);font-size:13.5px;line-height:1.6}
 .footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
 .footer a{color:var(--dim);text-decoration:none;margin:0 5px}
@@ -1322,10 +1603,33 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
     <div class="stat"><div class="val" id="s-vouches">-</div><div class="lbl">Total vouches</div></div>
   </div>
 
+  <div class="bests" id="bests"></div>
+
   <div id="cats"></div>
 
-  <h2 class="sec">Recent activity</h2>
-  <div class="card"><div id="recent"><div class="empty">Loading...</div></div></div>
+  <h2 class="sec">Your activity</h2>
+  <div class="card">
+    <div class="chart-wrap" id="chart"><div class="empty">Loading...</div></div>
+    <div class="legend" id="chart-legend"></div>
+  </div>
+
+  <h2 class="sec">Your vouch history</h2>
+  <div class="card">
+    <div class="filters">
+      <select id="f-cat">
+        <option value="">All categories</option>
+        <option value="pve">Host</option><option value="security">Security</option><option value="support">Support</option>
+      </select>
+      <select id="f-days">
+        <option value="0">All time</option><option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option><option value="90">Last 90 days</option>
+      </select>
+      <input id="f-q" placeholder="Search event or staff">
+      <button class="btn" id="f-export">Export CSV</button>
+    </div>
+    <div class="hist-sum" id="hist-sum"></div>
+    <div class="table-wrap" id="history"><div class="empty">Loading...</div></div>
+  </div>
 </main>
 
 <footer class="footer">
@@ -1338,6 +1642,25 @@ const CAT_COLORS = {pve:'#f4f6f9', security:'#8d9bb5', support:'#9dbcaa'};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
+
+function rivalsHTML(r){
+  if(!r || (!r.above && !r.below)) return '';
+  let out = '<div class="rivals">';
+  if(r.above) out += '<span class="rival"><b>' + fmt(r.above.gap) + '</b> behind ' + esc(r.above.name) + '</span>';
+  if(r.below) out += '<span class="rival"><b>' + fmt(r.below.gap) + '</b> ahead of ' + esc(r.below.name) + '</span>';
+  return out + '</div>';
+}
+function goalsHTML(c){
+  if(!c.goals || !c.goals.length) return '';
+  const unit = c.metric === 'vouches' ? 'vouches' : 'points';
+  const rows = c.goals.slice(0,3).map(function(g){
+    const routes = (g.routes || []).filter(function(r){ return r.need > 0; })
+      .map(function(r){ return '<span class="route"><b>' + r.need + '</b> ' + esc(r.event) + '</span>'; }).join('');
+    return '<div class="goal"><div class="g-top"><b>' + esc(g.role) + '</b> needs ' +
+      fmt(g.short) + ' more ' + unit + '</div><div class="routes">' + routes + '</div></div>';
+  }).join('');
+  return '<div class="goals">' + rows + '</div>';
+}
 
 async function load(){
   let d;
@@ -1384,22 +1707,108 @@ async function load(){
       '<div class="cat-stats"><div><b>' + fmt(c.points) + '</b>points</div>' +
       '<div><b>' + c.vouches + '</b>vouches</div></div>' +
       (chips ? '<div class="chips">' + chips + '</div>' : '') +
+      rivalsHTML(c.rivals) + goalsHTML(c) +
       '</div>';
   }).join('');
 
-  const rec = document.getElementById('recent');
-  if(!d.recent.length){
-    rec.innerHTML = '<div class="empty">Nothing here yet.<br>Once staff vouch for you it will show up here.</div>';
+  const b = d.bests || {};
+  document.getElementById('bests').innerHTML =
+    '<div><b>' + (b.best_day ? fmt(b.best_day.points) : '0') + '</b>best day' +
+      (b.best_day ? ' (' + b.best_day.date + ')' : '') + '</div>' +
+    '<div><b>' + (b.active_days || 0) + '</b>active days</div>' +
+    '<div><b>' + (b.total_vouches || 0) + '</b>vouches</div>' +
+    '<div><b>' + (b.first_seen || '-') + '</b>first vouch</div>';
+
+  renderChart(d.chart);
+  loadHistory();
+}
+
+function renderChart(c){
+  const holder = document.getElementById('chart');
+  if(!c || !c.labels){ holder.innerHTML = '<div class="empty">No activity yet.</div>'; return; }
+  const cats = ['pve','security','support'];
+  const all = cats.reduce(function(a,k){ return a.concat(c.series[k] || []); }, []);
+  const max = Math.max(1, Math.max.apply(null, all));
+  if(max <= 1 && all.every(function(v){ return v === 0; })){
+    holder.innerHTML = '<div class="empty">No points in the last 30 days.</div>';
+    document.getElementById('chart-legend').innerHTML = '';
     return;
   }
-  rec.innerHTML = d.recent.map(function(e){
-    return '<div class="act"><div class="dot" style="background:' + (CAT_COLORS[e.category] || '#646c79') + '"></div>' +
-      '<div><div class="main">' + esc(e.event) + ' <span style="color:' + (CAT_COLORS[e.category] || '#646c79') +
-      '">+' + fmt(e.points) + '</span></div>' +
-      '<div class="meta">' + esc(e.category_name) + (e.by ? ' - by ' + esc(e.by) : '') + ' - ' +
-      String(e.time || '').substring(0,16).replace('T',' ') + '</div></div></div>';
+  const W = 760, H = 230, PL = 42, PR = 12, PT = 14, PB = 26;
+  const n = c.labels.length;
+  const x = function(i){ return PL + (i * (W - PL - PR)) / Math.max(1, n - 1); };
+  const y = function(v){ return PT + (H - PT - PB) * (1 - v / max); };
+  let g = '';
+  for(let i = 0; i <= 4; i++){
+    const v = max * i / 4, yy = y(v);
+    g += '<line x1="' + PL + '" y1="' + yy + '" x2="' + (W - PR) + '" y2="' + yy +
+         '" stroke="#242830" stroke-width="1"/>' +
+         '<text x="' + (PL - 8) + '" y="' + (yy + 4) + '" fill="#646c79" font-size="11" text-anchor="end">' +
+         fmt(Math.round(v)) + '</text>';
+  }
+  const step = Math.max(1, Math.floor(n / 5));
+  for(let i = 0; i < n; i += step){
+    g += '<text x="' + x(i) + '" y="' + (H - 7) + '" fill="#646c79" font-size="11" text-anchor="middle">' +
+         c.labels[i].slice(5) + '</text>';
+  }
+  let lines = '';
+  cats.forEach(function(k){
+    const pts = (c.series[k] || []).map(function(v,i){ return x(i) + ',' + y(v); }).join(' ');
+    lines += '<polyline points="' + pts + '" fill="none" stroke="' + CAT_COLORS[k] +
+             '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+  });
+  holder.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img">' +
+    g + lines + '</svg>';
+  document.getElementById('chart-legend').innerHTML = cats.map(function(k){
+    const tot = (c.series[k] || []).reduce(function(a,v){ return a + v; }, 0);
+    return '<span><i style="background:' + CAT_COLORS[k] + '"></i>' + CAT_NAMES[k] + ' ' + fmt(Math.round(tot * 10) / 10) + '</span>';
   }).join('');
 }
+
+function histQuery(){
+  const p = new URLSearchParams();
+  const cat = document.getElementById('f-cat').value;
+  const days = document.getElementById('f-days').value;
+  const q = document.getElementById('f-q').value.trim();
+  if(cat) p.set('category', cat);
+  if(days && days !== '0') p.set('days', days);
+  if(q) p.set('q', q);
+  return p.toString();
+}
+async function loadHistory(){
+  const holder = document.getElementById('history');
+  let d;
+  try { d = await (await fetch('/api/profile/history?' + histQuery())).json(); }
+  catch(e){ holder.innerHTML = '<div class="empty">Could not load history.</div>'; return; }
+  document.getElementById('hist-sum').textContent =
+    d.total + ' vouches, ' + fmt(d.points) + ' points';
+  if(!d.rows.length){
+    holder.innerHTML = '<div class="empty">Nothing matches those filters.</div>';
+    return;
+  }
+  holder.innerHTML = '<table><thead><tr><th>Date</th><th>Event</th><th>Category</th>' +
+    '<th>Points</th><th>Given by</th></tr></thead><tbody>' +
+    d.rows.map(function(r){
+      return '<tr><td style="white-space:nowrap;color:var(--muted);font-size:12px">' +
+        String(r.time || '').substring(0,10) + '</td>' +
+        '<td>' + esc(r.event) + (r.backfilled ? ' <span style="font-size:10px;color:var(--amber)">[added]</span>' : '') + '</td>' +
+        '<td style="color:' + (CAT_COLORS[r.category] || '#646c79') + '">' + esc(r.category_name) + '</td>' +
+        '<td style="font-family:var(--mono)">+' + fmt(r.points) + '</td>' +
+        '<td style="color:var(--muted);font-size:12px">' + esc(r.by || '-') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+let histTimer = null;
+document.addEventListener('DOMContentLoaded', function(){
+  document.getElementById('f-cat').onchange = loadHistory;
+  document.getElementById('f-days').onchange = loadHistory;
+  document.getElementById('f-q').oninput = function(){
+    clearTimeout(histTimer); histTimer = setTimeout(loadHistory, 300);
+  };
+  document.getElementById('f-export').onclick = function(){
+    window.location.href = '/api/profile/history.csv?' + histQuery();
+  };
+});
 load();
 </script>
 </body>
@@ -1707,6 +2116,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg> Leaderboards</div>
     <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</div>
     <div class="nav-label">Bot</div>
+    <div class="nav-item" data-sec="activity" onclick="showSection('activity',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg> Site activity</div>
     <div class="nav-item" data-sec="economy" onclick="showSection('economy',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg> Points &amp; ranks</div>
     <div class="nav-item" data-sec="commands" onclick="showSection('commands',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg> Commands</div>
     <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
@@ -1761,6 +2171,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <p>find commonly used dashboard pages below.</p>
     </div>
     <div class="cards">
+      <article class="feature">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+        <h3>Site activity</h3>
+        <p>See how much the dashboard and profiles actually get used, and by whom.</p>
+        <button class="btn btn-soft" onclick="showSection('activity')">View activity</button>
+      </article>
       <article class="feature">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg></div>
         <h3>Points &amp; ranks</h3>
@@ -1939,6 +2355,30 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <section id="sec-events" class="section">
     <div class="section-head"><h2>Event schedule</h2></div>
     <div id="events-content"><div class="empty">Loading…</div></div>
+  </section>
+
+  <!-- SITE ACTIVITY -->
+  <section id="sec-activity" class="section">
+    <div class="section-head">
+      <h2>Site activity</h2>
+      <select id="act-days" onchange="loadActivity()"
+        style="background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:8px 12px;
+        color:var(--text);font-size:13px;font-family:var(--sans);outline:none">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+    </div>
+    <div class="stat-grid" id="act-stats"></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Page views and visitors</div>
+      <div class="chart-wrap" id="act-chart"><div class="empty">Loading...</div></div>
+      <div class="legend" id="act-legend"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Who is using it</div>
+      <div class="table-wrap" id="act-people"><div class="empty">Loading...</div></div>
+    </div>
   </section>
 
   <!-- ECONOMY -->
@@ -2175,6 +2615,7 @@ function showSection(name, el){
   if(name==='overview'){loadStatus();loadChart();}
   if(name==='commands') loadCommands();
   if(name==='economy') loadEconomy();
+  if(name==='activity') loadActivity();
 }
 
 // ── Status ──
@@ -2383,6 +2824,77 @@ async function loadEvents(){
     '<div class="card-title" style="margin:0">'+esc(event)+'</div>'+
     '<span class="mono">'+times.length+' times</span></div>'+
     '<div class="times-grid">'+times.map(t=>'<span class="time-chip">'+t+'</span>').join('')+'</div></div>').join('');
+}
+
+// ── Site activity ──
+async function loadActivity(){
+  const days = document.getElementById('act-days').value;
+  const d = await api('/api/analytics?days=' + days);
+  if(!d || !d.labels) return;
+
+  const t = d.totals || {};
+  document.getElementById('act-stats').innerHTML =
+    '<div class="stat"><div class="val">' + fmt(t.views || 0) + '</div><div class="lbl">Page views</div></div>' +
+    '<div class="stat"><div class="val">' + (t.people || 0) + '</div><div class="lbl">People who visited</div></div>' +
+    '<div class="stat"><div class="val">' + fmt(t.per_day || 0) + '</div><div class="lbl">Views per day</div></div>' +
+    '<div class="stat"><div class="val" style="font-size:18px">' + (t.busiest || '-') +
+      '</div><div class="lbl">Busiest day</div></div>';
+
+  drawActivityChart(d);
+
+  const el = document.getElementById('act-people');
+  if(!d.people.length){
+    el.innerHTML = '<div class="empty">Nobody has opened the site in this window.</div>';
+    return;
+  }
+  el.innerHTML = '<table><thead><tr><th>Member</th><th>Views</th><th>Days active</th><th>Last seen</th></tr></thead><tbody>' +
+    d.people.map(function(p){
+      return '<tr><td>' + memberCell(p) + '</td>' +
+        '<td class="mono">' + p.views + '</td>' +
+        '<td class="mono">' + p.days + '</td>' +
+        '<td class="mono" style="font-size:11px;color:var(--muted)">' +
+        String(p.last_seen || '').substring(0,16).replace('T',' ') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+
+function drawActivityChart(d){
+  const holder = document.getElementById('act-chart');
+  const max = Math.max(1, Math.max.apply(null, d.views.concat(d.uniques)));
+  if(!d.views.some(function(v){ return v > 0; })){
+    holder.innerHTML = '<div class="empty">No visits recorded yet.</div>';
+    document.getElementById('act-legend').innerHTML = '';
+    return;
+  }
+  const W = 760, H = 240, PL = 44, PR = 12, PT = 14, PB = 28;
+  const n = d.labels.length;
+  const x = function(i){ return PL + (i * (W - PL - PR)) / Math.max(1, n - 1); };
+  const y = function(v){ return PT + (H - PT - PB) * (1 - v / max); };
+  let g = '';
+  for(let i = 0; i <= 4; i++){
+    const v = max * i / 4, yy = y(v);
+    g += '<line x1="' + PL + '" y1="' + yy + '" x2="' + (W - PR) + '" y2="' + yy +
+         '" stroke="#242830" stroke-width="1"/>' +
+         '<text x="' + (PL - 8) + '" y="' + (yy + 4) + '" fill="#646c79" font-size="11" text-anchor="end">' +
+         Math.round(v) + '</text>';
+  }
+  const step = Math.max(1, Math.floor(n / 5));
+  for(let i = 0; i < n; i += step){
+    g += '<text x="' + x(i) + '" y="' + (H - 8) + '" fill="#646c79" font-size="11" text-anchor="middle">' +
+         d.labels[i].slice(5) + '</text>';
+  }
+  const line = function(vals, color, dash){
+    return '<polyline points="' + vals.map(function(v,i){ return x(i) + ',' + y(v); }).join(' ') +
+      '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"' +
+      (dash ? ' stroke-dasharray="4 4"' : '') + '/>';
+  };
+  holder.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img">' +
+    g + line(d.views, '#f4f6f9', false) + line(d.uniques, '#8d9bb5', true) + '</svg>';
+  const pages = d.pages || {};
+  document.getElementById('act-legend').innerHTML =
+    '<span><i style="background:#f4f6f9"></i>Page views</span>' +
+    '<span><i style="background:#8d9bb5"></i>Unique visitors</span>' +
+    '<span style="color:var(--dim)">dashboard ' + (pages.dashboard || 0) +
+    ' / profile ' + (pages.profile || 0) + '</span>';
 }
 
 // ── Points and ranks ──
