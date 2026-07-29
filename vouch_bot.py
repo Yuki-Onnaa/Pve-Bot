@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 # ─────────────────────────────────────────────────────────────
@@ -571,6 +572,92 @@ async def update_role_for_user(guild, user_id, category):
         pass
 
 
+async def resync_all_roles():
+    """Recheck every stored member and hand out the correct rank role."""
+    data = load_data()
+    checked = 0
+    updated = 0
+    for guild in bot.guilds:
+        for uid, rec in user_records(data):
+            member = guild.get_member(int(uid))
+            if member is None:
+                continue
+            checked += 1
+            before = {r.name for r in member.roles}
+            for category in ROLE_THRESHOLDS:
+                if rec.get(category):
+                    await update_role_for_user(guild, int(uid), category)
+            refreshed = guild.get_member(int(uid))
+            if refreshed and {r.name for r in refreshed.roles} != before:
+                updated += 1
+            await asyncio.sleep(0.35)  # stay well clear of the rate limit
+    await log_audit(f"🔄 Role resync from the dashboard — {updated} member(s) updated of {checked} checked.")
+    return {"checked": checked, "updated": updated}
+
+
+# ─────────────────────────────────────────────────────────────
+# CUSTOM ?COMMANDS (created from the dashboard)
+# ─────────────────────────────────────────────────────────────
+
+def get_custom_commands():
+    return load_data().get("_commands", [])
+
+
+def _bump_command_uses(name):
+    data = load_data()
+    for c in data.get("_commands", []):
+        if c["name"] == name:
+            c["uses"] = c.get("uses", 0) + 1
+            save_data(data)
+            return
+
+
+def _fill_placeholders(text, message):
+    return (text
+            .replace("{user}", message.author.mention)
+            .replace("{name}", message.author.display_name)
+            .replace("{server}", message.guild.name if message.guild else "this server"))
+
+
+async def try_custom_command(message):
+    """Runs a dashboard-made ?command. Returns True if one matched."""
+    content = message.content.strip()
+    if not content.startswith("?") or len(content) < 2:
+        return False
+    name = content[1:].split()[0].lower()
+    if not name or bot.get_command(name):
+        return False  # never shadow a built-in
+
+    for c in get_custom_commands():
+        if c.get("name") != name or not c.get("enabled", True):
+            continue
+        text = _fill_placeholders(c.get("response", ""), message)
+        try:
+            if c.get("embed"):
+                try:
+                    color = discord.Color(int(str(c.get("color", "#2f9bf5")).lstrip("#"), 16))
+                except ValueError:
+                    color = discord.Color.blue()
+                embed = discord.Embed(description=text, color=color)
+                if c.get("title"):
+                    embed.title = c["title"]
+                await message.channel.send(embed=embed)
+            else:
+                await message.channel.send(text)
+            _bump_command_uses(name)
+        except discord.HTTPException as e:
+            print(f"[CustomCommand] Failed to send ?{name}: {e}")
+        return True
+    return False
+
+
+async def process_message_commands(message):
+    """Custom ?commands get first refusal, then the built-in command handler."""
+    if await try_custom_command(message):
+        return
+    await bot.process_commands(message)
+
+
 # ─────────────────────────────────────────────────────────────
 # @MENTION CHAT (calls the Claude API directly)
 # ─────────────────────────────────────────────────────────────
@@ -836,12 +923,25 @@ async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
     # Start the web dashboard in a background thread
     try:
-        from dashboard import run_dashboard
-        t = threading.Thread(target=run_dashboard, daemon=True)
+        import dashboard
+        dashboard.set_bot(
+            bot,
+            loop=asyncio.get_running_loop(),
+            thresholds=ROLE_THRESHOLDS,
+            metric=ROLE_THRESHOLD_METRIC,
+            resync=resync_all_roles,
+        )
+        t = threading.Thread(target=dashboard.run_dashboard, daemon=True)
         t.start()
         print("[Dashboard] Started")
     except Exception as e:
         print(f"[Dashboard] Failed to start: {e}")
+
+    try:
+        synced = await bot.tree.sync()
+        print(f"[Slash] Synced {len(synced)} command(s)")
+    except discord.HTTPException as e:
+        print(f"[Slash] Sync failed: {e}")
     await refresh_live_leaderboards()
     if not event_ping_loop.is_running():
         event_ping_loop.start()
@@ -925,7 +1025,7 @@ async def on_message(message):
 
     category = CHANNEL_CATEGORY.get(message.channel.id)
     if category is None:
-        await bot.process_commands(message)
+        await process_message_commands(message)
         return
 
     data = load_data()
@@ -983,7 +1083,7 @@ async def on_message(message):
                 await update_role_for_user(message.guild, target_id, category)
         return
 
-    await bot.process_commands(message)
+    await process_message_commands(message)
 
 
 @bot.event
@@ -1656,6 +1756,166 @@ async def syncvouches_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to sync vouch history.")
     else:
         await ctx.send(f"⚠️ Sync failed: {error}")
+
+
+
+# ─────────────────────────────────────────────────────────────
+# SLASH COMMANDS
+# ─────────────────────────────────────────────────────────────
+
+CATEGORY_CHOICES = [
+    app_commands.Choice(name="Host", value="pve"),
+    app_commands.Choice(name="Security", value="security"),
+    app_commands.Choice(name="Support", value="support"),
+]
+
+
+async def event_autocomplete(interaction: discord.Interaction, current: str):
+    category = getattr(interaction.namespace, "category", None) or "pve"
+    events = CATEGORY_EVENTS.get(category, {})
+    matches = [e for e in events if current.lower() in e.lower()][:25]
+    return [app_commands.Choice(name=f"{e} ({events[e]['points']} pts)", value=e) for e in matches]
+
+
+@bot.tree.command(name="leaderboard", description="Show the top members for a category")
+@app_commands.describe(category="Which leaderboard to show", top="How many places to list (1-25)")
+@app_commands.choices(category=CATEGORY_CHOICES)
+async def slash_leaderboard(interaction: discord.Interaction,
+                            category: app_commands.Choice[str] = None,
+                            top: int = 10):
+    cat = category.value if category else "pve"
+    top = max(1, min(25, top))
+    data = load_data()
+    lines = build_leaderboard_lines(data, cat, top)
+    embed = discord.Embed(
+        title=f"{CATEGORY_NAMES[cat]} Leaderboard",
+        description="\n".join(lines) if lines else "No vouches recorded yet.",
+        color=discord.Color.blue(),
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="vouches", description="Look up someone's vouch totals")
+@app_commands.describe(member="Whose vouches to show (defaults to you)")
+async def slash_vouches(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    summary = get_vouch_summary_text(member.id, member.display_name)
+    embed = discord.Embed(
+        title=f"{member.display_name}'s vouches",
+        description=summary,
+        color=discord.Color.blue(),
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="rank", description="Show your rank role and progress to the next one")
+@app_commands.describe(member="Whose rank to show (defaults to you)")
+async def slash_rank(interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    data = load_data()
+    record = data.get(str(member.id), {})
+    lines = []
+    for category, ladder in ROLE_THRESHOLDS.items():
+        cat_rec = record.get(category)
+        if not cat_rec:
+            continue
+        metric = ROLE_THRESHOLD_METRIC.get(category, "points")
+        value = cat_rec["total_vouches"] if metric == "vouches" else cat_rec["total_points"]
+        current_role, current_at, next_role, next_at = get_rank_progress(value, ladder)
+        bar = progress_bar(value, current_at, next_at)
+        target = f"{round(max(0, next_at - value), 1)} to {next_role}" if next_at else "max rank"
+        lines.append(f"**{CATEGORY_NAMES[category]}** — {current_role or 'Unranked'}\n{bar} {target}")
+    embed = discord.Embed(
+        title=f"{member.display_name}'s ranks",
+        description="\n\n".join(lines) if lines else "No vouches recorded yet.",
+        color=discord.Color.blue(),
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="commands", description="List the server's custom ?commands")
+async def slash_commands(interaction: discord.Interaction):
+    entries = [c for c in get_custom_commands() if c.get("enabled", True)]
+    if not entries:
+        await interaction.response.send_message(
+            "No custom commands yet — an admin can create them on the dashboard.", ephemeral=True)
+        return
+    listing = "\n".join(f"`?{c['name']}`" + (f" — {c['title']}" if c.get("title") else "") for c in entries)
+    embed = discord.Embed(title="Custom commands", description=listing, color=discord.Color.blue())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="addvouch", description="Manually add a vouch (admin only)")
+@app_commands.describe(category="Which category", member="Who gets the vouch",
+                       event="Which event", count="How many times (default 1)")
+@app_commands.choices(category=CATEGORY_CHOICES)
+@app_commands.autocomplete(event=event_autocomplete)
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_addvouch(interaction: discord.Interaction,
+                         category: app_commands.Choice[str],
+                         member: discord.Member,
+                         event: str,
+                         count: int = 1):
+    cat = category.value
+    if event not in CATEGORY_EVENTS.get(cat, {}):
+        await interaction.response.send_message(f"`{event}` isn't a {CATEGORY_NAMES[cat]} event.", ephemeral=True)
+        return
+    count = max(1, min(50, count))
+    await interaction.response.defer()
+
+    data = load_data()
+    record = get_user_record(data, member.id, cat)
+    points = CATEGORY_EVENTS[cat][event]["points"]
+    record["total_points"] += points * count
+    record["total_vouches"] += count
+    record["events"][event] = record["events"].get(event, 0) + count
+    record["log"].append({
+        "id": uuid.uuid4().hex[:8],
+        "by": interaction.user.id,
+        "by_name": interaction.user.display_name,
+        "event": event,
+        "points": points * count,
+        "count": count,
+        "backfilled": True,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
+    save_data(data)
+
+    await log_audit(
+        f"✅ **{CATEGORY_NAMES[cat]} — {event}** (+{points * count} pts) added by "
+        f"{interaction.user.mention} → {member.mention}"
+    )
+    await refresh_live_leaderboards()
+    await update_role_for_user(interaction.guild, member.id, cat)
+    await interaction.followup.send(
+        f"Added **{event}** ×{count} to {member.mention} — now {round(record['total_points'], 1)} "
+        f"{CATEGORY_NAMES[cat]} points."
+    )
+
+
+@bot.tree.command(name="resyncroles", description="Recheck everyone's rank roles (admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_resyncroles(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    result = await resync_all_roles()
+    await interaction.followup.send(
+        f"Resync done — {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
+
+
+@slash_addvouch.error
+@slash_resyncroles.error
+async def slash_admin_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Administrator permission to use that."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
 
 
 if __name__ == "__main__":

@@ -1,15 +1,18 @@
+import csv
+import io
 import json
 import os
+import re
 import secrets
 import threading
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import urllib.error
 import urllib.request
-from flask import Flask, session, redirect, request, jsonify, render_template_string
+from flask import Flask, Response, session, redirect, request, jsonify, render_template_string
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -65,6 +68,16 @@ CATEGORY_EVENTS = {
 
 PERSONAS = ["default", "hype", "chill", "sarcastic", "formal"]
 
+# Built-in ?commands that custom commands may not shadow
+RESERVED_COMMANDS = {
+    "shutdown", "sleep", "awake", "wakeup", "profile", "cleanleaderboards",
+    "testeventping", "postleaderboards", "refreshleaderboards", "addmemory",
+    "remember", "memories", "removememory", "forget", "persona", "personas",
+    "leaderboard", "sleaderboard", "suleaderboard", "vouches", "addvouch",
+    "backfill", "backfillhistory", "revertbackfill", "undobackfill",
+    "syncvouches", "scanhistory", "commands", "help",
+}
+
 DEFAULT_CONFIG = {
     "pve_channel_id": 1529113596657799178,
     "security_channel_id": 1527834552150659103,
@@ -115,6 +128,91 @@ def ensure_user_cat(data, uid, category):
     for e in CATEGORY_EVENTS[category]:
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
+
+# ─────────────────────────────────────────────────────────────
+# BOT BRIDGE
+# The dashboard runs in a thread inside the bot process, so it can borrow the
+# bot's member cache and schedule coroutines on its event loop.
+# ─────────────────────────────────────────────────────────────
+
+_bridge = {
+    "bot": None, "loop": None, "guild_id": None,
+    "thresholds": {}, "metric": {}, "resync": None,
+}
+_name_cache = {}
+
+def set_bot(bot, loop=None, thresholds=None, metric=None, resync=None, guild_id=None):
+    """Called once from the bot's on_ready so the dashboard can resolve names etc."""
+    _bridge["bot"] = bot
+    _bridge["loop"] = loop
+    _bridge["thresholds"] = thresholds or {}
+    _bridge["metric"] = metric or {}
+    _bridge["resync"] = resync
+    _bridge["guild_id"] = guild_id
+    _name_cache.clear()
+
+def resolve_user(uid):
+    """Discord display name + avatar for a user ID, falling back to the raw ID."""
+    uid = str(uid)
+    if uid in _name_cache:
+        return _name_cache[uid]
+    info = {"name": uid, "avatar": "", "resolved": False}
+    bot = _bridge["bot"]
+    if bot is not None:
+        try:
+            member = None
+            for guild in getattr(bot, "guilds", []):
+                member = guild.get_member(int(uid))
+                if member:
+                    break
+            user = member or bot.get_user(int(uid))
+            if user is not None:
+                info = {
+                    "name": getattr(user, "display_name", None) or user.name,
+                    "avatar": str(user.display_avatar.url) if getattr(user, "display_avatar", None) else "",
+                    "resolved": True,
+                }
+                _name_cache[uid] = info
+        except (ValueError, AttributeError):
+            pass
+    return info
+
+def rank_progress(category, points, vouches):
+    """Current rank role, next rank and how far along the user is."""
+    ladder = _bridge["thresholds"].get(category) or []
+    if not ladder:
+        return None
+    value = vouches if _bridge["metric"].get(category) == "vouches" else points
+    current = None
+    current_at = 0
+    nxt = None
+    for threshold, name in ladder:
+        if value >= threshold:
+            current, current_at = name, threshold
+        elif nxt is None:
+            nxt = (threshold, name)
+    if nxt is None:
+        pct = 100
+        remaining = 0
+        next_name = None
+        next_at = None
+    else:
+        next_at, next_name = nxt
+        span = max(1, next_at - current_at)
+        pct = max(0, min(100, round(((value - current_at) / span) * 100)))
+        remaining = round(max(0, next_at - value), 1)
+    return {
+        "current": current, "next": next_name, "next_at": next_at,
+        "pct": pct, "remaining": remaining, "value": round(value, 1),
+    }
+
+def run_on_bot(coro):
+    """Schedule a coroutine on the bot's loop from this Flask thread."""
+    loop = _bridge["loop"]
+    if loop is None or coro is None:
+        return None
+    import asyncio
+    return asyncio.run_coroutine_threadsafe(coro, loop)
 
 # ─────────────────────────────────────────────────────────────
 # DISCORD OAUTH2  (login with Discord, Administrator required)
@@ -330,7 +428,8 @@ def api_leaderboard():
         )
         ranked = [(uid, rec) for uid, rec in ranked if rec.get(cat, {}).get("total_points", 0) > 0][:25]
         result[cat] = [
-            {"uid": uid, "points": rec[cat]["total_points"], "vouches": rec[cat]["total_vouches"]}
+            {"uid": uid, "points": rec[cat]["total_points"], "vouches": rec[cat]["total_vouches"],
+             **resolve_user(uid)}
             for uid, rec in ranked
         ]
     return jsonify(result)
@@ -344,10 +443,11 @@ def api_users():
     q = request.args.get("q", "").lower()
     users = []
     for uid, rec in user_records(data):
-        if q and q not in uid:
+        if q and q not in uid and q not in resolve_user(uid)["name"].lower():
             continue
         users.append({
             "uid": uid,
+            **resolve_user(uid),
             "total": combined_total(rec),
             "pve": rec.get("pve", {}).get("total_points", 0),
             "security": rec.get("security", {}).get("total_points", 0),
@@ -363,13 +463,14 @@ def api_user_detail(uid):
         return jsonify({"error": "Invalid user ID"}), 400
     data = load_data()
     rec = data.get(uid, {})
-    result = {"uid": uid, "total": combined_total(rec), "categories": {}}
+    result = {"uid": uid, "total": combined_total(rec), "categories": {}, **resolve_user(uid)}
     for cat in ALL_CATEGORIES:
         cat_rec = rec.get(cat, {})
         log = cat_rec.get("log", [])
         result["categories"][cat] = {
             "total_points": cat_rec.get("total_points", 0),
             "total_vouches": cat_rec.get("total_vouches", 0),
+            "rank": rank_progress(cat, cat_rec.get("total_points", 0), cat_rec.get("total_vouches", 0)),
             "events": cat_rec.get("events", {}),
             "log": [
                 {**e, "idx_id": f"idx{i}" if not e.get("id") else e.get("id")}
@@ -559,23 +660,176 @@ def api_settings_update():
 
 # ── API: Audit Log ──
 
-@app.route("/api/auditlog")
-@admin_required
-def api_auditlog():
+def _collect_audit(args):
+    """Flatten every log entry, newest first, applying the given filters."""
     data = load_data()
+    category = args.get("category", "")
+    uid_filter = args.get("uid", "").strip()
+    q = args.get("q", "").lower().strip()
+    try:
+        days = int(args.get("days", 0))
+    except (ValueError, TypeError):
+        days = 0
+    cutoff = ""
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
     entries = []
     for uid, rec in user_records(data):
+        if uid_filter and uid_filter not in uid:
+            continue
         for cat in ALL_CATEGORIES:
+            if category and cat != category:
+                continue
             for i, e in enumerate(rec.get(cat, {}).get("log", [])):
+                when = e.get("time", "")
+                if cutoff and when < cutoff:
+                    continue
+                who = resolve_user(uid)
+                by_name = e.get("by_name") or str(e.get("by", ""))
+                if q and q not in str(e.get("event", "")).lower() and q not in by_name.lower() \
+                        and q not in who["name"].lower() and q not in uid:
+                    continue
                 entries.append({
-                    "uid": uid, "category": cat,
-                    "event": e.get("event"), "points": e.get("points"),
-                    "by": e.get("by_name") or str(e.get("by", "")),
-                    "time": e.get("time", ""), "backfilled": e.get("backfilled", False),
+                    "uid": uid, "name": who["name"], "avatar": who["avatar"],
+                    "category": cat, "event": e.get("event"), "points": e.get("points"),
+                    "by": by_name, "time": when, "backfilled": e.get("backfilled", False),
                     "id": e.get("id") or f"idx{i}",
                 })
     entries.sort(key=lambda e: e.get("time") or "", reverse=True)
-    return jsonify(entries[:300])
+    return entries
+
+@app.route("/api/auditlog")
+@admin_required
+def api_auditlog():
+    return jsonify(_collect_audit(request.args)[:400])
+
+@app.route("/api/auditlog.csv")
+@admin_required
+def api_auditlog_csv():
+    entries = _collect_audit(request.args)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["time", "category", "event", "points", "user_id", "user_name", "given_by", "backfilled"])
+    for e in entries:
+        writer.writerow([e["time"], CATEGORY_NAMES.get(e["category"], e["category"]), e["event"],
+                         e["points"], e["uid"], e["name"], e["by"], "yes" if e["backfilled"] else "no"])
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=audit-log-{stamp}.csv"},
+    )
+
+# ── API: Points over time (chart) ──
+
+@app.route("/api/points_over_time")
+@admin_required
+def api_points_over_time():
+    try:
+        days = max(7, min(180, int(request.args.get("days", 30))))
+    except (ValueError, TypeError):
+        days = 30
+    data = load_data()
+    today = datetime.now(timezone.utc).date()
+    labels = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    index = {d: i for i, d in enumerate(labels)}
+    series = {cat: [0.0] * days for cat in ALL_CATEGORIES}
+
+    for uid, rec in user_records(data):
+        for cat in ALL_CATEGORIES:
+            for e in rec.get(cat, {}).get("log", []):
+                day = str(e.get("time", ""))[:10]
+                if day in index:
+                    series[cat][index[day]] += float(e.get("points", 0) or 0)
+
+    return jsonify({
+        "labels": labels,
+        "series": {cat: [round(v, 1) for v in vals] for cat, vals in series.items()},
+        "totals": {cat: round(sum(vals), 1) for cat, vals in series.items()},
+    })
+
+# ── API: Role resync ──
+
+@app.route("/api/roles/resync", methods=["POST"])
+@admin_required
+def api_roles_resync():
+    resync = _bridge.get("resync")
+    if resync is None or _bridge.get("loop") is None:
+        return jsonify({"error": "Bot isn't connected yet. Try again once it's online."}), 503
+    try:
+        future = run_on_bot(resync())
+        result = future.result(timeout=120) if future else {}
+    except Exception as exc:
+        return jsonify({"error": f"Resync failed: {exc}"}), 500
+    return jsonify({"ok": True, **(result or {})})
+
+# ── API: Custom ? commands ──
+
+def _valid_command_name(name):
+    return bool(re.fullmatch(r"[a-z0-9_-]{1,24}", name))
+
+@app.route("/api/commands", methods=["GET"])
+@admin_required
+def api_commands_get():
+    data = load_data()
+    return jsonify(data.get("_commands", []))
+
+@app.route("/api/commands", methods=["POST"])
+@admin_required
+def api_commands_save():
+    body = request.json or {}
+    name = str(body.get("name", "")).strip().lower().lstrip("?")
+    response_text = (body.get("response") or "").strip()
+
+    if not _valid_command_name(name):
+        return jsonify({"error": "Names may use letters, numbers, - and _ only (max 24 characters)."}), 400
+    if name in RESERVED_COMMANDS:
+        return jsonify({"error": f"?{name} is a built-in command. Pick another name."}), 400
+    if not response_text:
+        return jsonify({"error": "Give the command something to say."}), 400
+    if len(response_text) > 1900:
+        return jsonify({"error": "Response is too long (1900 characters max)."}), 400
+
+    data = load_data()
+    commands_list = data.get("_commands", [])
+    entry = {
+        "name": name,
+        "response": response_text,
+        "embed": bool(body.get("embed", False)),
+        "title": (body.get("title") or "").strip()[:200],
+        "color": (body.get("color") or "#2f9bf5").strip()[:7],
+        "enabled": bool(body.get("enabled", True)),
+        "uses": 0,
+        "created_by": session.get("user", {}).get("username", "dashboard"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for i, c in enumerate(commands_list):
+        if c["name"] == name:
+            entry["uses"] = c.get("uses", 0)
+            entry["created_at"] = c.get("created_at", entry["created_at"])
+            commands_list[i] = entry
+            break
+    else:
+        if len(commands_list) >= 100:
+            return jsonify({"error": "You've hit the 100 custom command limit."}), 400
+        commands_list.append(entry)
+
+    data["_commands"] = sorted(commands_list, key=lambda c: c["name"])
+    save_data(data)
+    return jsonify({"ok": True, "command": entry})
+
+@app.route("/api/commands/<name>", methods=["DELETE"])
+@admin_required
+def api_commands_delete(name):
+    data = load_data()
+    commands_list = data.get("_commands", [])
+    remaining = [c for c in commands_list if c["name"] != name.lower()]
+    if len(remaining) == len(commands_list):
+        return jsonify({"error": "No command by that name."}), 404
+    data["_commands"] = remaining
+    save_data(data)
+    return jsonify({"ok": True})
 
 # ── API: Event Schedule ──
 
@@ -852,6 +1106,37 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .time-chip{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;
   font-family:var(--mono);font-size:12px;color:var(--muted)}
 .empty{text-align:center;padding:44px 20px;color:var(--dim);font-size:13.5px}
+.member{display:flex;align-items:center;gap:10px;min-width:0}
+.member img,.member .ph{width:30px;height:30px;border-radius:50%;flex-shrink:0;background:var(--card-2)}
+.member .ph{display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted);font-weight:600}
+.member .who{min-width:0}
+.member .nm{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.member .id{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+.rank-row{background:var(--card-2);border-radius:12px;padding:14px;margin-bottom:12px}
+.rank-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px;flex-wrap:wrap}
+.rank-name{font-size:14px;font-weight:600}
+.rank-next{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.rank-bar{height:7px;border-radius:4px;background:#2c333f;overflow:hidden}
+.rank-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--blue),#63b8ff);transition:width .4s}
+.filters{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+.filters select,.filters input{background:var(--card-2);border:1px solid var(--border);border-radius:10px;
+  padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--sans);outline:none}
+.filters input{font-family:var(--mono);min-width:150px}
+.filters select:focus,.filters input:focus{border-color:var(--blue)}
+.chart-wrap{position:relative;width:100%;overflow:hidden}
+.chart-wrap svg{width:100%;height:auto;display:block}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--muted)}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px}
+.cmd-item{display:flex;align-items:center;gap:12px;padding:14px;background:var(--card-2);border-radius:12px;margin-bottom:9px}
+.cmd-item .body{flex:1;min-width:0}
+.cmd-item .nm{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--blue)}
+.cmd-item .rp{font-size:12.5px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-item .mt{font-size:10.5px;color:var(--dim);margin-top:4px;font-family:var(--mono)}
+.off{opacity:.5}
+.prefix-wrap{position:relative}
+.prefix-wrap span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--dim);
+  font-family:var(--mono);font-size:14px;pointer-events:none}
+.prefix-wrap input{padding-left:28px!important;font-family:var(--mono)}
 .alert{border-radius:12px;padding:13px 16px;font-size:13.5px;line-height:1.5}
 .alert-warn{background:rgba(245,185,66,.1);border:1px solid rgba(245,185,66,.24);color:var(--amber)}
 .alert-success{background:rgba(61,220,151,.1);border:1px solid rgba(61,220,151,.24);color:var(--green)}
@@ -887,6 +1172,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="leaderboard" onclick="showSection('leaderboard',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg> Leaderboards</div>
     <div class="nav-item" data-sec="users" onclick="showSection('users',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Members</div>
     <div class="nav-label">Bot</div>
+    <div class="nav-item" data-sec="commands" onclick="showSection('commands',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg> Commands</div>
     <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
     <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
     <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
@@ -939,6 +1225,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <div class="cards">
       <article class="feature">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg></div>
+        <h3>Custom commands</h3>
+        <p>Build your own <code style="font-family:var(--mono);color:var(--blue)">?commands</code> — pick a name, write the reply, and the bot answers instantly.</p>
+        <button class="btn btn-soft" onclick="showSection('commands')">Make a command</button>
+      </article>
+      <article class="feature">
         <div class="ic"><svg class="" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V11M12 21V4M19 21v-6"/></svg></div>
         <h3>Leaderboards</h3>
         <p>See who is on top for hosting, security and support, ranked by the points your bot has handed out.</p>
@@ -988,6 +1280,20 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div class="stat"><div class="accent" style="background:var(--green)"></div><div class="val" id="stat-vouches">—</div><div class="lbl">Total vouches</div></div>
       <div class="stat"><div class="accent" style="background:var(--purple)"></div><div class="val" id="stat-memories">—</div><div class="lbl">Memories saved</div></div>
     </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="section-head" style="margin-bottom:14px">
+        <div class="card-title" style="margin:0">Points awarded over time</div>
+        <select id="chart-days" onchange="loadChart()"
+          style="background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:7px 11px;
+          color:var(--text);font-size:12.5px;font-family:var(--sans);outline:none">
+          <option value="14">Last 14 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      </div>
+      <div class="chart-wrap" id="chart"><div class="empty">Loading…</div></div>
+      <div class="legend" id="chart-legend"></div>
+    </div>
     <div class="grid-3">
       <div class="card" id="ov-host"></div>
       <div class="card" id="ov-security"></div>
@@ -1010,14 +1316,14 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <section id="sec-users" class="section">
     <div class="section-head">
       <h2>Members</h2>
-      <input id="user-search" placeholder="Search by user ID" oninput="searchUsers()"
+      <input id="user-search" placeholder="Search name or ID" oninput="searchUsers()"
         style="background:var(--card-2);border:1px solid var(--border);border-radius:11px;padding:10px 14px;
         color:var(--text);font-family:var(--mono);font-size:13px;outline:none;min-width:220px">
     </div>
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>User ID</th><th>Host</th><th>Security</th><th>Support</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th>Member</th><th>Host</th><th>Security</th><th>Support</th><th>Total</th><th></th></tr></thead>
           <tbody id="users-table"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -1025,7 +1331,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
     <div class="user-detail" id="user-detail-panel" style="display:none">
       <div class="section-head" style="margin-bottom:14px">
-        <h2 style="font-size:18px">Member <span class="mono" id="detail-uid" style="font-size:14px"></span></h2>
+        <h2 style="font-size:18px" id="detail-name">Member</h2>
         <button class="btn btn-ghost btn-sm" onclick="closeDetail()">Close</button>
       </div>
       <div class="cat-tabs" id="detail-cat-tabs"></div>
@@ -1053,7 +1359,22 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
   <!-- AUDIT -->
   <section id="sec-audit" class="section">
-    <div class="section-head"><h2>Audit log</h2></div>
+    <div class="section-head">
+      <h2>Audit log</h2>
+      <button class="btn btn-ghost btn-sm" onclick="exportAudit()">Export CSV</button>
+    </div>
+    <div class="filters">
+      <select id="f-cat" onchange="loadAudit()">
+        <option value="">All categories</option>
+        <option value="pve">Host</option><option value="security">Security</option><option value="support">Support</option>
+      </select>
+      <select id="f-days" onchange="loadAudit()">
+        <option value="0">All time</option><option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option><option value="90">Last 90 days</option>
+      </select>
+      <input id="f-q" placeholder="Search event, name or ID" oninput="debouncedAudit()">
+      <button class="btn btn-ghost btn-sm" onclick="clearAuditFilters()">Clear</button>
+    </div>
     <div class="card"><div id="audit-list"><div class="empty">Loading…</div></div></div>
   </section>
 
@@ -1077,6 +1398,40 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div id="events-content"><div class="empty">Loading…</div></div>
   </section>
 
+  <!-- COMMANDS -->
+  <section id="sec-commands" class="section">
+    <div class="section-head"><h2>Custom commands</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title" id="cmd-form-title">Create a command</div>
+      <div class="form-row">
+        <div class="form-group"><label>Command name</label>
+          <div class="prefix-wrap"><span>?</span><input id="cmd-name" placeholder="rules" maxlength="24"></div>
+        </div>
+        <div class="form-group"><label>Embed title (optional)</label>
+          <input id="cmd-title" placeholder="Server rules" maxlength="200">
+        </div>
+      </div>
+      <div class="form-group"><label>Response</label>
+        <textarea id="cmd-response" rows="4" maxlength="1900"
+          placeholder="What the bot replies with. You can use {user} for the person who ran it."></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Send as embed</label>
+          <div class="toggle-wrap"><label class="toggle"><input type="checkbox" id="cmd-embed">
+            <span class="toggle-slider"></span></label>
+            <span style="font-size:13px;color:var(--muted)">Nicer formatting, coloured bar</span></div>
+        </div>
+        <div class="form-group"><label>Embed colour</label>
+          <input id="cmd-color" type="color" value="#2f9bf5" style="height:44px;padding:4px">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveCommand()">Save command</button>
+      <button class="btn btn-ghost" onclick="resetCommandForm()" style="margin-left:8px">Reset</button>
+      <div id="cmd-result"></div>
+    </div>
+    <div class="card"><div id="cmd-list"><div class="empty">Loading…</div></div></div>
+  </section>
+
   <!-- SETTINGS -->
   <section id="sec-settings" class="section">
     <div class="section-head"><h2>Settings</h2></div>
@@ -1087,6 +1442,13 @@ tr:hover td{background:rgba(255,255,255,.02)}
           <label class="toggle"><input type="checkbox" id="chat-toggle" onchange="toggleChat()"><span class="toggle-slider"></span></label>
           <span id="chat-toggle-label" style="font-size:13.5px;color:var(--muted)">Chat is on</span>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Rank roles</div>
+        <p style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:14px">
+          Recheck every member's points and hand out the right rank role.</p>
+        <button class="btn btn-soft" id="resync-btn" onclick="resyncRoles()">Resync all roles</button>
+        <div id="resync-result"></div>
       </div>
       <div class="card">
         <div class="card-title">Persona</div>
@@ -1158,6 +1520,13 @@ async function api(path, opts={}) {
 }
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function memberCell(u){
+  const pic = u.avatar ? '<img alt="" src="'+u.avatar+'">'
+                       : '<span class="ph">'+esc((u.name||'?').slice(0,1).toUpperCase())+'</span>';
+  const nm = u.resolved ? esc(u.name) : 'Unknown member';
+  return '<div class="member">'+pic+'<div class="who"><div class="nm">'+nm+
+         '</div><div class="id">'+u.uid+'</div></div></div>';
+}
 function showAlert(el,msg,type='success'){
   el.innerHTML = '<div class="alert alert-'+type+'" style="margin-top:10px">'+msg+'</div>';
   setTimeout(()=>el.innerHTML='',3500);
@@ -1224,7 +1593,8 @@ function showSection(name, el){
   if(name==='events') loadEvents();
   if(name==='settings') loadSettings();
   if(name==='users') loadUsers();
-  if(name==='overview') loadStatus();
+  if(name==='overview'){loadStatus();loadChart();}
+  if(name==='commands') loadCommands();
 }
 
 // ── Status ──
@@ -1253,7 +1623,7 @@ async function loadOverview(){
     catEl.innerHTML = '<div class="card-title" style="color:'+CAT_COLORS[cat]+'">'+CAT_NAMES[cat]+'</div>' +
       (top3.length ? top3.map((u,i)=>
         '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13.5px">'+
-        '<span style="color:var(--muted)">#'+(i+1)+' <span class="mono">'+u.uid+'</span></span>'+
+        '<span style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#'+(i+1)+' '+esc(u.resolved?u.name:u.uid)+'</span>'+
         '<span class="mono" style="color:var(--text)">'+fmt(u.points)+' pts</span></div>').join('')
         : '<div class="empty" style="padding:20px">Nothing here yet.</div>');
   });
@@ -1274,8 +1644,8 @@ function renderLbTable(cat){
   const rows = (lbData[cat]||[]);
   const wrap = document.getElementById('lb-table-wrap');
   if(!rows.length){wrap.innerHTML='<div class="empty">No vouches recorded yet.</div>';return;}
-  wrap.innerHTML = '<table><thead><tr><th>#</th><th>User ID</th><th>Points</th><th>Vouches</th></tr></thead><tbody>' +
-    rows.map((r,i)=>'<tr><td style="color:var(--dim)">'+(i+1)+'</td><td class="mono">'+r.uid+'</td>'+
+  wrap.innerHTML = '<table><thead><tr><th>#</th><th>Member</th><th>Points</th><th>Vouches</th></tr></thead><tbody>' +
+    rows.map((r,i)=>'<tr><td style="color:var(--dim)">'+(i+1)+'</td><td>'+memberCell(r)+'</td>'+
       '<td class="mono" style="color:var(--text);font-weight:600">'+fmt(r.points)+'</td>'+
       '<td style="color:var(--muted)">'+r.vouches+'</td></tr>').join('') + '</tbody></table>';
 }
@@ -1291,7 +1661,7 @@ function renderUsers(list){
   const tb = document.getElementById('users-table');
   if(!list.length){tb.innerHTML='<tr><td colspan="6" class="empty">No members found.</td></tr>';return;}
   tb.innerHTML = list.map(u=>'<tr>'+
-    '<td class="mono">'+u.uid+'</td>'+
+    '<td>'+memberCell(u)+'</td>'+
     '<td class="mono">'+fmt(u.pve)+'</td>'+
     '<td class="mono">'+fmt(u.security)+'</td>'+
     '<td class="mono">'+fmt(u.support)+'</td>'+
@@ -1300,13 +1670,15 @@ function renderUsers(list){
 }
 function searchUsers(){
   const q = document.getElementById('user-search').value.toLowerCase().trim();
-  renderUsers(q ? usersData.filter(u=>u.uid.includes(q)) : usersData);
+  renderUsers(q ? usersData.filter(u=>u.uid.includes(q) || (u.name||'').toLowerCase().includes(q)) : usersData);
 }
 async function viewUser(uid){
   currentDetailUid = uid;
   document.getElementById('user-detail-panel').style.display='block';
-  document.getElementById('detail-uid').textContent = uid;
   currentDetailData = await api('/api/users/'+uid);
+  document.getElementById('detail-name').innerHTML =
+    (currentDetailData.resolved ? esc(currentDetailData.name) : 'Member') +
+    ' <span class="mono" style="font-size:13px;color:var(--dim)">'+uid+'</span>';
   renderDetailCatTabs();
   renderDetailCat(currentDetailCat);
   document.getElementById('user-detail-panel').scrollIntoView({behavior:'smooth'});
@@ -1336,7 +1708,12 @@ function renderDetailCat(cat){
     '<td>'+esc(e.event)+'</td><td class="mono">'+fmt(e.points)+'</td>'+
     '<td class="mono" style="font-size:11px">'+esc(e.by_name||e.by||'')+'</td>'+
     '<td><button class="btn btn-danger btn-sm" onclick="revertVouch(\\''+(e.idx_id||e.id)+'\\',\\''+cat+'\\')">Revert</button></td></tr>').join('');
-  document.getElementById('detail-cat-content').innerHTML =
+  const rk = rec.rank;
+  const rankBlock = rk ? '<div class="rank-row"><div class="rank-top">'+
+      '<span class="rank-name">'+(rk.current?esc(rk.current):'No rank yet')+'</span>'+
+      '<span class="rank-next">'+(rk.next?fmt(rk.remaining)+' to '+esc(rk.next):'Top rank reached')+'</span></div>'+
+      '<div class="rank-bar"><div class="rank-fill" style="width:'+rk.pct+'%"></div></div></div>' : '';
+  document.getElementById('detail-cat-content').innerHTML = rankBlock +
     '<div class="form-row" style="margin-bottom:16px">'+
       '<div class="stat"><div class="val" style="font-size:22px">'+fmt(rec.total_points)+'</div><div class="lbl">Points</div></div>'+
       '<div class="stat"><div class="val" style="font-size:22px">'+rec.total_vouches+'</div><div class="lbl">Vouches</div></div></div>'+
@@ -1364,16 +1741,35 @@ async function revertVouch(logId,cat){
 }
 
 // ── Audit ──
+function auditQuery(){
+  const p = new URLSearchParams();
+  const cat = document.getElementById('f-cat').value;
+  const days = document.getElementById('f-days').value;
+  const q = document.getElementById('f-q').value.trim();
+  if(cat) p.set('category',cat);
+  if(days && days!=='0') p.set('days',days);
+  if(q) p.set('q',q);
+  return p.toString();
+}
+let auditTimer = null;
+function debouncedAudit(){clearTimeout(auditTimer);auditTimer=setTimeout(loadAudit,300);}
+function clearAuditFilters(){
+  document.getElementById('f-cat').value='';
+  document.getElementById('f-days').value='0';
+  document.getElementById('f-q').value='';
+  loadAudit();
+}
+function exportAudit(){window.location.href='/api/auditlog.csv?'+auditQuery();}
 async function loadAudit(){
-  const data = await api('/api/auditlog');
+  const data = await api('/api/auditlog?'+auditQuery());
   const el = document.getElementById('audit-list');
-  if(!data.length){el.innerHTML='<div class="empty">No audit entries yet.</div>';return;}
+  if(!data.length){el.innerHTML='<div class="empty">Nothing matches those filters.</div>';return;}
   el.innerHTML = data.map(e=>'<div class="audit-item">'+
     '<div class="audit-dot" style="background:'+(CAT_COLORS[e.category]||'var(--dim)')+'"></div>'+
     '<div class="audit-content"><div class="main-text"><span style="color:'+CAT_COLORS[e.category]+'">'+
     (CAT_NAMES[e.category]||e.category)+'</span> — '+esc(e.event)+' <span class="mono">('+fmt(e.points)+' pts)</span>'+
     (e.backfilled?' <span style="font-size:10px;color:var(--amber)">[backfill]</span>':'')+'</div>'+
-    '<div class="meta">to '+e.uid+' · by '+esc(e.by||'?')+' · '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
+    '<div class="meta">to '+esc(e.name||e.uid)+' · by '+esc(e.by||'?')+' · '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
     '</div></div>').join('');
 }
 
@@ -1407,6 +1803,105 @@ async function loadEvents(){
     '<div class="card-title" style="margin:0">'+esc(event)+'</div>'+
     '<span class="mono">'+times.length+' times</span></div>'+
     '<div class="times-grid">'+times.map(t=>'<span class="time-chip">'+t+'</span>').join('')+'</div></div>').join('');
+}
+
+// ── Chart ──
+async function loadChart(){
+  const days = document.getElementById('chart-days').value;
+  const d = await api('/api/points_over_time?days='+days);
+  if(!d || !d.labels) return;
+  renderChart(d);
+}
+function renderChart(d){
+  const W=760,H=240,PL=44,PR=12,PT=14,PB=28;
+  const cats=['pve','security','support'];
+  const colors={pve:'#2f9bf5',security:'#a78bfa',support:'#3ddc97'};
+  const all=cats.flatMap(c=>d.series[c]||[]);
+  const max=Math.max(1,...all);
+  const n=d.labels.length;
+  const x=i=>PL+(i*(W-PL-PR))/Math.max(1,n-1);
+  const y=v=>PT+(H-PT-PB)*(1-v/max);
+  let g='';
+  for(let i=0;i<=4;i++){
+    const v=max*i/4, yy=y(v);
+    g+='<line x1="'+PL+'" y1="'+yy+'" x2="'+(W-PR)+'" y2="'+yy+'" stroke="#2b323f" stroke-width="1"/>'+
+       '<text x="'+(PL-8)+'" y="'+(yy+4)+'" fill="#6b7787" font-size="11" text-anchor="end">'+fmt(Math.round(v))+'</text>';
+  }
+  const step=Math.max(1,Math.floor(n/5));
+  for(let i=0;i<n;i+=step){
+    g+='<text x="'+x(i)+'" y="'+(H-8)+'" fill="#6b7787" font-size="11" text-anchor="middle">'+d.labels[i].slice(5)+'</text>';
+  }
+  let lines='';
+  cats.forEach(c=>{
+    const pts=(d.series[c]||[]).map((v,i)=>x(i)+','+y(v)).join(' ');
+    lines+='<polyline points="'+pts+'" fill="none" stroke="'+colors[c]+'" stroke-width="2" '+
+           'stroke-linejoin="round" stroke-linecap="round"/>';
+  });
+  document.getElementById('chart').innerHTML =
+    '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img">'+g+lines+'</svg>';
+  document.getElementById('chart-legend').innerHTML = cats.map(c=>
+    '<span><i style="background:'+colors[c]+'"></i>'+CAT_NAMES[c]+' — '+fmt(d.totals[c])+' pts</span>').join('');
+}
+
+// ── Role resync ──
+async function resyncRoles(){
+  const btn=document.getElementById('resync-btn'), el=document.getElementById('resync-result');
+  btn.disabled=true; btn.textContent='Resyncing…';
+  const r=await api('/api/roles/resync',{method:'POST'});
+  btn.disabled=false; btn.textContent='Resync all roles';
+  if(r.ok) showAlert(el,'Done — '+(r.updated||0)+' member(s) updated, '+(r.checked||0)+' checked.','success');
+  else showAlert(el, r.error||'Resync failed.','err');
+}
+
+// ── Custom commands ──
+let editingCommand = null;
+async function loadCommands(){
+  const list = await api('/api/commands');
+  const el = document.getElementById('cmd-list');
+  if(!list.length){el.innerHTML='<div class="empty">No custom commands yet. Make your first one above.</div>';return;}
+  el.innerHTML = list.map(c=>'<div class="cmd-item '+(c.enabled?'':'off')+'">'+
+    '<div class="body"><div class="nm">?'+esc(c.name)+'</div>'+
+    '<div class="rp">'+esc(c.response)+'</div>'+
+    '<div class="mt">'+(c.embed?'embed · ':'')+(c.uses||0)+' uses · by '+esc(c.created_by||'?')+'</div></div>'+
+    '<button class="btn btn-ghost btn-sm" onclick=\'editCommand('+JSON.stringify(JSON.stringify(c))+')\'>Edit</button>'+
+    '<button class="btn btn-danger btn-sm" onclick="deleteCommand(\''+esc(c.name)+'\')">Delete</button></div>').join('');
+}
+function editCommand(json){
+  const c = JSON.parse(json);
+  editingCommand = c.name;
+  document.getElementById('cmd-form-title').textContent = 'Editing ?'+c.name;
+  document.getElementById('cmd-name').value = c.name;
+  document.getElementById('cmd-title').value = c.title||'';
+  document.getElementById('cmd-response').value = c.response||'';
+  document.getElementById('cmd-embed').checked = !!c.embed;
+  document.getElementById('cmd-color').value = c.color||'#2f9bf5';
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function resetCommandForm(){
+  editingCommand = null;
+  document.getElementById('cmd-form-title').textContent = 'Create a command';
+  ['cmd-name','cmd-title','cmd-response'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('cmd-embed').checked=false;
+  document.getElementById('cmd-color').value='#2f9bf5';
+}
+async function saveCommand(){
+  const body={
+    name:document.getElementById('cmd-name').value,
+    title:document.getElementById('cmd-title').value,
+    response:document.getElementById('cmd-response').value,
+    embed:document.getElementById('cmd-embed').checked,
+    color:document.getElementById('cmd-color').value,
+    enabled:true,
+  };
+  const r=await api('/api/commands',{method:'POST',body:JSON.stringify(body)});
+  const el=document.getElementById('cmd-result');
+  if(r.ok){showAlert(el,'Saved. Members can use ?'+r.command.name+' right away.','success');resetCommandForm();loadCommands();}
+  else showAlert(el, r.error||'Could not save that command.','err');
+}
+async function deleteCommand(name){
+  if(!confirm('Delete ?'+name+'?')) return;
+  await api('/api/commands/'+encodeURIComponent(name),{method:'DELETE'});
+  loadCommands();
 }
 
 // ── Settings ──
