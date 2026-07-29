@@ -713,6 +713,116 @@ async def resync_all_roles():
 
 
 # ─────────────────────────────────────────────────────────────
+# TOP VOUCHER ROLE
+# The people handing out the most Host vouches get a role, kept in sync
+# automatically. Set TOP_VOUCHER_DAYS to 0 to rank on all time instead.
+# ─────────────────────────────────────────────────────────────
+
+TOP_VOUCHER_ROLE = os.environ.get("TOP_VOUCHER_ROLE", "Top Voucher")
+TOP_VOUCHER_COUNT = int(os.environ.get("TOP_VOUCHER_COUNT", "2"))
+TOP_VOUCHER_DAYS = int(os.environ.get("TOP_VOUCHER_DAYS", "30"))
+TOP_VOUCHER_MAX = 5  # ceiling, so a big tie cannot hand the role to everyone
+
+
+def compute_top_vouchers(limit=None, days=None, data=None):
+    """User ids of whoever has given the most Host vouches. Ties at the cut are included."""
+    limit = TOP_VOUCHER_COUNT if limit is None else limit
+    days = TOP_VOUCHER_DAYS if days is None else days
+    data = load_data() if data is None else data
+
+    cutoff = ""
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    counts = {}
+    for uid, rec in data.items():
+        if not uid.isdigit():
+            continue
+        for entry in (rec.get("pve") or {}).get("log", []):
+            when = entry.get("time", "")
+            if cutoff and when < cutoff:
+                continue
+            by = str(entry.get("by", "")).strip()
+            if not by.isdigit() or by == uid:
+                continue
+            counts[by] = counts.get(by, 0) + int(entry.get("count", 1) or 1)
+
+    if not counts:
+        return [], {}
+
+    # sort by count, then by id so the order never wobbles between runs
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    cut_value = ranked[min(limit, len(ranked)) - 1][1]
+    winners = [uid for uid, n in ranked if n >= cut_value][:TOP_VOUCHER_MAX]
+    return winners, counts
+
+
+async def update_top_voucher_roles(announce=True):
+    """Give the role to the current leaders and take it off everyone else."""
+    winners, counts = compute_top_vouchers()
+    if not winners:
+        return {"added": 0, "removed": 0}
+
+    added, removed = [], []
+    for guild in bot.guilds:
+        role = discord.utils.get(guild.roles, name=TOP_VOUCHER_ROLE)
+        if role is None:
+            continue
+        if role >= guild.me.top_role:
+            print(f"[TopVoucher] '{TOP_VOUCHER_ROLE}' sits above the bot's role in {guild.name}, cannot manage it")
+            continue
+
+        wanted = {int(uid) for uid in winners}
+        try:
+            for member in list(role.members):
+                if member.id not in wanted:
+                    await member.remove_roles(role, reason="No longer a top voucher")
+                    removed.append(member)
+                    await asyncio.sleep(0.4)
+
+            for uid in wanted:
+                member = guild.get_member(uid)
+                if member is not None and role not in member.roles:
+                    await member.add_roles(role, reason="Top voucher")
+                    added.append(member)
+                    await asyncio.sleep(0.4)
+        except discord.Forbidden:
+            print(f"[TopVoucher] Missing Manage Roles in {guild.name}")
+            continue
+        except discord.HTTPException as e:
+            print(f"[TopVoucher] Role update failed in {guild.name}: {e}")
+            continue
+
+    if announce and (added or removed):
+        window = "all time" if TOP_VOUCHER_DAYS <= 0 else f"last {TOP_VOUCHER_DAYS} days"
+        parts = []
+        if added:
+            parts.append(", ".join(
+                f"{m.mention} ({counts.get(str(m.id), 0)} Host vouches)" for m in added))
+        line = f"🏅 **{TOP_VOUCHER_ROLE}** update ({window})"
+        if parts:
+            line += f"\nNow held by: {parts[0]}"
+        if removed:
+            line += f"\nRemoved from: " + ", ".join(m.mention for m in removed)
+        await log_audit(line)
+
+    return {"added": len(added), "removed": len(removed)}
+
+
+@tasks.loop(minutes=60)
+async def top_voucher_loop():
+    try:
+        await update_top_voucher_roles()
+    except Exception as e:
+        print(f"[TopVoucher] Loop error: {type(e).__name__}: {e}")
+
+
+@top_voucher_loop.before_loop
+async def before_top_voucher_loop():
+    await bot.wait_until_ready()
+
+
+# ─────────────────────────────────────────────────────────────
 # STREAK WARNINGS
 # Runs once a day and DMs anyone whose daily streak is about to lapse.
 # ─────────────────────────────────────────────────────────────
@@ -1287,6 +1397,11 @@ async def on_ready():
         print("[Dashboard] Started")
     except Exception as e:
         print(f"[Dashboard] Failed to start: {e}")
+
+    if not top_voucher_loop.is_running():
+        top_voucher_loop.start()
+        window = "all time" if TOP_VOUCHER_DAYS <= 0 else f"last {TOP_VOUCHER_DAYS} days"
+        print(f"[TopVoucher] Tracking top {TOP_VOUCHER_COUNT} Host vouchers ({window})")
 
     if not warn_expiring_streaks.is_running():
         warn_expiring_streaks.start()
@@ -2129,6 +2244,8 @@ async def syncvouches(ctx):
                 if entry.get("by"):
                     vouchers.add(str(entry["by"]))
 
+    await update_top_voucher_roles(announce=False)
+
     summary = (f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches "
                f"across {sum(1 for k in new_data if k.isdigit())} users, "
                f"given by {len(vouchers)} voucher(s).")
@@ -2440,6 +2557,29 @@ async def slash_wikitest(interaction: discord.Interaction):
         await interaction.followup.send(
             f"Wiki lookup failed. Reason: `{WIKI_LAST_ERROR or 'no results'}`\n"
             f"API URL: `{WIKI_API_URL}`", ephemeral=True)
+
+
+@bot.tree.command(name="topvouchers", description="Who is handing out the most Host vouches")
+async def slash_topvouchers(interaction: discord.Interaction):
+    winners, counts = compute_top_vouchers()
+    if not counts:
+        await interaction.response.send_message("No Host vouches recorded yet.")
+        return
+
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    lines = []
+    for i, (uid, n) in enumerate(ranked, start=1):
+        crown = " 🏅" if uid in winners else ""
+        lines.append(f"**{i}.** <@{uid}> - {n} Host vouch{'es' if n != 1 else ''}{crown}")
+
+    window = "all time" if TOP_VOUCHER_DAYS <= 0 else f"last {TOP_VOUCHER_DAYS} days"
+    embed = discord.Embed(
+        title="Top vouchers",
+        description="\n".join(lines),
+        color=discord.Color.blue(),
+    )
+    embed.set_footer(text=f"{window} - top {TOP_VOUCHER_COUNT} hold the {TOP_VOUCHER_ROLE} role")
+    await interaction.response.send_message(embed=embed)
 
 
 @bot.tree.command(name="commands", description="List the server's custom ?commands")
