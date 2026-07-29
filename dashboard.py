@@ -974,7 +974,7 @@ body{background:var(--bg);color:var(--text);font-family:'Poppins',system-ui,sans
   min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;overflow-x:hidden}
 .glow{position:fixed;top:-10%;right:-20%;width:70vw;height:70vw;border-radius:50%;
   background:radial-gradient(circle,rgba(226,233,243,0.22),transparent 62%);filter:blur(40px);pointer-events:none}
-.card{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:18px;
+.card{position:relative;z-index:1;background:var(--panel);border:1px solid var(--border);border-radius:18px;
   padding:40px 32px;width:100%;max-width:420px;text-align:center}
 .mark{width:72px;height:72px;margin:0 auto 22px;border-radius:20px;display:block;object-fit:cover;
   border:1px solid var(--border);box-shadow:0 10px 34px rgba(0,0,0,.5)}
@@ -992,9 +992,41 @@ p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
 .error{background:rgba(217,136,145,0.1);border:1px solid rgba(217,136,145,0.3);color:var(--red);
   border-radius:12px;padding:12px 14px;font-size:13px;margin-top:22px;text-align:left;line-height:1.5}
 :focus-visible{outline:2px solid var(--moon);outline-offset:2px}
+/* ── Drifting blossom, echoing the logo ── */
+.petals{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.petal{position:absolute;top:-12vh;width:var(--w);height:var(--h);
+  background:linear-gradient(140deg,#ffffff,#c9d2e0);
+  border-radius:100% 0 100% 0;opacity:0;
+  animation:petal-fall var(--dur) linear var(--delay) infinite;will-change:transform,opacity}
+@keyframes petal-fall{
+  0%{transform:translate3d(0,-12vh,0) rotate(0deg) scale(.9);opacity:0}
+  12%{opacity:var(--o)}
+  88%{opacity:var(--o)}
+  100%{transform:translate3d(var(--drift),112vh,0) rotate(var(--spin)) scale(1);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.petals{display:none}}
+
 </style>
 </head>
 <body>
+<div class="petals" aria-hidden="true">
+  <i class="petal" style="left:93.7%;--w:7px;--h:6px;--o:0.11;--dur:31.0s;--delay:-2.8s;--drift:3.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:1.8%;--w:6px;--h:5px;--o:0.11;--dur:18.5s;--delay:-12.7s;--drift:10.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:61.7%;--w:6px;--h:5px;--o:0.11;--dur:27.0s;--delay:-1.5s;--drift:-7.4vw;--spin:-300deg"></i>
+  <i class="petal" style="left:11.5%;--w:13px;--h:11px;--o:0.21;--dur:26.7s;--delay:-16.8s;--drift:6.5vw;--spin:360deg"></i>
+  <i class="petal" style="left:55.7%;--w:9px;--h:7px;--o:0.12;--dur:29.1s;--delay:-16.9s;--drift:4.6vw;--spin:720deg"></i>
+  <i class="petal" style="left:51.7%;--w:11px;--h:10px;--o:0.19;--dur:32.7s;--delay:-10.8s;--drift:-6.5vw;--spin:540deg"></i>
+  <i class="petal" style="left:76.8%;--w:11px;--h:8px;--o:0.16;--dur:25.4s;--delay:-10.3s;--drift:-0.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:9.9%;--w:5px;--h:4px;--o:0.25;--dur:19.6s;--delay:-14.7s;--drift:-12.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:54.4%;--w:13px;--h:12px;--o:0.26;--dur:22.8s;--delay:-10.5s;--drift:0.9vw;--spin:720deg"></i>
+  <i class="petal" style="left:82.8%;--w:5px;--h:5px;--o:0.19;--dur:28.3s;--delay:-1.8s;--drift:7.0vw;--spin:-300deg"></i>
+  <i class="petal" style="left:81.0%;--w:11px;--h:9px;--o:0.18;--dur:28.4s;--delay:-0.7s;--drift:-0.1vw;--spin:540deg"></i>
+  <i class="petal" style="left:9.8%;--w:9px;--h:7px;--o:0.25;--dur:19.2s;--delay:-7.4s;--drift:-2.3vw;--spin:720deg"></i>
+  <i class="petal" style="left:14.8%;--w:5px;--h:4px;--o:0.16;--dur:19.3s;--delay:-12.9s;--drift:2.5vw;--spin:720deg"></i>
+  <i class="petal" style="left:67.0%;--w:7px;--h:6px;--o:0.15;--dur:18.4s;--delay:-4.5s;--drift:5.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:81.9%;--w:8px;--h:6px;--o:0.16;--dur:19.5s;--delay:-16.0s;--drift:4.3vw;--spin:-420deg"></i>
+  <i class="petal" style="left:67.7%;--w:6px;--h:5px;--o:0.22;--dur:28.5s;--delay:-1.6s;--drift:13.0vw;--spin:-300deg"></i>
+</div>
 <div class="glow"></div>
 <div class="card">
   <img class="mark" src="__LOGO__" alt="">
@@ -1041,6 +1073,20 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   display:flex;flex-direction:column;overflow-x:hidden}
 :focus-visible{outline:2px solid var(--moon);outline-offset:2px;border-radius:6px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* ── Drifting blossom, echoing the logo ── */
+.petals{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.petal{position:absolute;top:-12vh;width:var(--w);height:var(--h);
+  background:linear-gradient(140deg,#ffffff,#c9d2e0);
+  border-radius:100% 0 100% 0;opacity:0;
+  animation:petal-fall var(--dur) linear var(--delay) infinite;will-change:transform,opacity}
+@keyframes petal-fall{
+  0%{transform:translate3d(0,-12vh,0) rotate(0deg) scale(.9);opacity:0}
+  12%{opacity:var(--o)}
+  88%{opacity:var(--o)}
+  100%{transform:translate3d(var(--drift),112vh,0) rotate(var(--spin)) scale(1);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.petals{display:none}}
+
 .header{position:sticky;top:0;z-index:50;background:var(--header);border-bottom:1px solid var(--border);
   display:flex;align-items:center;gap:12px;padding:10px 16px}
 .brand{width:34px;height:34px;border-radius:11px;display:block;object-fit:cover;flex-shrink:0;
@@ -1051,7 +1097,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .hlink:hover{color:var(--text);background:rgba(255,255,255,.05)}
 .hlink.avatar img{width:34px;height:34px;border-radius:50%;display:block;border:1px solid var(--border)}
 .hlink.avatar{padding:0}
-.content{flex:1;padding:26px 20px 40px;max-width:900px;width:100%;margin:0 auto}
+.content{flex:1;padding:26px 20px 40px;max-width:900px;width:100%;margin:0 auto;position:relative;z-index:1}
 .hero{position:relative;padding:18px 0 30px}
 .hero::before{content:'';position:absolute;top:-90px;right:-16%;width:min(78vw,520px);height:min(78vw,520px);
   border-radius:50%;background:radial-gradient(circle,rgba(226,233,243,.28),rgba(226,233,243,.04) 55%,transparent 70%);
@@ -1087,12 +1133,30 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
 .act .main{font-size:13.5px;line-height:1.45}
 .act .meta{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
 .empty{text-align:center;padding:40px 20px;color:var(--dim);font-size:13.5px;line-height:1.6}
-.footer{border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
+.footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
 .footer a{color:var(--dim);text-decoration:none;margin:0 5px}
 .footer a:hover{color:var(--muted)}
 </style>
 </head>
 <body>
+<div class="petals" aria-hidden="true">
+  <i class="petal" style="left:93.7%;--w:7px;--h:6px;--o:0.11;--dur:31.0s;--delay:-2.8s;--drift:3.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:1.8%;--w:6px;--h:5px;--o:0.11;--dur:18.5s;--delay:-12.7s;--drift:10.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:61.7%;--w:6px;--h:5px;--o:0.11;--dur:27.0s;--delay:-1.5s;--drift:-7.4vw;--spin:-300deg"></i>
+  <i class="petal" style="left:11.5%;--w:13px;--h:11px;--o:0.21;--dur:26.7s;--delay:-16.8s;--drift:6.5vw;--spin:360deg"></i>
+  <i class="petal" style="left:55.7%;--w:9px;--h:7px;--o:0.12;--dur:29.1s;--delay:-16.9s;--drift:4.6vw;--spin:720deg"></i>
+  <i class="petal" style="left:51.7%;--w:11px;--h:10px;--o:0.19;--dur:32.7s;--delay:-10.8s;--drift:-6.5vw;--spin:540deg"></i>
+  <i class="petal" style="left:76.8%;--w:11px;--h:8px;--o:0.16;--dur:25.4s;--delay:-10.3s;--drift:-0.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:9.9%;--w:5px;--h:4px;--o:0.25;--dur:19.6s;--delay:-14.7s;--drift:-12.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:54.4%;--w:13px;--h:12px;--o:0.26;--dur:22.8s;--delay:-10.5s;--drift:0.9vw;--spin:720deg"></i>
+  <i class="petal" style="left:82.8%;--w:5px;--h:5px;--o:0.19;--dur:28.3s;--delay:-1.8s;--drift:7.0vw;--spin:-300deg"></i>
+  <i class="petal" style="left:81.0%;--w:11px;--h:9px;--o:0.18;--dur:28.4s;--delay:-0.7s;--drift:-0.1vw;--spin:540deg"></i>
+  <i class="petal" style="left:9.8%;--w:9px;--h:7px;--o:0.25;--dur:19.2s;--delay:-7.4s;--drift:-2.3vw;--spin:720deg"></i>
+  <i class="petal" style="left:14.8%;--w:5px;--h:4px;--o:0.16;--dur:19.3s;--delay:-12.9s;--drift:2.5vw;--spin:720deg"></i>
+  <i class="petal" style="left:67.0%;--w:7px;--h:6px;--o:0.15;--dur:18.4s;--delay:-4.5s;--drift:5.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:81.9%;--w:8px;--h:6px;--o:0.16;--dur:19.5s;--delay:-16.0s;--drift:4.3vw;--spin:-420deg"></i>
+  <i class="petal" style="left:67.7%;--w:6px;--h:5px;--o:0.22;--dur:28.5s;--delay:-1.6s;--drift:13.0vw;--spin:-300deg"></i>
+</div>
 <header class="header">
   <img class="brand" src="__LOGO__" alt="">
   <span class="brand-name">Matzys Overseer</span>
@@ -1225,6 +1289,20 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   display:flex;flex-direction:column;overflow-x:hidden}
 :focus-visible{outline:2px solid var(--moon);outline-offset:2px;border-radius:6px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* ── Drifting blossom, echoing the logo ── */
+.petals{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.petal{position:absolute;top:-12vh;width:var(--w);height:var(--h);
+  background:linear-gradient(140deg,#ffffff,#c9d2e0);
+  border-radius:100% 0 100% 0;opacity:0;
+  animation:petal-fall var(--dur) linear var(--delay) infinite;will-change:transform,opacity}
+@keyframes petal-fall{
+  0%{transform:translate3d(0,-12vh,0) rotate(0deg) scale(.9);opacity:0}
+  12%{opacity:var(--o)}
+  88%{opacity:var(--o)}
+  100%{transform:translate3d(var(--drift),112vh,0) rotate(var(--spin)) scale(1);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.petals{display:none}}
+
 
 /* ── Header ── */
 .header{position:sticky;top:0;z-index:60;background:var(--header);border-bottom:1px solid var(--border);
@@ -1289,7 +1367,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ── Layout ── */
-.content{flex:1;padding:28px 20px 40px;max-width:1180px;width:100%;margin:0 auto;position:relative}
+.content{flex:1;padding:28px 20px 40px;max-width:1180px;width:100%;margin:0 auto;position:relative;z-index:1}
 .section{display:none}
 .section.active{display:block;animation:fade .25s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -1424,7 +1502,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .user-detail{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-top:20px}
 
 /* ── Footer ── */
-.footer{border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
+.footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
 .footer a{color:var(--dim);text-decoration:none;margin:0 4px}
 .footer a:hover{color:var(--muted)}
 .footer .sep{opacity:.5;margin:0 4px}
@@ -1436,6 +1514,24 @@ tr:hover td{background:rgba(255,255,255,.02)}
 </style>
 </head>
 <body>
+<div class="petals" aria-hidden="true">
+  <i class="petal" style="left:93.7%;--w:7px;--h:6px;--o:0.11;--dur:31.0s;--delay:-2.8s;--drift:3.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:1.8%;--w:6px;--h:5px;--o:0.11;--dur:18.5s;--delay:-12.7s;--drift:10.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:61.7%;--w:6px;--h:5px;--o:0.11;--dur:27.0s;--delay:-1.5s;--drift:-7.4vw;--spin:-300deg"></i>
+  <i class="petal" style="left:11.5%;--w:13px;--h:11px;--o:0.21;--dur:26.7s;--delay:-16.8s;--drift:6.5vw;--spin:360deg"></i>
+  <i class="petal" style="left:55.7%;--w:9px;--h:7px;--o:0.12;--dur:29.1s;--delay:-16.9s;--drift:4.6vw;--spin:720deg"></i>
+  <i class="petal" style="left:51.7%;--w:11px;--h:10px;--o:0.19;--dur:32.7s;--delay:-10.8s;--drift:-6.5vw;--spin:540deg"></i>
+  <i class="petal" style="left:76.8%;--w:11px;--h:8px;--o:0.16;--dur:25.4s;--delay:-10.3s;--drift:-0.5vw;--spin:-300deg"></i>
+  <i class="petal" style="left:9.9%;--w:5px;--h:4px;--o:0.25;--dur:19.6s;--delay:-14.7s;--drift:-12.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:54.4%;--w:13px;--h:12px;--o:0.26;--dur:22.8s;--delay:-10.5s;--drift:0.9vw;--spin:720deg"></i>
+  <i class="petal" style="left:82.8%;--w:5px;--h:5px;--o:0.19;--dur:28.3s;--delay:-1.8s;--drift:7.0vw;--spin:-300deg"></i>
+  <i class="petal" style="left:81.0%;--w:11px;--h:9px;--o:0.18;--dur:28.4s;--delay:-0.7s;--drift:-0.1vw;--spin:540deg"></i>
+  <i class="petal" style="left:9.8%;--w:9px;--h:7px;--o:0.25;--dur:19.2s;--delay:-7.4s;--drift:-2.3vw;--spin:720deg"></i>
+  <i class="petal" style="left:14.8%;--w:5px;--h:4px;--o:0.16;--dur:19.3s;--delay:-12.9s;--drift:2.5vw;--spin:720deg"></i>
+  <i class="petal" style="left:67.0%;--w:7px;--h:6px;--o:0.15;--dur:18.4s;--delay:-4.5s;--drift:5.8vw;--spin:360deg"></i>
+  <i class="petal" style="left:81.9%;--w:8px;--h:6px;--o:0.16;--dur:19.5s;--delay:-16.0s;--drift:4.3vw;--spin:-420deg"></i>
+  <i class="petal" style="left:67.7%;--w:6px;--h:5px;--o:0.22;--dur:28.5s;--delay:-1.6s;--drift:13.0vw;--spin:-300deg"></i>
+</div>
 
 <div class="overlay" id="overlay" onclick="closeDrawer()"></div>
 
