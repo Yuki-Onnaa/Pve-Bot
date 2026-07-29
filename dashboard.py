@@ -805,6 +805,69 @@ def api_members():
     return jsonify({"members": rows[:500], "count": len(rows)})
 
 
+@app.route("/api/givers")
+@member_required
+def api_givers():
+    """Who hands out the most vouches, from the by field on every log entry."""
+    try:
+        days = int(request.args.get("days", 0))
+    except (ValueError, TypeError):
+        days = 0
+    cutoff = ""
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    givers = {}
+    for uid, rec in user_records(load_data()):
+        for cat in ALL_CATEGORIES:
+            for entry in (rec.get(cat) or {}).get("log", []):
+                when = entry.get("time", "")
+                if cutoff and when < cutoff:
+                    continue
+
+                by = str(entry.get("by", "")).strip()
+                by_name = (entry.get("by_name") or "").strip()
+                # older entries recorded a label rather than a user id
+                key = by if by.isdigit() else (by_name or by or "unknown")
+
+                slot = givers.setdefault(key, {
+                    "uid": by if by.isdigit() else "",
+                    "label": by_name or ("Unknown" if not by else by),
+                    "given": 0, "points": 0.0, "recipients": set(),
+                    "categories": {c: 0 for c in ALL_CATEGORIES}, "last": "",
+                })
+                slot["given"] += int(entry.get("count", 1) or 1)
+                slot["points"] += float(entry.get("points", 0) or 0)
+                slot["categories"][cat] += int(entry.get("count", 1) or 1)
+                slot["recipients"].add(uid)
+                if when > slot["last"]:
+                    slot["last"] = when
+
+    rows = []
+    for slot in givers.values():
+        who = resolve_user(slot["uid"]) if slot["uid"] else None
+        rows.append({
+            "uid": slot["uid"],
+            "name": who["name"] if who and who["resolved"] else slot["label"],
+            "avatar": who["avatar"] if who else "",
+            "resolved": bool(who and who["resolved"]),
+            "given": slot["given"],
+            "points": round(slot["points"], 1),
+            "people": len(slot["recipients"]),
+            "categories": slot["categories"],
+            "last": slot["last"],
+        })
+
+    rows.sort(key=lambda r: r["given"], reverse=True)
+    for i, row in enumerate(rows):
+        row["position"] = i + 1
+    return jsonify({
+        "givers": rows[:200],
+        "count": len(rows),
+        "total_given": sum(r["given"] for r in rows),
+    })
+
+
 @app.route("/u/<uid>")
 @member_required
 def public_profile_page(uid):
@@ -2174,6 +2237,16 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
     <button class="tab" data-sort="pve">Host</button>
     <button class="tab" data-sort="security">Security</button>
     <button class="tab" data-sort="support">Support</button>
+    <button class="tab" data-sort="givers">Vouchers</button>
+  </div>
+  <div class="controls" id="giver-range" style="display:none">
+    <select id="days" style="background:var(--card-2);border:1px solid var(--border);border-radius:11px;
+      padding:11px 14px;color:var(--text);font-size:14px;font-family:var(--sans);outline:none">
+      <option value="0">All time</option>
+      <option value="7">Last 7 days</option>
+      <option value="30">Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
   </div>
 
   <div id="list"><div class="empty">Loading...</div></div>
@@ -2186,6 +2259,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 <script>
 let MEMBERS = [];
+let GIVERS = [];
+let giversLoaded = false;
 let sortKey = 'total';
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -2206,7 +2281,56 @@ async function load(){
   render();
 }
 
+async function loadGivers(){
+  const days = document.getElementById('days').value;
+  document.getElementById('list').innerHTML = '<div class="empty">Loading...</div>';
+  try {
+    const r = await fetch('/api/givers?days=' + days);
+    if(r.status === 401){ window.location.href = '/login'; return; }
+    const d = await r.json();
+    GIVERS = d.givers || [];
+    giversLoaded = true;
+    document.getElementById('sub').textContent =
+      d.total_given + ' vouches handed out by ' + d.count + ' ' +
+      (d.count === 1 ? 'person' : 'people') + '.';
+  } catch (e) {
+    document.getElementById('list').innerHTML = '<div class="empty">Could not load vouchers.</div>';
+    return;
+  }
+  render();
+}
+
+function renderGivers(){
+  const q = document.getElementById('q').value.toLowerCase().trim();
+  let rows = GIVERS.slice();
+  if(q) rows = rows.filter(function(g){
+    return (g.name || '').toLowerCase().indexOf(q) !== -1 || (g.uid || '').indexOf(q) !== -1;
+  });
+
+  const el = document.getElementById('list');
+  if(!rows.length){
+    el.innerHTML = '<div class="empty">' +
+      (q ? 'Nobody matches that search.' : 'No vouches have been given in this window.') + '</div>';
+    return;
+  }
+  el.innerHTML = rows.map(function(g, i){
+    const pic = g.avatar ? '<img alt="" src="' + g.avatar + '">'
+                         : '<span class="ph">' + esc((g.name || '?').slice(0,1).toUpperCase()) + '</span>';
+    const sub = g.people + ' member' + (g.people === 1 ? '' : 's') + ' \u00b7 ' + fmt(g.points) + ' points issued';
+    const inner =
+      '<span class="pos">#' + (i + 1) + '</span>' + pic +
+      '<span class="who"><span class="nm">' + esc(g.name) +
+      (g.is_me ? '<span class="tag">you</span>' : '') + '</span>' +
+      '<span class="rk">' + sub + '</span></span>' +
+      '<span class="pts"><b>' + fmt(g.given) + '</b><span>given</span></span>';
+    return g.uid
+      ? '<a class="row" href="/u/' + encodeURIComponent(g.uid) + '">' + inner + '</a>'
+      : '<div class="row">' + inner + '</div>';
+  }).join('');
+}
+
 function render(){
+  if(sortKey === 'givers'){ renderGivers(); return; }
   const q = document.getElementById('q').value.toLowerCase().trim();
   let rows = MEMBERS.slice();
   if(sortKey !== 'total'){
@@ -2237,13 +2361,25 @@ function render(){
 }
 
 document.getElementById('q').addEventListener('input', render);
+document.getElementById('days').addEventListener('change', loadGivers);
 document.getElementById('tabs').addEventListener('click', function(e){
   const tab = e.target.closest('[data-sort]');
   if(!tab) return;
   sortKey = tab.dataset.sort;
   document.querySelectorAll('#tabs .tab').forEach(function(t){ t.classList.remove('active'); });
   tab.classList.add('active');
-  render();
+
+  const isGivers = sortKey === 'givers';
+  document.getElementById('giver-range').style.display = isGivers ? 'flex' : 'none';
+  document.getElementById('q').placeholder = isGivers ? 'Search vouchers' : 'Search by name';
+  if(isGivers){
+    if(giversLoaded) render(); else loadGivers();
+  } else {
+    document.getElementById('sub').textContent =
+      MEMBERS.length + ' member' + (MEMBERS.length === 1 ? '' : 's') +
+      ' with a vouch. Tap anyone to see their record.';
+    render();
+  }
 });
 load();
 </script>
