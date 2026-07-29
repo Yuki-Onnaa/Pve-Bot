@@ -250,11 +250,27 @@ def discord_get(path, token):
     with urllib.request.urlopen(req, timeout=15) as res:
         return json.loads(res.read().decode())
 
+def is_admin():
+    return bool(session.get("user")) and session.get("role") == "admin" and bool(session.get("admin_guilds"))
+
+
 def admin_required(f):
     """Blocks anything that isn't a Discord-authenticated server administrator."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("user") or not session.get("admin_guilds"):
+        if not is_admin():
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect("/login")
+        return f(*args, **kwargs)
+    return decorated
+
+
+def member_required(f):
+    """Any signed-in member of the server. Admins pass this too."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("user"):
             if request.path.startswith("/api/"):
                 return jsonify({"error": "Unauthorized"}), 401
             return redirect("/login")
@@ -333,17 +349,25 @@ def oauth_callback():
     except (KeyError, ValueError):
         return fail("Discord returned an unexpected response. Try again.")
 
-    if ALLOWED_USER_IDS and str(user["id"]) not in ALLOWED_USER_IDS:
-        return fail("This Discord account isn't on the dashboard allowlist.")
-
     admin_guilds = [g for g in guilds if is_admin_guild(g)]
     if REQUIRED_GUILD_ID:
         admin_guilds = [g for g in admin_guilds if str(g["id"]) == REQUIRED_GUILD_ID]
-        if not admin_guilds:
-            return fail("You need the Administrator permission in the bot's server to open this dashboard.")
-    if not admin_guilds:
-        return fail("You need the Administrator permission in a server to open this dashboard.")
+    if ALLOWED_USER_IDS and str(user["id"]) not in ALLOWED_USER_IDS:
+        admin_guilds = []  # allowlist gates admin access only, not member access
 
+    # Members just need to share a server with the bot.
+    bot_guild_ids = {str(g.id) for g in getattr(_bridge["bot"], "guilds", [])}
+    if REQUIRED_GUILD_ID:
+        in_server = any(str(g["id"]) == REQUIRED_GUILD_ID for g in guilds)
+    elif bot_guild_ids:
+        in_server = any(str(g["id"]) in bot_guild_ids for g in guilds)
+    else:
+        in_server = True  # bot not ready yet, do not lock people out
+
+    if not admin_guilds and not in_server:
+        return fail("You are not in the bot's server, so there is nothing here for you yet.")
+
+    session["role"] = "admin" if admin_guilds else "member"
     session["user"] = {
         "id": str(user["id"]),
         "username": user.get("global_name") or user.get("username", "Admin"),
@@ -354,9 +378,10 @@ def oauth_callback():
         {"id": str(g["id"]), "name": g["name"], "icon": guild_icon_url(g)}
         for g in sorted(admin_guilds, key=lambda g: g["name"].lower())
     ]
-    session["guild_id"] = session["admin_guilds"][0]["id"]
+    if session["admin_guilds"]:
+        session["guild_id"] = session["admin_guilds"][0]["id"]
     session.permanent = True
-    return redirect("/")
+    return redirect("/" if session["role"] == "admin" else "/profile")
 
 @app.route("/logout")
 def logout():
@@ -364,9 +389,82 @@ def logout():
     return redirect("/login")
 
 @app.route("/")
-@admin_required
 def index():
+    if not session.get("user"):
+        return redirect("/login")
+    if not is_admin():
+        return redirect("/profile")
     return render_template_string(DASHBOARD_HTML)
+
+
+@app.route("/profile")
+@member_required
+def profile_page():
+    return render_template_string(PROFILE_HTML, user=session["user"], is_admin=is_admin())
+
+
+@app.route("/api/profile")
+@member_required
+def api_profile():
+    uid = str(session["user"]["id"])
+    data = load_data()
+    record = data.get(uid, {})
+    now = datetime.now(timezone.utc)
+    week_start = (now - timedelta(days=7)).isoformat()
+    prev_start = (now - timedelta(days=14)).isoformat()
+
+    categories = []
+    recent = []
+    this_week = 0.0
+    last_week = 0.0
+
+    for cat in ALL_CATEGORIES:
+        cat_rec = record.get(cat) or {}
+        points = cat_rec.get("total_points", 0)
+        vouches = cat_rec.get("total_vouches", 0)
+
+        # leaderboard position within this category
+        ranked = sorted(
+            (r.get(cat, {}).get("total_points", 0) for _, r in user_records(data)),
+            reverse=True,
+        )
+        ranked = [p for p in ranked if p > 0]
+        position = ranked.index(points) + 1 if points > 0 and points in ranked else None
+
+        for entry in cat_rec.get("log", []):
+            when = entry.get("time", "")
+            pts = float(entry.get("points", 0) or 0)
+            if when >= week_start:
+                this_week += pts
+            elif when >= prev_start:
+                last_week += pts
+            recent.append({
+                "category": cat, "category_name": CATEGORY_NAMES[cat],
+                "event": entry.get("event", ""), "points": pts,
+                "time": when, "by": entry.get("by_name") or "",
+            })
+
+        categories.append({
+            "key": cat,
+            "name": CATEGORY_NAMES[cat],
+            "points": round(points, 1),
+            "vouches": vouches,
+            "position": position,
+            "of": len(ranked),
+            "rank": rank_progress(cat, points, vouches),
+            "events": {k: v for k, v in (cat_rec.get("events") or {}).items() if v > 0},
+        })
+
+    recent.sort(key=lambda e: e["time"], reverse=True)
+    return jsonify({
+        "user": session["user"],
+        "total": round(combined_total(record), 1),
+        "categories": categories,
+        "recent": recent[:20],
+        "this_week": round(this_week, 1),
+        "last_week": round(last_week, 1),
+        "has_data": bool(record),
+    })
 
 # ── API: Session ──
 
@@ -918,6 +1016,188 @@ p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
 </body>
 </html>""".replace("__LOGO__", LOGO_SRC)
 
+
+# ─────────────────────────────────────────────────────────────
+# PROFILE HTML (any signed-in member)
+# ─────────────────────────────────────────────────────────────
+
+PROFILE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My profile - Matzys Overseer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#14171d;--header:#1a1e26;--card:#1e232c;--card-2:#252b36;--border:#2b323f;--border-2:#39414f;
+  --blue:#2f9bf5;--purple:#a78bfa;--green:#3ddc97;--red:#f0616d;--amber:#f5b942;
+  --text:#f2f5f9;--muted:#9aa5b4;--dim:#6b7787;
+  --mono:'JetBrains Mono',monospace;--sans:'Poppins',system-ui,sans-serif;--radius:16px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100dvh;
+  display:flex;flex-direction:column;overflow-x:hidden}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.header{position:sticky;top:0;z-index:50;background:var(--header);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;padding:10px 16px}
+.brand{width:34px;height:34px;border-radius:11px;display:block;object-fit:cover;flex-shrink:0;
+  border:1px solid var(--border)}
+.brand-name{font-size:14px;font-weight:600}
+.spacer{flex:1}
+.hlink{color:var(--muted);text-decoration:none;font-size:13.5px;padding:8px 12px;border-radius:10px}
+.hlink:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.hlink.avatar img{width:34px;height:34px;border-radius:50%;display:block;border:1px solid var(--border)}
+.hlink.avatar{padding:0}
+.content{flex:1;padding:26px 20px 40px;max-width:900px;width:100%;margin:0 auto}
+.hero{position:relative;padding:18px 0 30px}
+.hero::before{content:'';position:absolute;top:-90px;right:-16%;width:min(78vw,520px);height:min(78vw,520px);
+  border-radius:50%;background:radial-gradient(circle,rgba(47,155,245,.5),rgba(47,155,245,.05) 58%,transparent 70%);
+  filter:blur(26px);pointer-events:none;z-index:-1}
+.hero h1{font-size:clamp(30px,7.5vw,46px);font-weight:700;letter-spacing:-1.2px;line-height:1.1}
+.hero h1 span{color:var(--blue)}
+.hero p{margin-top:12px;font-size:clamp(16px,4vw,21px);color:#cdd5e0;line-height:1.35}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.stat .val{font-family:var(--mono);font-size:26px;font-weight:600}
+.stat .lbl{font-size:12.5px;color:var(--muted);margin-top:4px}
+.stat .delta{font-size:12px;margin-top:6px;font-family:var(--mono)}
+.up{color:var(--green)}.down{color:var(--red)}.flat{color:var(--dim)}
+h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:14px}
+.cat-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.cat-name{font-size:16px;font-weight:600}
+.cat-pos{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.rank-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px;flex-wrap:wrap}
+.rank-name{font-size:14px;font-weight:600}
+.rank-next{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.rank-bar{height:8px;border-radius:5px;background:#2c333f;overflow:hidden}
+.rank-fill{height:100%;border-radius:5px;transition:width .5s ease}
+.cat-stats{display:flex;gap:22px;margin-top:16px;flex-wrap:wrap}
+.cat-stats div{font-size:12.5px;color:var(--muted)}
+.cat-stats b{display:block;font-family:var(--mono);font-size:19px;color:var(--text);font-weight:600;margin-bottom:2px}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
+.chip{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;color:var(--muted)}
+.chip b{color:var(--text);font-family:var(--mono)}
+.act{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.act:last-child{border-bottom:none}
+.act .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0}
+.act .main{font-size:13.5px;line-height:1.45}
+.act .meta{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+.empty{text-align:center;padding:40px 20px;color:var(--dim);font-size:13.5px;line-height:1.6}
+.footer{border-top:1px solid var(--border);padding:22px 20px 30px;text-align:center;color:var(--dim);font-size:13px}
+.footer a{color:var(--dim);text-decoration:none;margin:0 5px}
+.footer a:hover{color:var(--muted)}
+</style>
+</head>
+<body>
+<header class="header">
+  <img class="brand" src="__LOGO__" alt="">
+  <span class="brand-name">Matzys Overseer</span>
+  <div class="spacer"></div>
+  {% if is_admin %}<a class="hlink" href="/">Dashboard</a>{% endif %}
+  <a class="hlink" href="/logout">Sign out</a>
+  <span class="hlink avatar"><img src="{{ user.avatar }}" alt=""></span>
+</header>
+
+<main class="content">
+  <div class="hero">
+    <h1>Welcome back, <span>{{ user.username }}</span></h1>
+    <p>Here is where you stand.</p>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat"><div class="val" id="s-total">-</div><div class="lbl">Total points</div></div>
+    <div class="stat"><div class="val" id="s-week">-</div><div class="lbl">Points this week</div>
+      <div class="delta" id="s-delta"></div></div>
+    <div class="stat"><div class="val" id="s-vouches">-</div><div class="lbl">Total vouches</div></div>
+  </div>
+
+  <div id="cats"></div>
+
+  <h2 class="sec">Recent activity</h2>
+  <div class="card"><div id="recent"><div class="empty">Loading...</div></div></div>
+</main>
+
+<footer class="footer">
+  <span>&copy; 2026 Matzys Overseer</span>
+  <a href="/logout">Sign out</a>
+</footer>
+
+<script>
+const CAT_COLORS = {pve:'#2f9bf5', security:'#a78bfa', support:'#3ddc97'};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
+
+async function load(){
+  let d;
+  try {
+    const r = await fetch('/api/profile', {headers:{'Content-Type':'application/json'}});
+    if(r.status === 401){window.location.href = '/login'; return;}
+    d = await r.json();
+  } catch (e) {
+    document.getElementById('recent').innerHTML =
+      '<div class="empty">Could not load your profile. Try refreshing.</div>';
+    return;
+  }
+
+  document.getElementById('s-total').textContent = fmt(d.total);
+  document.getElementById('s-week').textContent = fmt(d.this_week);
+  document.getElementById('s-vouches').textContent =
+    d.categories.reduce(function(a,c){return a + c.vouches;}, 0);
+
+  const diff = d.this_week - d.last_week;
+  const delta = document.getElementById('s-delta');
+  if(d.last_week === 0 && d.this_week === 0){delta.textContent = 'no activity yet'; delta.className = 'delta flat';}
+  else if(diff > 0){delta.textContent = '+' + fmt(diff) + ' vs last week'; delta.className = 'delta up';}
+  else if(diff < 0){delta.textContent = fmt(diff) + ' vs last week'; delta.className = 'delta down';}
+  else {delta.textContent = 'same as last week'; delta.className = 'delta flat';}
+
+  document.getElementById('cats').innerHTML = d.categories.map(function(c){
+    const color = CAT_COLORS[c.key] || '#2f9bf5';
+    const rk = c.rank;
+    const bar = rk
+      ? '<div class="rank-top"><span class="rank-name">' + esc(rk.current || 'No rank yet') + '</span>' +
+        '<span class="rank-next">' + (rk.next ? fmt(rk.remaining) + ' to ' + esc(rk.next) : 'Top rank reached') +
+        '</span></div><div class="rank-bar"><div class="rank-fill" style="width:' + rk.pct +
+        '%;background:' + color + '"></div></div>'
+      : '<div class="rank-next">No rank ladder set for this category.</div>';
+    const pos = c.position
+      ? '<span class="cat-pos">#' + c.position + ' of ' + c.of + '</span>'
+      : '<span class="cat-pos">unranked</span>';
+    const chips = Object.keys(c.events).map(function(e){
+      return '<span class="chip">' + esc(e) + ' <b>' + c.events[e] + '</b></span>';
+    }).join('');
+    return '<div class="card">' +
+      '<div class="cat-head"><span class="cat-name" style="color:' + color + '">' + esc(c.name) + '</span>' + pos + '</div>' +
+      bar +
+      '<div class="cat-stats"><div><b>' + fmt(c.points) + '</b>points</div>' +
+      '<div><b>' + c.vouches + '</b>vouches</div></div>' +
+      (chips ? '<div class="chips">' + chips + '</div>' : '') +
+      '</div>';
+  }).join('');
+
+  const rec = document.getElementById('recent');
+  if(!d.recent.length){
+    rec.innerHTML = '<div class="empty">Nothing here yet.<br>Once staff vouch for you it will show up here.</div>';
+    return;
+  }
+  rec.innerHTML = d.recent.map(function(e){
+    return '<div class="act"><div class="dot" style="background:' + (CAT_COLORS[e.category] || '#6b7787') + '"></div>' +
+      '<div><div class="main">' + esc(e.event) + ' <span style="color:' + (CAT_COLORS[e.category] || '#6b7787') +
+      '">+' + fmt(e.points) + '</span></div>' +
+      '<div class="meta">' + esc(e.category_name) + (e.by ? ' - by ' + esc(e.by) : '') + ' - ' +
+      String(e.time || '').substring(0,16).replace('T',' ') + '</div></div></div>';
+  }).join('');
+}
+load();
+</script>
+</body>
+</html>""".replace("__LOGO__", LOGO_SRC)
+
 # ─────────────────────────────────────────────────────────────
 # DASHBOARD HTML
 # ─────────────────────────────────────────────────────────────
@@ -1208,6 +1488,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </button>
     <div class="menu" id="user-menu">
       <div class="menu-label" id="user-handle">Signed in</div>
+      <a class="menu-item" href="/profile"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/></svg> My profile</a>
       <div class="menu-item" onclick="showSection('settings')"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
       <div class="menu-sep"></div>
       <a class="menu-item danger" href="/logout"><svg class="mi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg> Sign out</a>
