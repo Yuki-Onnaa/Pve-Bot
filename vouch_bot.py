@@ -563,8 +563,27 @@ async def log_audit(text):
 # ROLE LADDER
 # ─────────────────────────────────────────────────────────────
 
-async def update_role_for_user(guild, user_id, category):
-    """Assigns the correct rank role for a user in a category with a role ladder."""
+async def send_rank_up_dm(member, old_rank, new_rank):
+    """DMs a member when they climb to a new rank role."""
+    if old_rank:
+        text = f"Congrats {member.mention} you've gone from **{old_rank}** to **{new_rank}**!"
+    else:
+        text = f"Congrats {member.mention} you've reached **{new_rank}**!"
+    try:
+        await member.send(text)
+        return True
+    except discord.Forbidden:
+        return False  # DMs closed, nothing we can do
+    except discord.HTTPException as e:
+        print(f"[RankUp] Could not DM {member.id}: {e}")
+        return False
+
+
+async def update_role_for_user(guild, user_id, category, notify=True):
+    """Assigns the correct rank role for a user in a category with a role ladder.
+
+    notify=False skips the rank up DM, used for bulk resyncs so nobody gets spammed.
+    """
     if guild is None or category not in ROLE_THRESHOLDS:
         return
 
@@ -599,11 +618,29 @@ async def update_role_for_user(guild, user_id, category):
     roles_to_remove = [r for r in member.roles if r.name in category_role_names and r.name != achieved_role_name]
     role_to_add = discord.utils.get(guild.roles, name=achieved_role_name)
 
+    # Where they stood before this update, so we only celebrate a real promotion
+    ladder_order = [name for _, name in thresholds]
+    held = [r.name for r in member.roles if r.name in category_role_names]
+    old_rank = None
+    old_index = -1
+    for name in held:
+        if name in ladder_order and ladder_order.index(name) > old_index:
+            old_index = ladder_order.index(name)
+            old_rank = name
+    new_index = ladder_order.index(achieved_role_name) if achieved_role_name in ladder_order else -1
+    promoted = achieved_role_name not in held and new_index > old_index
+
     try:
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove, reason="Vouch rank update")
         if role_to_add and role_to_add not in member.roles:
             await member.add_roles(role_to_add, reason="Vouch rank update")
+            if notify and promoted:
+                sent = await send_rank_up_dm(member, old_rank, achieved_role_name)
+                if not sent:
+                    await log_audit(
+                        f"📬 {member.mention} reached **{achieved_role_name}** but has DMs closed."
+                    )
     except discord.Forbidden:
         await log_audit(
             f"⚠️ Couldn't update rank role for <@{user_id}> - check the bot's role is above "
@@ -627,7 +664,7 @@ async def resync_all_roles():
             before = {r.name for r in member.roles}
             for category in ROLE_THRESHOLDS:
                 if rec.get(category):
-                    await update_role_for_user(guild, int(uid), category)
+                    await update_role_for_user(guild, int(uid), category, notify=False)
             refreshed = guild.get_member(int(uid))
             if refreshed and {r.name for r in refreshed.roles} != before:
                 updated += 1
@@ -1780,7 +1817,7 @@ async def syncvouches(ctx):
             continue
         for cat in ROLE_THRESHOLDS:
             if cat in rec:
-                await update_role_for_user(ctx.guild, int(uid), cat)
+                await update_role_for_user(ctx.guild, int(uid), cat, notify=False)
 
     await log_audit(
         f"🔄 **Sync** - scanned {scanned} messages, recorded {recorded_total} vouches "
