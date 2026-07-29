@@ -382,6 +382,43 @@ def get_all_role_names(category, data=None):
     return names
 
 
+def backup_data(tag="backup"):
+    """Copy the current data file aside before anything destructive. Returns the path."""
+    if not os.path.exists(DATA_FILE):
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    folder = os.path.dirname(DATA_FILE) or "."
+    path = os.path.join(folder, f"vouches-{tag}-{stamp}.json")
+    try:
+        with open(DATA_FILE, "r") as source, open(path, "w") as dest:
+            dest.write(source.read())
+    except OSError as e:
+        print(f"[Backup] Failed: {e}")
+        return None
+
+    # keep the ten most recent, drop the rest
+    try:
+        backups = sorted(f for f in os.listdir(folder) if f.startswith("vouches-") and f.endswith(".json"))
+        for old in backups[:-10]:
+            os.remove(os.path.join(folder, old))
+    except OSError:
+        pass
+    return path
+
+
+def count_manual_entries(data):
+    """Vouches added by hand rather than posted in a channel, which a rescan cannot recover."""
+    total = 0
+    for uid, rec in data.items():
+        if not uid.isdigit():
+            continue
+        for cat in CATEGORY_EVENTS:
+            for entry in (rec.get(cat) or {}).get("log", []):
+                if entry.get("backfilled"):
+                    total += 1
+    return total
+
+
 def get_user_record(data, user_id, category):
     uid = str(user_id)
     if uid not in data:
@@ -426,7 +463,7 @@ def parse_pve_event(text):
 # CORE VOUCH RECORDING (shared by live messages + sync + backfill)
 # ─────────────────────────────────────────────────────────────
 
-def record_vouch(data, target_ids, author_id, category, event_name, when=None):
+def record_vouch(data, target_ids, author_id, category, event_name, when=None, author_name=None):
     """
     Returns (recorded_target_ids, cooldown_target_ids, self_dropped_count).
     """
@@ -457,9 +494,12 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None):
         record["events"][event_name] += 1
         record["cooldowns"][event_name] = when.isoformat()
         record["log"].append({
-            "by": author_id,
+            "id": uuid.uuid4().hex[:8],
+            "by": str(author_id),
+            "by_name": author_name or "",
             "event": event_name,
             "points": points,
+            "count": 1,
             "time": when.isoformat(),
         })
         recorded_ids.append(target_id)
@@ -1360,7 +1400,8 @@ async def on_message(message):
                 await message.add_reaction("❌")
                 return
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, message.author.id, "pve", event_name
+                data, target_ids, message.author.id, "pve", event_name,
+                author_name=message.author.display_name
             )
     else:
         match = PHRASE_VOUCH_PATTERN.match(message.content)
@@ -1371,7 +1412,8 @@ async def on_message(message):
             category, event_name = PHRASE_ALIASES[phrase]
             target_ids = [int(uid) for uid in MENTION_PATTERN.findall(mentions_block)]
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, message.author.id, category, event_name
+                data, target_ids, message.author.id, category, event_name,
+                author_name=message.author.display_name
             )
 
     if handled:
@@ -1429,7 +1471,8 @@ async def on_message_edit(before, after):
                 await after.add_reaction("❌")
                 return
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, after.author.id, "pve", event_name
+                data, target_ids, after.author.id, "pve", event_name,
+                author_name=after.author.display_name
             )
     else:
         match = PHRASE_VOUCH_PATTERN.match(after.content)
@@ -1439,7 +1482,8 @@ async def on_message_edit(before, after):
             category, event_name = PHRASE_ALIASES[phrase]
             target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, after.author.id, category, event_name
+                data, target_ids, after.author.id, category, event_name,
+                author_name=after.author.display_name
             )
 
     if not handled:
@@ -2009,7 +2053,15 @@ async def syncvouches(ctx):
         "support": ctx.guild.get_channel(SUPPORT_CHANNEL_ID),
     }
 
-    status = await ctx.send("🔄 Scanning all vouch channels for history... this may take a bit.")
+    old_data = load_data()
+    manual_before = count_manual_entries(old_data)
+    backup_path = backup_data("presync")
+
+    status = await ctx.send(
+        "🔄 Scanning all vouch channels for history... this may take a bit.\n"
+        + (f"Backed up the current data to `{os.path.basename(backup_path)}` first."
+           if backup_path else "⚠️ Could not write a backup first.")
+    )
 
     new_data = {}
     scanned = 0
@@ -2033,7 +2085,8 @@ async def syncvouches(ctx):
                 event_name = parse_pve_event(match.group(2))
                 if event_name is None:
                     continue
-                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, "pve", event_name, when)
+                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, "pve", event_name, when,
+                                                  author_name=msg.author.display_name)
                 recorded_total += len(recorded_ids)
             else:
                 match = PHRASE_VOUCH_PATTERN.match(msg.content)
@@ -2042,8 +2095,15 @@ async def syncvouches(ctx):
                 phrase = normalize(match.group(1))
                 evt_category, event_name = PHRASE_ALIASES[phrase]
                 target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
-                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, evt_category, event_name, when)
+                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, evt_category, event_name, when,
+                                                  author_name=msg.author.display_name)
                 recorded_total += len(recorded_ids)
+
+    # Carry over everything that is not vouch data: settings, channel config,
+    # custom commands, edited points and ranks, memories, analytics.
+    for key, value in old_data.items():
+        if not key.isdigit():
+            new_data[key] = value
 
     save_data(new_data)
     await refresh_live_leaderboards()
@@ -2060,9 +2120,25 @@ async def syncvouches(ctx):
         f"across {len(new_data)} users, run by <@{ctx.author.id}>"
     )
 
-    await status.edit(
-        content=f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches across {len(new_data)} users."
-    )
+    vouchers = set()
+    for key, rec in new_data.items():
+        if not key.isdigit():
+            continue
+        for cat in CATEGORY_EVENTS:
+            for entry in (rec.get(cat) or {}).get("log", []):
+                if entry.get("by"):
+                    vouchers.add(str(entry["by"]))
+
+    summary = (f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches "
+               f"across {sum(1 for k in new_data if k.isdigit())} users, "
+               f"given by {len(vouchers)} voucher(s).")
+    if manual_before:
+        summary += (f"\n⚠️ {manual_before} manually added vouch(es) were not in channel history and "
+                    f"are gone. Restore from `{os.path.basename(backup_path)}` if you need them."
+                    if backup_path else
+                    f"\n⚠️ {manual_before} manually added vouch(es) could not be recovered by a rescan.")
+    summary += "\nSettings, custom commands and rank config were kept."
+    await status.edit(content=summary)
 
 
 @syncvouches.error
