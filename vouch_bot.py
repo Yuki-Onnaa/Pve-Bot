@@ -22,7 +22,8 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 # For the @mention chat feature - free API key from build.nvidia.com (NVIDIA NIM).
 # No credit card required. Sign up → API Keys → Generate Key.
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
-NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_API_BASE = os.environ.get("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
+NVIDIA_API_URL = NVIDIA_API_BASE.rstrip("/") + "/chat/completions"
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "mistralai/mistral-small-3.1-24b-instruct-2503")
 # Deepwoken Fandom wiki - used to ground chat answers in real info instead of guessing
 
@@ -847,6 +848,14 @@ async def call_llm(history, system_prompt=None):
                 text = await resp.text()
                 if status != 200:
                     print(f"[NVIDIA API] HTTP {status}: {text[:500]}")
+                    if status == 404:
+                        return ("⚠️ The AI provider rejected the request (HTTP 404). This usually means "
+                                "the account is missing API access rather than anything being wrong here. "
+                                "An admin can run `/aitest` for the details.")
+                    if status in (401, 403):
+                        return "⚠️ The AI provider rejected the API key (HTTP {}). Check `NVIDIA_API_KEY`.".format(status)
+                    if status == 429:
+                        return "⚠️ Rate limited by the AI provider. Try again in a minute."
                     return f"⚠️ Chat API returned an error (HTTP {status}). Check Railway logs for details."
                 data = json.loads(text)
     except Exception as e:
@@ -2184,6 +2193,80 @@ async def slash_ask(interaction: discord.Interaction, question: str):
     await interaction.followup.send(embed=embed)
 
 
+@bot.tree.command(name="aitest", description="Diagnose the AI chat connection (admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_aitest(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    if not NVIDIA_API_KEY:
+        await interaction.followup.send(
+            "No `NVIDIA_API_KEY` is set in Railway. That is the whole problem.", ephemeral=True)
+        return
+
+    headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"}
+    lines = [f"Endpoint: `{NVIDIA_API_BASE}`", f"Model: `{NVIDIA_MODEL}`"]
+    models_ok = False
+    model_listed = False
+
+    # step 1: can we list models? this proves the key and network are fine
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = NVIDIA_API_BASE.rstrip("/") + "/models"
+            async with session.get(url, headers=headers, timeout=20) as resp:
+                body = await resp.text()
+                if resp.status == 200:
+                    models_ok = True
+                    try:
+                        ids = [m.get("id", "") for m in json.loads(body).get("data", [])]
+                    except ValueError:
+                        ids = []
+                    model_listed = NVIDIA_MODEL in ids
+                    lines.append(f"GET /models: **OK** ({len(ids)} models available)")
+                    lines.append(f"Your model is listed: **{'yes' if model_listed else 'no'}**")
+                    if not model_listed and ids:
+                        sample = ", ".join(f"`{i}`" for i in ids[:6])
+                        lines.append(f"Some that are: {sample}")
+                else:
+                    lines.append(f"GET /models: **HTTP {resp.status}** :: {body[:150]}")
+    except Exception as e:
+        lines.append(f"GET /models: **failed** ({type(e).__name__})")
+
+    # step 2: an actual tiny completion, which is what really matters
+    chat_status = None
+    try:
+        payload = {"model": NVIDIA_MODEL,
+                   "messages": [{"role": "user", "content": "ping"}],
+                   "max_tokens": 5, "temperature": 0}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(NVIDIA_API_URL, json=payload, headers=headers, timeout=30) as resp:
+                chat_status = resp.status
+                body = await resp.text()
+                if resp.status == 200:
+                    lines.append("POST /chat/completions: **OK** - chat is working")
+                else:
+                    lines.append(f"POST /chat/completions: **HTTP {resp.status}**")
+                    lines.append(f"```{body[:300]}```")
+    except Exception as e:
+        lines.append(f"POST /chat/completions: **failed** ({type(e).__name__})")
+
+    # the verdict
+    if chat_status == 200:
+        verdict = "Everything works."
+    elif models_ok and chat_status == 404 and model_listed:
+        verdict = ("Your key works and the model exists, but completions 404. This is an account "
+                   "permission problem: the org is missing **Public API Endpoints** access. "
+                   "Ask for it on the NVIDIA developer forums, or point `NVIDIA_API_BASE` at another "
+                   "OpenAI compatible provider.")
+    elif models_ok and not model_listed:
+        verdict = "The model name is not in the catalogue. Set `NVIDIA_MODEL` to one of the listed ids."
+    elif not models_ok:
+        verdict = "Even listing models failed, so the key or the endpoint is wrong."
+    else:
+        verdict = "Chat failed for a reason not covered above. The raw response is printed above."
+
+    await interaction.followup.send("\n".join(lines) + f"\n\n**Verdict:** {verdict}", ephemeral=True)
+
+
 @bot.tree.command(name="wikitest", description="Check the wiki connection (admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def slash_wikitest(interaction: discord.Interaction):
@@ -2268,6 +2351,8 @@ async def slash_resyncroles(interaction: discord.Interaction):
         f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
 
 
+@slash_aitest.error
+@slash_wikitest.error
 @slash_addvouch.error
 @slash_resyncroles.error
 async def slash_admin_error(interaction: discord.Interaction, error):
