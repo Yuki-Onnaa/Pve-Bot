@@ -25,8 +25,6 @@ NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "mistralai/mistral-small-3.1-24b-instruct-2503")
 # Deepwoken Fandom wiki - used to ground chat answers in real info instead of guessing
-WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
-WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
 
 # Core behavior rules that apply no matter which persona is active
 CHAT_CORE_RULES = (
@@ -198,8 +196,8 @@ EVENT_PING_SCHEDULE = {
 _event_last_ping_minute = {}
 
 # Deepwoken Fandom wiki, used by the ?wiki command
-WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
-WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
+WIKI_API_URL = os.environ.get("WIKI_API_URL", "https://deepwoken.fandom.com/api.php")
+WIKI_BASE_URL = os.environ.get("WIKI_BASE_URL", "https://deepwoken.fandom.com/wiki/")
 
 CHANNEL_CATEGORY = {
     PVE_CHANNEL_ID: "pve",
@@ -877,35 +875,38 @@ def clean_wiki_query(text):
     return cleaned or text
 
 
-async def fetch_wiki_context(query, max_chars=800):
+async def fetch_wiki_context(query, max_chars=900, max_sources=3):
     """
-    Search the Deepwoken wiki, then scan full page text (not just the intro)
-    of the top candidates for the actual term, since many things (like
-    talents) live as a section inside a larger page rather than their own
-    article. Returns (title, snippet, url), or None if nothing usable found.
+    Search the wiki, then scan the full text of the top candidates for the
+    actual term, since many things (talents especially) live as a section
+    inside a bigger page rather than their own article.
+    Returns a list of {title, snippet, url}, best match first. Empty if nothing fits.
     """
     cleaned = clean_wiki_query(query)
-    # Also pull out the most distinctive words from the raw query to search for within page text
     search_terms = [w for w in re.findall(r"[a-zA-Z0-9]+", query.lower()) if len(w) > 2]
+    if not search_terms:
+        return []
 
+    results = []
     async with aiohttp.ClientSession() as session:
         search_params = {
             "action": "query", "list": "search", "srsearch": cleaned,
-            "format": "json", "srlimit": 3, "srnamespace": 0,
+            "format": "json", "srlimit": 5, "srnamespace": 0,
         }
         try:
             async with session.get(WIKI_API_URL, params=search_params, timeout=8) as resp:
                 search_data = await resp.json()
-        except Exception:
-            return None
+        except Exception as e:
+            print(f"[Wiki] Search failed: {type(e).__name__}: {e}")
+            return []
 
         candidates = [r["title"] for r in search_data.get("query", {}).get("search", [])]
-        if "Talents" not in candidates:
-            candidates.append("Talents")
         if not candidates:
-            return None
+            return []
 
         for title in candidates:
+            if len(results) >= max_sources:
+                break
             extract_params = {
                 "action": "query", "prop": "extracts", "explaintext": True,
                 "titles": title, "format": "json", "redirects": 1,
@@ -918,12 +919,16 @@ async def fetch_wiki_context(query, max_chars=800):
 
             pages = extract_data.get("query", {}).get("pages", {})
             page = next(iter(pages.values()), {})
-            full_text = (page.get("extract") or "")
+            full_text = page.get("extract") or ""
             if not full_text:
                 continue
 
-            # Look for the most distinctive query word(s) inside the full page text
+            url = WIKI_BASE_URL + title.replace(" ", "_")
             lower_text = full_text.lower()
+
+            # if the page title itself is what they asked about, the intro is the answer
+            title_is_match = any(t in title.lower() for t in search_terms if len(t) > 3)
+
             match_pos = -1
             for term in sorted(search_terms, key=len, reverse=True):
                 pos = lower_text.find(term)
@@ -931,10 +936,9 @@ async def fetch_wiki_context(query, max_chars=800):
                     match_pos = pos
                     break
 
-            url = WIKI_BASE_URL + title.replace(" ", "_")
-
+            if title_is_match and match_pos < 0:
+                match_pos = 0
             if match_pos == -1:
-                # Term not found in this page's text at all - try the next candidate
                 continue
 
             half = max_chars // 2
@@ -942,13 +946,55 @@ async def fetch_wiki_context(query, max_chars=800):
             end = min(len(full_text), match_pos + half)
             snippet = full_text[start:end].strip()
             if start > 0:
-                snippet = "…" + snippet
+                snippet = "..." + snippet
             if end < len(full_text):
-                snippet = snippet + "…"
+                snippet = snippet + "..."
 
-            return title, snippet, url
+            results.append({"title": title, "snippet": snippet, "url": url})
 
-    return None
+    return results
+
+
+WIKI_GROUNDING_RULES = (
+    "\n\nWIKI RULES (follow these exactly):\n"
+    "- The wiki context below is the ONLY source you may use for game facts: talents, mantras, "
+    "weapons, bosses, stats, requirements, locations, drops.\n"
+    "- If the context does not answer the question, say you could not find it on the wiki and "
+    "point them at the page. Never guess or fill in numbers from memory.\n"
+    "- Never invent talent requirements, stat thresholds or item stats. Quote what the context says.\n"
+    "- Finish your answer with the source link on its own line.\n"
+    "- If the question is about vouches, points or ranks, ignore the wiki context entirely and "
+    "use the vouch data instead."
+)
+
+
+def format_wiki_context(sources):
+    """Turn wiki hits into a block the model can quote from."""
+    if not sources:
+        return ""
+    blocks = []
+    for s in sources:
+        blocks.append(f"[Wiki: {s['title']}]\n{s['snippet']}\nSource: {s['url']}")
+    return "WIKI CONTEXT\n\n" + "\n\n".join(blocks)
+
+
+_WIKI_SKIP = re.compile(
+    r"\b(vouch|vouches|points?|rank|ranks|leaderboard|streak|profile|hosted?|hosting)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_wiki_question(text):
+    """Cheap filter so casual chatter does not trigger a wiki round trip."""
+    stripped = text.strip()
+    if len(stripped) < 6:
+        return False
+    if _WIKI_SKIP.search(stripped) and "?" not in stripped:
+        return False
+    words = re.findall(r"[a-zA-Z0-9']+", stripped)
+    if len(words) < 2:
+        return False
+    return True
 
 
 def is_chat_enabled():
@@ -1018,15 +1064,25 @@ async def handle_chat_mention(message):
 
     vouch_blocks = "\n\n".join(get_vouch_summary_text(uid, name) for uid, name in target_users)
 
-    api_messages = history.copy()
-    api_messages[-1] = {
-        "role": "user",
-        "content": f"{content}\n\n{vouch_blocks}",
-    }
-
     async with message.channel.typing():
+        wiki_sources = []
+        if looks_like_wiki_question(content):
+            try:
+                wiki_sources = await fetch_wiki_context(content)
+            except Exception as e:
+                print(f"[Wiki] Lookup error: {type(e).__name__}: {e}")
+
+        wiki_block = format_wiki_context(wiki_sources)
+        api_messages = history.copy()
+        api_messages[-1] = {
+            "role": "user",
+            "content": "\n\n".join(part for part in [content, vouch_blocks, wiki_block] if part),
+        }
+
         base_prompt = build_system_prompt(get_active_persona())
         active_prompt = base_prompt + UNFILTERED_EXTRA if message.author.id == UNFILTERED_USER_ID else base_prompt
+        if wiki_sources:
+            active_prompt += WIKI_GROUNDING_RULES
         reply_text = await call_llm(api_messages, system_prompt=active_prompt)
 
     history.append({"role": "assistant", "content": reply_text})
@@ -1997,6 +2053,43 @@ async def slash_rank(interaction: discord.Interaction, member: discord.Member = 
         color=discord.Color.blue(),
     )
     await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="ask", description="Ask anything about the game, answered from the wiki")
+@app_commands.describe(question="What do you want to know?")
+async def slash_ask(interaction: discord.Interaction, question: str):
+    await interaction.response.defer()
+    try:
+        sources = await fetch_wiki_context(question)
+    except Exception as e:
+        print(f"[Wiki] /ask lookup error: {type(e).__name__}: {e}")
+        sources = []
+
+    if not sources:
+        await interaction.followup.send(
+            f"I could not find anything on the wiki for **{question[:100]}**. "
+            "Try naming the talent, mantra or boss directly."
+        )
+        return
+
+    prompt = f"{question}\n\n{format_wiki_context(sources)}"
+    answer = await call_llm(
+        [{"role": "user", "content": prompt}],
+        system_prompt=build_system_prompt(get_active_persona()) + WIKI_GROUNDING_RULES,
+    )
+
+    embed = discord.Embed(
+        title=question[:250],
+        description=answer[:3800],
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="Sources",
+        value="\n".join(f"[{s['title']}]({s['url']})" for s in sources)[:1000],
+        inline=False,
+    )
+    embed.set_footer(text="Answered from the wiki. Check the source if it matters.")
+    await interaction.followup.send(embed=embed)
 
 
 @bot.tree.command(name="commands", description="List the server's custom ?commands")
