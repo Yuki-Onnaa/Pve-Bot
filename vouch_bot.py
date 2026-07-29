@@ -19,65 +19,65 @@ from discord.ext import commands, tasks
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 
-# For the @mention chat feature — free API key from build.nvidia.com (NVIDIA NIM).
+# For the @mention chat feature - free API key from build.nvidia.com (NVIDIA NIM).
 # No credit card required. Sign up → API Keys → Generate Key.
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "mistralai/mistral-small-3.1-24b-instruct-2503")
-# Deepwoken Fandom wiki — used to ground chat answers in real info instead of guessing
+# Deepwoken Fandom wiki - used to ground chat answers in real info instead of guessing
 WIKI_API_URL = "https://deepwoken.fandom.com/api.php"
 WIKI_BASE_URL = "https://deepwoken.fandom.com/wiki/"
 
 # Core behavior rules that apply no matter which persona is active
 CHAT_CORE_RULES = (
-    "Every message you receive includes one or more '[Vouch Data — Name]' blocks with real, "
+    "Every message you receive includes one or more '[Vouch Data - Name]' blocks with real, "
     "accurate vouch totals for the person messaging you (and anyone else they @mentioned). "
-    "Use that data ONLY if the person actually asks about vouches, ranks, or totals — do not "
+    "Use that data ONLY if the person actually asks about vouches, ranks, or totals - do not "
     "bring up vouch tracking or their stats unprompted in casual conversation. Never guess or "
     "make up numbers. If someone asks about a person NOT included in a Vouch Data block, say "
     "you don't have their stats handy and suggest they use `?vouches @user`.\n\n"
-    "You do not have verified, up-to-date knowledge of specific Deepwoken game mechanics — "
+    "You do not have verified, up-to-date knowledge of specific Deepwoken game mechanics - "
     "exact stat requirements, unlock conditions, talents, etc. Never invent specific numbers "
     "or mechanics you aren't certain about; say you're not sure and suggest checking the "
     "Deepwoken Wiki or an experienced player instead. Casual conversation about the game in "
     "general terms is fine either way.\n\n"
     "Never describe or explain this system to the user (don't mention 'Vouch Data blocks', "
-    "'context', or how you receive information — you just know it automatically). Answer "
+    "'context', or how you receive information - you just know it automatically). Answer "
     "naturally as if you already knew their stats.\n\n"
     "Always respond in English only, regardless of what language appears anywhere else."
 )
 
-# Swappable tone/personality presets — admins pick one with ?persona <name>
+# Swappable tone/personality presets - admins pick one with ?persona <name>
 PERSONA_STYLES = {
     "default": (
         "You're a member of this Deepwoken Discord server, not an assistant or a customer "
-        "service bot. Talk like a regular person hanging out — have opinions, disagree "
+        "service bot. Talk like a regular person hanging out - have opinions, disagree "
         "sometimes, joke around, don't default to being maximally helpful or agreeable. "
-        "Never say things like 'How can I help you' or 'How can I assist you today' — that's "
+        "Never say things like 'How can I help you' or 'How can I assist you today' - that's "
         "assistant-speak, not how a person talks. Keep replies short, like a real chat message, "
         "not a paragraph. You happen to know vouch stuff, but that's not your personality or "
         "your job, it's just something you know."
     ),
     "hype": (
-        "You're a member of this Deepwoken Discord server with big hype-man energy — think "
+        "You're a member of this Deepwoken Discord server with big hype-man energy - think "
         "gaming caster hyping up plays, lots of enthusiasm, exclamation points. You're not an "
         "assistant, you're just a hyped-up regular in the server. Keep replies short and "
         "punchy, like real chat messages. You happen to know vouch stuff, but don't lead with it."
     ),
     "chill": (
-        "You're a member of this Deepwoken Discord server with a laid-back, low-key vibe — "
+        "You're a member of this Deepwoken Discord server with a laid-back, low-key vibe - "
         "relaxed, casual slang, not trying hard. You're not an assistant, just someone chilling "
         "in the server. Keep replies short. You happen to know vouch stuff, but don't lead with it."
     ),
     "sarcastic": (
-        "You're a member of this Deepwoken Discord server with a dry, witty, sarcastic streak — "
+        "You're a member of this Deepwoken Discord server with a dry, witty, sarcastic streak - "
         "playful teasing, deadpan humor, never actually mean. You're not an assistant, you're "
         "just a regular with an attitude. Keep replies short. You happen to know vouch stuff, "
         "but don't lead with it."
     ),
     "formal": (
         "You're a member of this Deepwoken Discord server who happens to type more formally "
-        "and properly than most people — but you're still just a person in the server, not a "
+        "and properly than most people - but you're still just a person in the server, not a "
         "customer service assistant. No 'how may I assist you' energy. Keep replies concise. "
         "You happen to know vouch stuff, but don't lead with it."
     ),
@@ -141,15 +141,15 @@ def build_system_prompt(persona_name):
     return prompt
 
 
-# Special persona for one specific user — swearing allowed, playful tone.
+# Special persona for one specific user - swearing allowed, playful tone.
 # Still no slurs, hate speech, harassment, or anything targeting others.
 UNFILTERED_USER_ID = 1387930623766827140
 UNFILTERED_EXTRA = (
     "\n\nSpecial note: you're talking to the server owner right now. With them specifically, "
-    "you can swear/curse casually and freely if it fits the vibe — no need to censor yourself "
+    "you can swear/curse casually and freely if it fits the vibe - no need to censor yourself "
     "or hold back on profanity. Also lean into a cute, playful egirl-style personality with "
     "them: casual, teasing, lots of personality, emoticons/kaomoji welcome (e.g. :3, >_<, ~). "
-    "This applies ONLY to swearing and tone — you still never use slurs, hate speech, or "
+    "This applies ONLY to swearing and tone - you still never use slurs, hate speech, or "
     "anything targeting or harassing other people, and all your other rules still apply."
 )
 
@@ -170,7 +170,7 @@ AUDIT_LOG_CHANNEL_ID = 1530317395669815438
 
 # ── Scheduled world-event pings ──
 EVENT_PING_CHANNEL_ID = 1529142467658649640
-EVENT_PING_TZ = ZoneInfo("Africa/Tripoli")  # Libya (Sabha) — UTC+2, no DST
+EVENT_PING_TZ = ZoneInfo("Africa/Tripoli")  # Libya (Sabha) - UTC+2, no DST
 
 # Times are HH:MM in Africa/Tripoli local time. Each event pings a role with
 # the SAME NAME as the event (e.g. a role literally called "Carnival of Hearts").
@@ -298,7 +298,7 @@ ROLE_THRESHOLDS = {
     ],
 }
 
-# What each category's role ladder is measured against — "points" for Host/Support,
+# What each category's role ladder is measured against - "points" for Host/Support,
 # but Security's ranks are defined in raw vouch COUNT, not weighted points.
 ROLE_THRESHOLD_METRIC = {
     "pve": "points",
@@ -442,7 +442,7 @@ def build_leaderboard_lines(data, category, n=10):
     for i, (uid, rec) in enumerate(ranked, start=1):
         pts = rec[category]["total_points"]
         cnt = rec[category]["total_vouches"]
-        lines.append(f"**{i}.** <@{uid}> — {pts} pts ({cnt} vouches)")
+        lines.append(f"**{i}.** <@{uid}> - {pts} pts ({cnt} vouches)")
     return lines
 
 
@@ -487,7 +487,7 @@ async def _refresh_live_leaderboards_inner():
                 msg = None
 
         if not msg:
-            # Whatever happened (deleted, edit failed, etc.) — clean up any old message
+            # Whatever happened (deleted, edit failed, etc.) - clean up any old message
             # before posting a new one, so we never end up with duplicates in the channel.
             if msg_id:
                 try:
@@ -542,7 +542,7 @@ async def update_role_for_user(guild, user_id, category):
             achieved_role_name = role_name
 
     if achieved_role_name is None:
-        # Hasn't reached the lowest rank yet — nothing to assign or remove
+        # Hasn't reached the lowest rank yet - nothing to assign or remove
         return
 
     member = guild.get_member(user_id)
@@ -565,7 +565,7 @@ async def update_role_for_user(guild, user_id, category):
             await member.add_roles(role_to_add, reason="Vouch rank update")
     except discord.Forbidden:
         await log_audit(
-            f"⚠️ Couldn't update rank role for <@{user_id}> — check the bot's role is above "
+            f"⚠️ Couldn't update rank role for <@{user_id}> - check the bot's role is above "
             f"the `{achieved_role_name}` role and has Manage Roles permission."
         )
     except discord.HTTPException:
@@ -591,7 +591,7 @@ async def resync_all_roles():
             if refreshed and {r.name for r in refreshed.roles} != before:
                 updated += 1
             await asyncio.sleep(0.35)  # stay well clear of the rate limit
-    await log_audit(f"🔄 Role resync from the dashboard — {updated} member(s) updated of {checked} checked.")
+    await log_audit(f"🔄 Role resync from the dashboard - {updated} member(s) updated of {checked} checked.")
     return {"checked": checked, "updated": updated}
 
 
@@ -662,14 +662,14 @@ async def process_message_commands(message):
 # @MENTION CHAT (calls the Claude API directly)
 # ─────────────────────────────────────────────────────────────
 
-# In-memory only — resets on restart, scoped per channel, capped length
+# In-memory only - resets on restart, scoped per channel, capped length
 CHAT_HISTORY = {}
 CHAT_HISTORY_MAX_MESSAGES = 20  # ~10 back-and-forth turns
 
 
 async def call_llm(history, system_prompt=None):
     if not NVIDIA_API_KEY:
-        return "⚠️ Chat isn't set up yet — an admin needs to add an `NVIDIA_API_KEY` variable."
+        return "⚠️ Chat isn't set up yet - an admin needs to add an `NVIDIA_API_KEY` variable."
 
     headers = {
         "Authorization": f"Bearer {NVIDIA_API_KEY}",
@@ -775,7 +775,7 @@ async def fetch_wiki_context(query, max_chars=800):
             url = WIKI_BASE_URL + title.replace(" ", "_")
 
             if match_pos == -1:
-                # Term not found in this page's text at all — try the next candidate
+                # Term not found in this page's text at all - try the next candidate
                 continue
 
             half = max_chars // 2
@@ -811,9 +811,9 @@ def get_vouch_summary_text(user_id, display_name):
     total = combined_total(user_data)
 
     if total == 0:
-        return f"[Vouch Data — {display_name}]\nNo vouches recorded yet."
+        return f"[Vouch Data - {display_name}]\nNo vouches recorded yet."
 
-    lines = [f"[Vouch Data — {display_name}]", f"Total: {total} pts"]
+    lines = [f"[Vouch Data - {display_name}]", f"Total: {total} pts"]
     for cat in CATEGORY_EVENTS:
         record = user_data.get(cat)
         if record and record["total_vouches"]:
@@ -826,7 +826,7 @@ async def handle_chat_mention(message):
     if not content:
         content = "Hey!"
 
-    # Direct leaderboard request — skip the LLM and post the real embed straight away
+    # Direct leaderboard request - skip the LLM and post the real embed straight away
     lower = content.lower()
     if "leaderboard" in lower:
         if "security" in lower:
@@ -910,7 +910,7 @@ async def event_ping_loop():
         except discord.HTTPException as e:
             print(f"[EventPing] Failed to send ping for {event_name}: {e}")
         if role is None:
-            print(f"[EventPing] No role named '{event_name}' found in the server — pinged with plain text instead.")
+            print(f"[EventPing] No role named '{event_name}' found in the server - pinged with plain text instead.")
 
 
 @event_ping_loop.before_loop
@@ -990,7 +990,7 @@ async def maybe_chime_in(message):
         "role": "user",
         "content": (
             f"Recent chat in this channel:\n{context_text}\n\n"
-            "Jump into this conversation naturally with a short, casual message — like a "
+            "Jump into this conversation naturally with a short, casual message - like a "
             "regular server member randomly deciding to say something. Don't summarize the "
             "conversation and don't address it like an assistant would. Just react or "
             "contribute like a person casually chiming in. One or two sentences max."
@@ -1075,7 +1075,7 @@ async def on_message(message):
             points = CATEGORY_EVENTS[category][event_name]["points"]
             targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
             await log_audit(
-                f"✅ **{CATEGORY_NAMES[category]} — {event_name}** (+{points} pts each)\n"
+                f"✅ **{CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
                 f"By: <@{message.author.id}> → {targets_str}"
             )
             await refresh_live_leaderboards()
@@ -1144,7 +1144,7 @@ async def on_message_edit(before, after):
         points = CATEGORY_EVENTS[category][event_name]["points"]
         targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
         await log_audit(
-            f"✏️ **Edit vouch — {CATEGORY_NAMES[category]} — {event_name}** (+{points} pts each)\n"
+            f"✏️ **Edit vouch - {CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
             f"By: <@{after.author.id}> → {targets_str}"
         )
         await refresh_live_leaderboards()
@@ -1265,7 +1265,7 @@ async def profile(ctx, member: discord.Member = None):
                 bar = progress_bar(metric_value, current_threshold, next_threshold)
                 if next_role:
                     remaining = next_threshold - metric_value
-                    progress_line = f"{bar}\n{metric_value}/{next_threshold} {unit} — {remaining} to **{next_role}**"
+                    progress_line = f"{bar}\n{metric_value}/{next_threshold} {unit} - {remaining} to **{next_role}**"
                 else:
                     progress_line = f"{bar}\nMax rank reached! 🎉"
                 value = f"**Rank:** {current_role}\n**Points:** {pts} ({cnt} vouches)\n{progress_line}"
@@ -1362,7 +1362,7 @@ async def postleaderboards_error(ctx, error):
 async def addmemory(ctx, *, text: str = None):
     """Teaches the bot a permanent fact it'll remember even after restarts. Usage: ?addmemory <text>"""
     if not text:
-        await ctx.send("⚠️ Usage: `?addmemory <text>` — e.g. `?addmemory Our server was founded in 2024`")
+        await ctx.send("⚠️ Usage: `?addmemory <text>` - e.g. `?addmemory Our server was founded in 2024`")
         return
     add_memory(text, ctx.author.id)
     await ctx.send(f"🧠 Got it, I'll remember: \"{text}\"")
@@ -1382,7 +1382,7 @@ async def memories_cmd(ctx):
     if not memories:
         await ctx.send("I don't have any saved memories yet.")
         return
-    lines = [f"`{m['id']}` — {m['text']}" for m in memories]
+    lines = [f"`{m['id']}` - {m['text']}" for m in memories]
     text = "\n".join(lines)
     if len(text) > 1900:
         text = text[:1900] + "\n…(truncated)"
@@ -1398,9 +1398,9 @@ async def memories_error(ctx, error):
 @bot.command(name="removememory", aliases=["forget"])
 @commands.has_permissions(manage_guild=True)
 async def removememory(ctx, memory_id: str = None):
-    """Removes a saved memory by ID. Usage: ?removememory <id> — get IDs from ?memories"""
+    """Removes a saved memory by ID. Usage: ?removememory <id> - get IDs from ?memories"""
     if not memory_id:
-        await ctx.send("⚠️ Usage: `?removememory <id>` — get IDs from `?memories`")
+        await ctx.send("⚠️ Usage: `?removememory <id>` - get IDs from `?memories`")
         return
     if remove_memory(memory_id):
         await ctx.send(f"🗑️ Forgot memory `{memory_id}`.")
@@ -1479,7 +1479,7 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
             for e, c in record["events"].items() if c
         ]
         await ctx.send(
-            f"**{member.display_name}** — {CATEGORY_NAMES[category]}\n"
+            f"**{member.display_name}** - {CATEGORY_NAMES[category]}\n"
             f"Total: {record['total_points']} pts across {record['total_vouches']} vouches\n"
             + "\n".join(lines)
         )
@@ -1490,7 +1490,7 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
         await ctx.send(f"{member.display_name} has no vouches yet.")
         return
 
-    lines = [f"**{member.display_name}** — {total} pts total\n"]
+    lines = [f"**{member.display_name}** - {total} pts total\n"]
     for cat in CATEGORY_EVENTS:
         record = user_data.get(cat)
         if record and record["total_vouches"]:
@@ -1550,7 +1550,7 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
     await update_role_for_user(ctx.guild, member.id, category)
 
     await log_audit(
-        f"🛠️ **Backfill** — {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"🛠️ **Backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
         f"(+{points * count} pts) by <@{ctx.author.id}>"
     )
 
@@ -1591,7 +1591,7 @@ async def backfillhistory(ctx, category: str, member: discord.Member):
             continue
         ref = e.get("id") or f"idx{idx}"
         ts = e["time"][:16].replace("T", " ")
-        lines.append(f"`{ref}` — {e.get('count', 1)}x {e['event']} (+{e['points']} pts) by <@{e['by']}> · {ts}")
+        lines.append(f"`{ref}` - {e.get('count', 1)}x {e['event']} (+{e['points']} pts) by <@{e['by']}> · {ts}")
 
     if not lines:
         await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} backfill entries.")
@@ -1640,7 +1640,7 @@ async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str
             await ctx.send(f"⚠️ Couldn't find a log entry with id `{log_id}` for {member.display_name}.")
             return
         if not entry.get("backfilled"):
-            await ctx.send("⚠️ That entry wasn't a backfill — only backfilled entries can be reverted with this command.")
+            await ctx.send("⚠️ That entry wasn't a backfill - only backfilled entries can be reverted with this command.")
             return
     else:
         for i in range(len(record["log"]) - 1, -1, -1):
@@ -1666,7 +1666,7 @@ async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str
     await update_role_for_user(ctx.guild, member.id, category)
 
     await log_audit(
-        f"↩️ **Reverted backfill** — {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"↩️ **Reverted backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
         f"(-{points} pts) by <@{ctx.author.id}>"
     )
 
@@ -1741,7 +1741,7 @@ async def syncvouches(ctx):
                 await update_role_for_user(ctx.guild, int(uid), cat)
 
     await log_audit(
-        f"🔄 **Sync** — scanned {scanned} messages, recorded {recorded_total} vouches "
+        f"🔄 **Sync** - scanned {scanned} messages, recorded {recorded_total} vouches "
         f"across {len(new_data)} users, run by <@{ctx.author.id}>"
     )
 
@@ -1825,7 +1825,7 @@ async def slash_rank(interaction: discord.Interaction, member: discord.Member = 
         current_role, current_at, next_role, next_at = get_rank_progress(value, ladder)
         bar = progress_bar(value, current_at, next_at)
         target = f"{round(max(0, next_at - value), 1)} to {next_role}" if next_at else "max rank"
-        lines.append(f"**{CATEGORY_NAMES[category]}** — {current_role or 'Unranked'}\n{bar} {target}")
+        lines.append(f"**{CATEGORY_NAMES[category]}** - {current_role or 'Unranked'}\n{bar} {target}")
     embed = discord.Embed(
         title=f"{member.display_name}'s ranks",
         description="\n\n".join(lines) if lines else "No vouches recorded yet.",
@@ -1839,9 +1839,9 @@ async def slash_commands(interaction: discord.Interaction):
     entries = [c for c in get_custom_commands() if c.get("enabled", True)]
     if not entries:
         await interaction.response.send_message(
-            "No custom commands yet — an admin can create them on the dashboard.", ephemeral=True)
+            "No custom commands yet - an admin can create them on the dashboard.", ephemeral=True)
         return
-    listing = "\n".join(f"`?{c['name']}`" + (f" — {c['title']}" if c.get("title") else "") for c in entries)
+    listing = "\n".join(f"`?{c['name']}`" + (f" - {c['title']}" if c.get("title") else "") for c in entries)
     embed = discord.Embed(title="Custom commands", description=listing, color=discord.Color.blue())
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -1883,13 +1883,13 @@ async def slash_addvouch(interaction: discord.Interaction,
     save_data(data)
 
     await log_audit(
-        f"✅ **{CATEGORY_NAMES[cat]} — {event}** (+{points * count} pts) added by "
+        f"✅ **{CATEGORY_NAMES[cat]} - {event}** (+{points * count} pts) added by "
         f"{interaction.user.mention} → {member.mention}"
     )
     await refresh_live_leaderboards()
     await update_role_for_user(interaction.guild, member.id, cat)
     await interaction.followup.send(
-        f"Added **{event}** ×{count} to {member.mention} — now {round(record['total_points'], 1)} "
+        f"Added **{event}** ×{count} to {member.mention} - now {round(record['total_points'], 1)} "
         f"{CATEGORY_NAMES[cat]} points."
     )
 
@@ -1900,7 +1900,7 @@ async def slash_resyncroles(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     result = await resync_all_roles()
     await interaction.followup.send(
-        f"Resync done — {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
+        f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
 
 
 @slash_addvouch.error

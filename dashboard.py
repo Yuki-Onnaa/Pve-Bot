@@ -24,7 +24,7 @@ _file_lock = threading.Lock()
 # ── Discord OAuth2 ──
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "")
-# e.g. https://dashboard.sapph.xyz/callback  — must match the Discord dev portal exactly
+# e.g. https://dashboard.sapph.xyz/callback  - must match the Discord dev portal exactly
 DISCORD_REDIRECT_URI = os.environ.get("DISCORD_REDIRECT_URI", "")
 # Optional: restrict the dashboard to a single server. Empty = any server you admin.
 REQUIRED_GUILD_ID = os.environ.get("GUILD_ID", "").strip()
@@ -862,7 +862,7 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in — Matzys Overseer</title>
+<title>Sign in - Matzys Overseer</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -926,7 +926,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Matzys Overseer — Dashboard</title>
+<title>Matzys Overseer - Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -1227,7 +1227,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <article class="feature">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg></div>
         <h3>Custom commands</h3>
-        <p>Build your own <code style="font-family:var(--mono);color:var(--blue)">?commands</code> — pick a name, write the reply, and the bot answers instantly.</p>
+        <p>Build your own <code style="font-family:var(--mono);color:var(--blue)">?commands</code> - pick a name, write the reply, and the bot answers instantly.</p>
         <button class="btn btn-soft" onclick="showSection('commands')">Make a command</button>
       </article>
       <article class="feature">
@@ -1276,9 +1276,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <div><span class="badge" id="persona-badge">default</span> <span class="badge green" id="chat-badge">Chat on</span></div>
     </div>
     <div class="stat-grid">
-      <div class="stat"><div class="accent" style="background:var(--blue)"></div><div class="val" id="stat-users">—</div><div class="lbl">Total members</div></div>
-      <div class="stat"><div class="accent" style="background:var(--green)"></div><div class="val" id="stat-vouches">—</div><div class="lbl">Total vouches</div></div>
-      <div class="stat"><div class="accent" style="background:var(--purple)"></div><div class="val" id="stat-memories">—</div><div class="lbl">Memories saved</div></div>
+      <div class="stat"><div class="accent" style="background:var(--blue)"></div><div class="val" id="stat-users">-</div><div class="lbl">Total members</div></div>
+      <div class="stat"><div class="accent" style="background:var(--green)"></div><div class="val" id="stat-vouches">-</div><div class="lbl">Total vouches</div></div>
+      <div class="stat"><div class="accent" style="background:var(--purple)"></div><div class="val" id="stat-memories">-</div><div class="lbl">Memories saved</div></div>
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="section-head" style="margin-bottom:14px">
@@ -1767,7 +1767,7 @@ async function loadAudit(){
   el.innerHTML = data.map(e=>'<div class="audit-item">'+
     '<div class="audit-dot" style="background:'+(CAT_COLORS[e.category]||'var(--dim)')+'"></div>'+
     '<div class="audit-content"><div class="main-text"><span style="color:'+CAT_COLORS[e.category]+'">'+
-    (CAT_NAMES[e.category]||e.category)+'</span> — '+esc(e.event)+' <span class="mono">('+fmt(e.points)+' pts)</span>'+
+    (CAT_NAMES[e.category]||e.category)+'</span> - '+esc(e.event)+' <span class="mono">('+fmt(e.points)+' pts)</span>'+
     (e.backfilled?' <span style="font-size:10px;color:var(--amber)">[backfill]</span>':'')+'</div>'+
     '<div class="meta">to '+esc(e.name||e.uid)+' · by '+esc(e.by||'?')+' · '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
     '</div></div>').join('');
@@ -1840,7 +1840,7 @@ function renderChart(d){
   document.getElementById('chart').innerHTML =
     '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img">'+g+lines+'</svg>';
   document.getElementById('chart-legend').innerHTML = cats.map(c=>
-    '<span><i style="background:'+colors[c]+'"></i>'+CAT_NAMES[c]+' — '+fmt(d.totals[c])+' pts</span>').join('');
+    '<span><i style="background:'+colors[c]+'"></i>'+CAT_NAMES[c]+' - '+fmt(d.totals[c])+' pts</span>').join('');
 }
 
 // ── Role resync ──
@@ -1849,7 +1849,7 @@ async function resyncRoles(){
   btn.disabled=true; btn.textContent='Resyncing…';
   const r=await api('/api/roles/resync',{method:'POST'});
   btn.disabled=false; btn.textContent='Resync all roles';
-  if(r.ok) showAlert(el,'Done — '+(r.updated||0)+' member(s) updated, '+(r.checked||0)+' checked.','success');
+  if(r.ok) showAlert(el,'Done - '+(r.updated||0)+' member(s) updated, '+(r.checked||0)+' checked.','success');
   else showAlert(el, r.error||'Resync failed.','err');
 }
 
@@ -1966,7 +1966,7 @@ def run_dashboard():
     port = int(os.environ.get("PORT", 8080))
     print(f"[Dashboard] Starting on http://0.0.0.0:{port}")
     if not oauth_configured():
-        print("[Dashboard] Discord login is NOT configured — set DISCORD_CLIENT_ID, "
+        print("[Dashboard] Discord login is NOT configured - set DISCORD_CLIENT_ID, "
               "DISCORD_CLIENT_SECRET and DISCORD_REDIRECT_URI.")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
