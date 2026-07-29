@@ -1855,19 +1855,27 @@ async function resyncRoles(){
 
 // ── Custom commands ──
 let editingCommand = null;
+let commandsCache = [];
 async function loadCommands(){
   const list = await api('/api/commands');
+  commandsCache = Array.isArray(list) ? list : [];
   const el = document.getElementById('cmd-list');
-  if(!list.length){el.innerHTML='<div class="empty">No custom commands yet. Make your first one above.</div>';return;}
-  el.innerHTML = list.map(c=>'<div class="cmd-item '+(c.enabled?'':'off')+'">'+
+  if(!commandsCache.length){el.innerHTML='<div class="empty">No custom commands yet. Make your first one above.</div>';return;}
+  el.innerHTML = commandsCache.map((c,i)=>'<div class="cmd-item '+(c.enabled?'':'off')+'">'+
     '<div class="body"><div class="nm">?'+esc(c.name)+'</div>'+
     '<div class="rp">'+esc(c.response)+'</div>'+
     '<div class="mt">'+(c.embed?'embed · ':'')+(c.uses||0)+' uses · by '+esc(c.created_by||'?')+'</div></div>'+
-    '<button class="btn btn-ghost btn-sm" onclick=\'editCommand('+JSON.stringify(JSON.stringify(c))+')\'>Edit</button>'+
-    '<button class="btn btn-danger btn-sm" onclick="deleteCommand(\''+esc(c.name)+'\')">Delete</button></div>').join('');
+    '<button class="btn btn-ghost btn-sm" data-edit="'+i+'">Edit</button>'+
+    '<button class="btn btn-danger btn-sm" data-del="'+i+'">Delete</button></div>').join('');
+  el.querySelectorAll('[data-edit]').forEach(b=>{
+    b.onclick=()=>editCommand(commandsCache[Number(b.dataset.edit)]);
+  });
+  el.querySelectorAll('[data-del]').forEach(b=>{
+    b.onclick=()=>deleteCommand(commandsCache[Number(b.dataset.del)].name);
+  });
 }
-function editCommand(json){
-  const c = JSON.parse(json);
+function editCommand(c){
+  if(!c) return;
   editingCommand = c.name;
   document.getElementById('cmd-form-title').textContent = 'Editing ?'+c.name;
   document.getElementById('cmd-name').value = c.name;
