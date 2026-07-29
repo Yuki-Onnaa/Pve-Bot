@@ -69,6 +69,14 @@ FALLBACK_EVENT_POINTS = {
 
 CATEGORY_EVENTS = FALLBACK_EVENT_POINTS  # kept for older references
 
+# Events offered as routes to the next rank on the profile page, in this order.
+# Anything not listed (or since renamed) is topped up with the highest value events.
+GOAL_ROUTE_EVENTS = {
+    "pve": ["Hellmode", "Deep Champion", "Enmity", "Elder"],
+    "security": [],
+    "support": [],
+}
+
 PERSONAS = ["default", "hype", "chill", "sarcastic", "formal"]
 
 # Built-in ?commands that custom commands may not shadow
@@ -554,7 +562,10 @@ def api_profile():
         # every rank still ahead of you, and what it would take
         ladder = economy["ranks"].get(cat) or []
         events = economy["events"].get(cat) or {}
-        best = sorted(((p, n) for n, p in events.items() if p > 0), reverse=True)[:4]
+        preferred = [n for n in GOAL_ROUTE_EVENTS.get(cat, []) if events.get(n, 0) > 0]
+        fallback = [n for _, n in sorted(((p, n) for n, p in events.items() if p > 0), reverse=True)
+                    if n not in preferred]
+        best = [(events[n], n) for n in (preferred + fallback)[:4]]
         goals = []
         for at, role_name in ladder:
             if at <= value:
