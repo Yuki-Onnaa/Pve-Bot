@@ -2193,6 +2193,85 @@ async def slash_ask(interaction: discord.Interaction, question: str):
     await interaction.followup.send(embed=embed)
 
 
+# Model families that serve chat completions, and the ones that never do.
+_CHAT_HINTS = ("instruct", "chat", "nemotron", "-it")
+_NOT_CHAT = ("bge", "embed", "rerank", "retriever", "starcoder", "codegen", "fuyu",
+             "clip", "vila", "stable-diffusion", "sdxl", "riva", "parakeet", "whisper",
+             "molmo", "esm", "diffdock", "protein", "genmol", "ocr", "paddle", "nvclip")
+
+
+def pick_chat_models(ids, limit=12):
+    """Best guess at which catalogue entries are usable for chat, best first."""
+    usable = []
+    for mid in ids:
+        low = mid.lower()
+        if any(bad in low for bad in _NOT_CHAT):
+            continue
+        if any(hint in low for hint in _CHAT_HINTS):
+            usable.append(mid)
+
+    def score(mid):
+        low = mid.lower()
+        rank = 5
+        for i, fam in enumerate(("nvidia/", "meta/", "mistralai/", "qwen/", "google/", "microsoft/")):
+            if low.startswith(fam):
+                rank = i
+                break
+        return (rank, len(mid))
+
+    usable.sort(key=score)
+    return usable[:limit]
+
+
+async def fetch_model_ids():
+    """Every model id the account can see, or None if the call failed."""
+    if not NVIDIA_API_KEY:
+        return None
+    headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}"}
+    url = NVIDIA_API_BASE.rstrip("/") + "/models"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=20) as resp:
+                if resp.status != 200:
+                    return None
+                data = json.loads(await resp.text())
+                return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+    except Exception as e:
+        print(f"[AI] Model list failed: {type(e).__name__}: {e}")
+        return None
+
+
+@bot.tree.command(name="aimodels", description="List AI models this account can use (admin only)")
+@app_commands.describe(search="Optional filter, for example llama or mistral")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_aimodels(interaction: discord.Interaction, search: str = ""):
+    await interaction.response.defer(ephemeral=True)
+    ids = await fetch_model_ids()
+    if ids is None:
+        await interaction.followup.send(
+            "Could not list models. Run `/aitest` to see why.", ephemeral=True)
+        return
+
+    if search:
+        matches = [m for m in ids if search.lower() in m.lower()]
+        title = f"{len(matches)} model(s) matching `{search}`"
+        shown = matches[:25]
+    else:
+        shown = pick_chat_models(ids, limit=15)
+        title = f"{len(ids)} models available. Best guesses for chat:"
+
+    if not shown:
+        await interaction.followup.send(
+            f"Nothing matched `{search}`. Try a shorter word, or run `/aimodels` with no filter.",
+            ephemeral=True)
+        return
+
+    body = "\n".join(f"`{m}`" for m in shown)
+    footer = ("\n\nSet one of these as `NVIDIA_MODEL` in Railway, then redeploy."
+              if not search else "")
+    await interaction.followup.send(f"**{title}**\n{body}{footer}"[:1900], ephemeral=True)
+
+
 @bot.tree.command(name="aitest", description="Diagnose the AI chat connection (admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def slash_aitest(interaction: discord.Interaction):
@@ -2224,8 +2303,11 @@ async def slash_aitest(interaction: discord.Interaction):
                     lines.append(f"GET /models: **OK** ({len(ids)} models available)")
                     lines.append(f"Your model is listed: **{'yes' if model_listed else 'no'}**")
                     if not model_listed and ids:
-                        sample = ", ".join(f"`{i}`" for i in ids[:6])
-                        lines.append(f"Some that are: {sample}")
+                        suggestions = pick_chat_models(ids, limit=5)
+                        if suggestions:
+                            lines.append("Chat models you could use instead:")
+                            lines.extend(f"- `{s}`" for s in suggestions)
+                            lines.append("Run `/aimodels` for the full list.")
                 else:
                     lines.append(f"GET /models: **HTTP {resp.status}** :: {body[:150]}")
     except Exception as e:
@@ -2258,7 +2340,9 @@ async def slash_aitest(interaction: discord.Interaction):
                    "Ask for it on the NVIDIA developer forums, or point `NVIDIA_API_BASE` at another "
                    "OpenAI compatible provider.")
     elif models_ok and not model_listed:
-        verdict = "The model name is not in the catalogue. Set `NVIDIA_MODEL` to one of the listed ids."
+        verdict = ("`" + NVIDIA_MODEL + "` is not in the catalogue any more, which is why every "
+                   "request 404s. Set `NVIDIA_MODEL` in Railway to one of the ids above and redeploy. "
+                   "Use `/aimodels` to browse or search the rest.")
     elif not models_ok:
         verdict = "Even listing models failed, so the key or the endpoint is wrong."
     else:
@@ -2351,6 +2435,7 @@ async def slash_resyncroles(interaction: discord.Interaction):
         f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
 
 
+@slash_aimodels.error
 @slash_aitest.error
 @slash_wikitest.error
 @slash_addvouch.error
