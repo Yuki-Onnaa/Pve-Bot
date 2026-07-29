@@ -513,7 +513,22 @@ def profile_page():
 @app.route("/api/profile")
 @member_required
 def api_profile():
-    uid = str(session["user"]["id"])
+    return jsonify(build_profile(str(session["user"]["id"]), own=True))
+
+
+@app.route("/api/profile/<uid>")
+@member_required
+def api_member_profile(uid):
+    """Someone else's profile. Same shape, minus anything private."""
+    if not str(uid).isdigit():
+        return jsonify({"error": "Unknown member"}), 404
+    data = load_data()
+    if uid not in data:
+        return jsonify({"error": "That member has no vouches yet."}), 404
+    return jsonify(build_profile(str(uid), own=False))
+
+
+def build_profile(uid, own=True):
     data = load_data()
     record = data.get(uid, {})
     now = datetime.now(timezone.utc)
@@ -552,11 +567,13 @@ def api_profile():
             if uid2 == uid:
                 position = i + 1
                 if i > 0:
-                    who = resolve_user(board[i - 1][0])
-                    rivals["above"] = {"name": who["name"], "gap": round(board[i - 1][1] - pts, 1)}
+                    who2 = resolve_user(board[i - 1][0])
+                    rivals["above"] = {"uid": board[i - 1][0], "name": who2["name"],
+                                       "gap": round(board[i - 1][1] - pts, 1)}
                 if i + 1 < len(board):
-                    who = resolve_user(board[i + 1][0])
-                    rivals["below"] = {"name": who["name"], "gap": round(pts - board[i + 1][1], 1)}
+                    who2 = resolve_user(board[i + 1][0])
+                    rivals["below"] = {"uid": board[i + 1][0], "name": who2["name"],
+                                       "gap": round(pts - board[i + 1][1], 1)}
                 break
 
         # every rank still ahead of you, and what it would take
@@ -622,8 +639,16 @@ def api_profile():
     active_days = len(by_day)
     first_seen = min((e["time"] for e in recent), default="")
 
-    return jsonify({
-        "user": session["user"],
+    who = resolve_user(uid)
+    if own:
+        person = dict(session["user"])
+    else:
+        person = {"id": uid, "username": who["name"], "handle": "", "avatar": who["avatar"]}
+
+    return {
+        "own": own,
+        "user": person,
+        "resolved": who["resolved"],
         "total": round(combined_total(record), 1),
         "categories": categories,
         "recent": recent[:20],
@@ -638,7 +663,7 @@ def api_profile():
             "first_seen": first_seen[:10],
             "total_vouches": sum(c["vouches"] for c in categories),
         },
-    })
+    }
 
 
 def day_key(iso_time):
@@ -736,6 +761,24 @@ def _own_history(uid, args):
             })
     rows.sort(key=lambda r: r["time"], reverse=True)
     return rows
+
+
+@app.route("/u/<uid>")
+@member_required
+def public_profile_page(uid):
+    if not str(uid).isdigit():
+        return redirect("/profile")
+    if str(uid) == str(session["user"]["id"]):
+        return redirect("/profile")
+    record_visit(session["user"]["id"], "member profile")
+    who = resolve_user(uid)
+    return render_template_string(
+        PROFILE_HTML,
+        user=session["user"],
+        is_admin=is_admin(),
+        viewing=str(uid),
+        viewing_name=who["name"],
+    )
 
 
 @app.route("/api/profile/history")
@@ -1615,7 +1658,9 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
 .bests div{font-size:12px;color:var(--muted)}
 .bests b{display:block;font-family:var(--mono);font-size:16px;color:var(--text);font-weight:600;margin-bottom:2px}
 .rivals{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-.rival{background:var(--card-2);border:1px solid var(--border);border-radius:9px;padding:7px 11px;font-size:12px;color:var(--muted)}
+.rival{background:var(--card-2);border:1px solid var(--border);border-radius:9px;padding:7px 11px;
+  font-size:12px;color:var(--muted);text-decoration:none;display:inline-block;transition:border-color .15s}
+a.rival:hover{border-color:var(--border-2);color:var(--text)}
 .rival b{color:var(--text)}
 .goals{margin-top:16px;border-top:1px solid var(--border);padding-top:14px}
 .goal{margin-bottom:12px}
@@ -1674,6 +1719,7 @@ tr:last-child td{border-bottom:none}
   <img class="brand" src="__LOGO__" alt="">
   <span class="brand-name">Matzys Overseer</span>
   <div class="spacer"></div>
+  {% if viewing %}<a class="hlink" href="/profile">My profile</a>{% endif %}
   {% if is_admin %}<a class="hlink" href="/">Dashboard</a>{% endif %}
   <a class="hlink" href="/logout">Sign out</a>
   <span class="hlink avatar"><img src="{{ user.avatar }}" alt=""></span>
@@ -1681,8 +1727,13 @@ tr:last-child td{border-bottom:none}
 
 <main class="content">
   <div class="hero">
+    {% if viewing %}
+    <h1><span>{{ viewing_name }}</span></h1>
+    <p>Their vouch record.</p>
+    {% else %}
     <h1>Welcome back, <span>{{ user.username }}</span></h1>
     <p>Here is where you stand.</p>
+    {% endif %}
   </div>
 
   <div class="stat-grid">
@@ -1697,12 +1748,13 @@ tr:last-child td{border-bottom:none}
 
   <div id="cats"></div>
 
-  <h2 class="sec">Your activity</h2>
+  <h2 class="sec">{% if viewing %}Activity{% else %}Your activity{% endif %}</h2>
   <div class="card">
     <div class="chart-wrap" id="chart"><div class="empty">Loading...</div></div>
     <div class="legend" id="chart-legend"></div>
   </div>
 
+  {% if not viewing %}
   <h2 class="sec">Your vouch history</h2>
   <div class="card">
     <div class="filters">
@@ -1720,6 +1772,7 @@ tr:last-child td{border-bottom:none}
     <div class="hist-sum" id="hist-sum"></div>
     <div class="table-wrap" id="history"><div class="empty">Loading...</div></div>
   </div>
+  {% endif %}
 </main>
 
 <footer class="footer">
@@ -1729,6 +1782,7 @@ tr:last-child td{border-bottom:none}
 
 <script>
 const CAT_COLORS = {pve:'#f4f6f9', security:'#8d9bb5', support:'#9dbcaa'};
+const VIEWING = "{{ viewing|default('', true) }}";
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
@@ -1764,9 +1818,15 @@ function renderStreak(s){
 function rivalsHTML(r){
   if(!r || (!r.above && !r.below)) return '';
   let out = '<div class="rivals">';
-  if(r.above) out += '<span class="rival"><b>' + fmt(r.above.gap) + '</b> behind ' + esc(r.above.name) + '</span>';
-  if(r.below) out += '<span class="rival"><b>' + fmt(r.below.gap) + '</b> ahead of ' + esc(r.below.name) + '</span>';
+  if(r.above) out += rivalChip(r.above, 'behind');
+  if(r.below) out += rivalChip(r.below, 'ahead of');
   return out + '</div>';
+}
+function rivalChip(r, word){
+  const label = '<b>' + fmt(r.gap) + '</b> ' + word + ' ' + esc(r.name);
+  return r.uid
+    ? '<a class="rival" href="/u/' + encodeURIComponent(r.uid) + '">' + label + '</a>'
+    : '<span class="rival">' + label + '</span>';
 }
 function goalsHTML(c){
   if(!c.goals || !c.goals.length) return '';
@@ -1783,9 +1843,16 @@ function goalsHTML(c){
 async function load(){
   let d;
   try {
-    const r = await fetch('/api/profile', {headers:{'Content-Type':'application/json'}});
+    const url = VIEWING ? '/api/profile/' + VIEWING : '/api/profile';
+    const r = await fetch(url, {headers:{'Content-Type':'application/json'}});
     if(r.status === 401){window.location.href = '/login'; return;}
     d = await r.json();
+    if(d.error){
+      document.getElementById('cats').innerHTML = '<div class="card"><div class="empty">' + esc(d.error) + '</div></div>';
+      document.getElementById('streak').style.display = 'none';
+      document.getElementById('bests').style.display = 'none';
+      return;
+    }
   } catch (e) {
     document.getElementById('recent').innerHTML =
       '<div class="empty">Could not load your profile. Try refreshing.</div>';
@@ -1840,7 +1907,7 @@ async function load(){
     '<div><b>' + (b.first_seen || '-') + '</b>first vouch</div>';
 
   renderChart(d.chart);
-  loadHistory();
+  if(!VIEWING) loadHistory();
 }
 
 function renderChart(c){
@@ -1920,6 +1987,7 @@ async function loadHistory(){
 
 let histTimer = null;
 document.addEventListener('DOMContentLoaded', function(){
+  if(VIEWING) return;
   document.getElementById('f-cat').onchange = loadHistory;
   document.getElementById('f-days').onchange = loadHistory;
   document.getElementById('f-q').oninput = function(){
