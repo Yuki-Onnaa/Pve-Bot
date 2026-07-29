@@ -1764,8 +1764,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <article class="feature">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg></div>
         <h3>Points &amp; ranks</h3>
-        <p>Change what each event is worth and where every rank role unlocks, without touching the code.</p>
-        <button class="btn btn-soft" onclick="showSection('economy')">Tune the economy</button>
+        <p>Change what each event is worth and where every rank role unlocks.</p>
+        <button class="btn btn-soft" onclick="showSection('economy')">Points &amp; ranks</button>
       </article>
       <article class="feature">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg></div>
