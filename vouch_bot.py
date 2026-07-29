@@ -5,7 +5,7 @@ import os
 import random
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -674,6 +674,87 @@ async def resync_all_roles():
 
 
 # ─────────────────────────────────────────────────────────────
+# STREAK WARNINGS
+# Runs once a day and DMs anyone whose daily streak is about to lapse.
+# ─────────────────────────────────────────────────────────────
+
+STREAK_WARNING_HOUR = int(os.environ.get("STREAK_WARNING_HOUR", "20"))  # UTC
+
+
+@tasks.loop(time=dtime(hour=STREAK_WARNING_HOUR, minute=0, tzinfo=timezone.utc))
+async def warn_expiring_streaks():
+    """DM members who had a vouch yesterday but none today."""
+    try:
+        import dashboard
+    except ImportError:
+        return
+
+    data = load_data()
+    today = datetime.now(timezone.utc).date().isoformat()
+    sent_log = data.setdefault("_streak_dm", {})
+    warned = 0
+    changed = False
+
+    for uid, record in list(data.items()):
+        if not uid.isdigit():
+            continue
+        if sent_log.get(uid) == today:
+            continue  # already warned them today
+
+        try:
+            streak = dashboard.streak_stats(record)
+        except Exception as e:
+            print(f"[Streak] Could not read streak for {uid}: {e}")
+            continue
+
+        if not streak["at_risk"] or streak["current"] < 1:
+            continue
+
+        user = bot.get_user(int(uid))
+        if user is None:
+            try:
+                user = await bot.fetch_user(int(uid))
+            except (discord.NotFound, discord.HTTPException):
+                continue
+
+        hours = max(1, streak["hours_left"])
+        try:
+            await user.send(
+                f"Your **{streak['current']} day** streak is about to break. "
+                f"Get a vouch in the next {hours} hour{'s' if hours != 1 else ''} to keep it alive."
+            )
+            warned += 1
+        except discord.Forbidden:
+            pass  # DMs closed, skip quietly
+        except discord.HTTPException as e:
+            print(f"[Streak] DM to {uid} failed: {e}")
+            continue
+
+        sent_log[uid] = today
+        changed = True
+        await asyncio.sleep(1.2)  # stay polite with the DM rate limit
+
+    # forget warnings older than a week so the log does not grow forever
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=7)).isoformat()
+    stale = [u for u, day in sent_log.items() if day < cutoff]
+    for u in stale:
+        del sent_log[u]
+        changed = True
+
+    if changed:
+        fresh = load_data()
+        fresh["_streak_dm"] = sent_log
+        save_data(fresh)
+    if warned:
+        print(f"[Streak] Warned {warned} member(s)")
+
+
+@warn_expiring_streaks.before_loop
+async def before_streak_warnings():
+    await bot.wait_until_ready()
+
+
+# ─────────────────────────────────────────────────────────────
 # CUSTOM ?COMMANDS (created from the dashboard)
 # ─────────────────────────────────────────────────────────────
 
@@ -1015,6 +1096,10 @@ async def on_ready():
         print("[Dashboard] Started")
     except Exception as e:
         print(f"[Dashboard] Failed to start: {e}")
+
+    if not warn_expiring_streaks.is_running():
+        warn_expiring_streaks.start()
+        print(f"[Streak] Daily warnings scheduled for {STREAK_WARNING_HOUR:02d}:00 UTC")
 
     try:
         synced = await bot.tree.sync()

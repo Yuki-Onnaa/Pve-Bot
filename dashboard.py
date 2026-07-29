@@ -8,7 +8,7 @@ import threading
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 
 import urllib.error
@@ -620,6 +620,7 @@ def api_profile():
         "last_week": round(last_week, 1),
         "has_data": bool(record),
         "chart": {"labels": labels, "series": series},
+        "streak": streak_stats(record),
         "bests": {
             "best_day": {"date": best_day[0], "points": round(best_day[1], 1)} if best_day else None,
             "active_days": active_days,
@@ -627,6 +628,68 @@ def api_profile():
             "total_vouches": sum(c["vouches"] for c in categories),
         },
     })
+
+
+def day_key(iso_time):
+    """The UTC date a stored timestamp falls on, or None if unparseable."""
+    try:
+        return datetime.fromisoformat(str(iso_time).replace("Z", "+00:00")).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def streak_stats(record, days_shown=30):
+    """Consecutive days with at least one vouch, across every category."""
+    counts = {}
+    for cat in ALL_CATEGORIES:
+        for entry in (record.get(cat) or {}).get("log", []):
+            key = day_key(entry.get("time", ""))
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+
+    # alive if today has a vouch, or yesterday did and today is not over yet
+    if today in counts:
+        cursor, at_risk = today, False
+    elif yesterday in counts:
+        cursor, at_risk = yesterday, True
+    else:
+        cursor, at_risk = None, False
+
+    current = 0
+    while cursor is not None and cursor in counts:
+        current += 1
+        cursor -= timedelta(days=1)
+
+    longest = 0
+    run = 0
+    for key in sorted(counts):
+        run = run + 1 if run and (key - timedelta(days=1)) in counts else 1
+        longest = max(longest, run)
+
+    days = []
+    for i in range(days_shown - 1, -1, -1):
+        key = today - timedelta(days=i)
+        days.append({
+            "label": key.isoformat(),
+            "count": counts.get(key, 0),
+            "active": key in counts,
+            "current": key == today,
+        })
+
+    hours_left = 23 - now.hour
+    return {
+        "current": current,
+        "longest": max(longest, current),
+        "at_risk": at_risk,
+        "today": counts.get(today, 0),
+        "hours_left": hours_left,
+        "days": days,
+        "total_days": len(counts),
+    }
 
 
 def _own_history(uid, args):
@@ -1521,6 +1584,21 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
 .act .dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0}
 .act .main{font-size:13.5px;line-height:1.45}
 .act .meta{font-size:11.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+.streak{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;margin-bottom:14px}
+.streak-top{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.streak-num{font-family:var(--mono);font-size:34px;font-weight:600;line-height:1}
+.streak-word{font-size:14px;color:var(--muted)}
+.streak-best{margin-left:auto;font-size:12px;color:var(--muted);font-family:var(--mono)}
+.streak-msg{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px}
+.streak-msg.warn{color:var(--amber)}
+.weeks{display:flex;gap:3px}
+.wk{flex:1;min-width:7px;height:32px;border-radius:3px;background:#20242c;border:1px solid var(--border);
+  position:relative}
+.wk.on{background:linear-gradient(180deg,#8e97a6,#f4f6f9);border-color:transparent}
+.wk.now{outline:1px solid var(--moon);outline-offset:2px}
+.wk-labels{display:flex;justify-content:space-between;margin-top:7px;font-size:10.5px;
+  color:var(--dim);font-family:var(--mono)}
 .bests{display:flex;flex-wrap:wrap;gap:18px;padding:16px 18px;background:var(--card);
   border:1px solid var(--border);border-radius:var(--radius);margin-bottom:22px}
 .bests div{font-size:12px;color:var(--muted)}
@@ -1603,6 +1681,7 @@ tr:last-child td{border-bottom:none}
     <div class="stat"><div class="val" id="s-vouches">-</div><div class="lbl">Total vouches</div></div>
   </div>
 
+  <div class="streak" id="streak"></div>
   <div class="bests" id="bests"></div>
 
   <div id="cats"></div>
@@ -1642,6 +1721,34 @@ const CAT_COLORS = {pve:'#f4f6f9', security:'#8d9bb5', support:'#9dbcaa'};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
+
+function renderStreak(s){
+  const el = document.getElementById('streak');
+  if(!s){ el.style.display = 'none'; return; }
+  let msg;
+  if(s.current === 0){
+    msg = 'No streak going. Get a vouch today to start one.';
+  } else if(s.at_risk){
+    const h = s.hours_left;
+    msg = 'Your streak breaks at midnight UTC. ' +
+      (h <= 0 ? 'Get a vouch now to keep it alive.'
+              : 'About ' + h + ' hour' + (h === 1 ? '' : 's') + ' left to get a vouch.');
+  } else {
+    msg = s.today + ' vouch' + (s.today === 1 ? '' : 'es') + ' today. Come back tomorrow to keep it going.';
+  }
+  const blocks = (s.days || []).map(function(w){
+    return '<div class="wk' + (w.active ? ' on' : '') + (w.current ? ' now' : '') +
+      '" title="' + w.label + ': ' + w.count + ' vouches"></div>';
+  }).join('');
+  const first = (s.days && s.days.length) ? s.days[0].label.slice(5) : '';
+  el.innerHTML =
+    '<div class="streak-top"><span class="streak-num">' + s.current + '</span>' +
+    '<span class="streak-word">day streak</span>' +
+    '<span class="streak-best">best ' + s.longest + ' | ' + s.total_days + ' active days</span></div>' +
+    '<div class="streak-msg' + (s.at_risk ? ' warn' : '') + '">' + msg + '</div>' +
+    '<div class="weeks">' + blocks + '</div>' +
+    '<div class="wk-labels"><span>' + first + '</span><span>today</span></div>';
+}
 
 function rivalsHTML(r){
   if(!r || (!r.above && !r.below)) return '';
@@ -1710,6 +1817,8 @@ async function load(){
       rivalsHTML(c.rivals) + goalsHTML(c) +
       '</div>';
   }).join('');
+
+  renderStreak(d.streak);
 
   const b = d.bests || {};
   document.getElementById('bests').innerHTML =
