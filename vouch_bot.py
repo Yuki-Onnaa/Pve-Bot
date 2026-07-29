@@ -654,6 +654,25 @@ async def update_role_for_user(guild, user_id, category, notify=True):
             return
 
     category_role_names = get_all_role_names(category, data)
+
+    # Host ranks are gated behind a required role. Points still accumulate either
+    # way, so the rank lands the moment someone is given the gate role.
+    if category == HOSTER_GATE_CATEGORY and HOSTER_GATE_ROLE_ID:
+        if not any(r.id == HOSTER_GATE_ROLE_ID for r in member.roles):
+            stale = [r for r in member.roles if r.name in category_role_names]
+            if stale:
+                try:
+                    await member.remove_roles(*stale, reason="Missing the required role for Host ranks")
+                    await log_audit(
+                        f"🔒 Removed {', '.join(r.name for r in stale)} from {member.mention} "
+                        f"(missing <@&{HOSTER_GATE_ROLE_ID}>)"
+                    )
+                except discord.Forbidden:
+                    print(f"[Roles] Missing permission to strip Host ranks from {member.id}")
+                except discord.HTTPException as e:
+                    print(f"[Roles] Could not strip Host ranks from {member.id}: {e}")
+            return
+
     roles_to_remove = [r for r in member.roles if r.name in category_role_names and r.name != achieved_role_name]
     role_to_add = discord.utils.get(guild.roles, name=achieved_role_name)
 
@@ -717,6 +736,11 @@ async def resync_all_roles():
 # The people handing out the most Host vouches get a role, kept in sync
 # automatically. Set TOP_VOUCHER_DAYS to 0 to rank on all time instead.
 # ─────────────────────────────────────────────────────────────
+
+# Host rank roles are only handed out to members holding this role.
+# Set HOSTER_GATE_ROLE_ID to 0 to turn the gate off.
+HOSTER_GATE_ROLE_ID = int(os.environ.get("HOSTER_GATE_ROLE_ID", "1528603062715813959"))
+HOSTER_GATE_CATEGORY = "pve"
 
 TOP_VOUCHER_ROLE = os.environ.get("TOP_VOUCHER_ROLE", "Top Voucher")
 TOP_VOUCHER_COUNT = int(os.environ.get("TOP_VOUCHER_COUNT", "2"))
@@ -1376,6 +1400,21 @@ async def event_ping_loop():
 @event_ping_loop.before_loop
 async def before_event_ping_loop():
     await bot.wait_until_ready()
+
+
+@bot.event
+async def on_member_update(before, after):
+    """Grant or strip Host ranks the moment the gate role changes hands."""
+    if not HOSTER_GATE_ROLE_ID:
+        return
+    had = any(r.id == HOSTER_GATE_ROLE_ID for r in before.roles)
+    has = any(r.id == HOSTER_GATE_ROLE_ID for r in after.roles)
+    if had == has:
+        return
+    try:
+        await update_role_for_user(after.guild, after.id, HOSTER_GATE_CATEGORY, notify=has)
+    except Exception as e:
+        print(f"[Roles] Gate role update failed for {after.id}: {e}")
 
 
 @bot.event
