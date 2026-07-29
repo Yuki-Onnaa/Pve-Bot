@@ -817,9 +817,13 @@ def api_givers():
     if days > 0:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
+    # Only Host vouches count towards this board.
+    category = request.args.get("category", "pve")
+    cats = ALL_CATEGORIES if category == "all" else [category if category in ALL_CATEGORIES else "pve"]
+
     givers = {}
     for uid, rec in user_records(load_data()):
-        for cat in ALL_CATEGORIES:
+        for cat in cats:
             for entry in (rec.get(cat) or {}).get("log", []):
                 when = entry.get("time", "")
                 if cutoff and when < cutoff:
@@ -865,6 +869,8 @@ def api_givers():
         "givers": rows[:200],
         "count": len(rows),
         "total_given": sum(r["given"] for r in rows),
+        "category": category,
+        "category_name": "all categories" if category == "all" else CATEGORY_NAMES.get(cats[0], "Host"),
     })
 
 
@@ -2291,8 +2297,8 @@ async function loadGivers(){
     GIVERS = d.givers || [];
     giversLoaded = true;
     document.getElementById('sub').textContent =
-      d.total_given + ' vouches handed out by ' + d.count + ' ' +
-      (d.count === 1 ? 'person' : 'people') + '.';
+      d.total_given + ' ' + (d.category_name || 'Host') + ' vouches handed out by ' +
+      d.count + ' ' + (d.count === 1 ? 'person' : 'people') + '.';
   } catch (e) {
     document.getElementById('list').innerHTML = '<div class="empty">Could not load vouchers.</div>';
     return;
@@ -2310,13 +2316,13 @@ function renderGivers(){
   const el = document.getElementById('list');
   if(!rows.length){
     el.innerHTML = '<div class="empty">' +
-      (q ? 'Nobody matches that search.' : 'No vouches have been given in this window.') + '</div>';
+      (q ? 'Nobody matches that search.' : 'No Host vouches have been given in this window.') + '</div>';
     return;
   }
   el.innerHTML = rows.map(function(g, i){
     const pic = g.avatar ? '<img alt="" src="' + g.avatar + '">'
                          : '<span class="ph">' + esc((g.name || '?').slice(0,1).toUpperCase()) + '</span>';
-    const sub = g.people + ' member' + (g.people === 1 ? '' : 's') + ' \u00b7 ' + fmt(g.points) + ' points issued';
+    const sub = g.people + ' hoster' + (g.people === 1 ? '' : 's') + ' \u00b7 ' + fmt(g.points) + ' points issued';
     const inner =
       '<span class="pos">#' + (i + 1) + '</span>' + pic +
       '<span class="who"><span class="nm">' + esc(g.name) +
@@ -3255,11 +3261,11 @@ async function loadGiverBoard(){
   const d = await api('/api/givers?days=' + days);
   giverBoard = d;
   if(!d || !d.givers || !d.givers.length){
-    wrap.innerHTML = '<div class="empty">No vouches have been given in this window.</div>';
+    wrap.innerHTML = '<div class="empty">No Host vouches have been given in this window.</div>';
     return;
   }
   wrap.innerHTML =
-    '<table><thead><tr><th>#</th><th>Voucher</th><th>Given</th><th>Members</th>' +
+    '<table><thead><tr><th>#</th><th>Voucher</th><th>Host vouches</th><th>Hosters</th>' +
     '<th>Points issued</th><th>Last</th></tr></thead><tbody>' +
     d.givers.map(function(g,i){
       const who = g.uid
