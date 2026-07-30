@@ -264,8 +264,11 @@ points them back to it instead of opening a duplicate.
 - `STAGE_PERMS_ROLE_NAME` (env var, default `Stage Perms`) — the exact role
   name to grant/revoke. Must already exist in the server, and the bot's role
   must sit above it.
-- `TICKET_CATEGORY_ID` (env var, optional) — category channel ID new ticket
-  channels are created under. Leave unset to create them with no category.
+- New ticket channels are created under the **Host Requests** category by
+  default (looked up by name — create a category with that exact name in
+  the server). Override the name with `TICKET_CATEGORY_NAME`, or pin an
+  exact category by ID with `TICKET_CATEGORY_ID`. If neither resolves to a
+  real category, the channel is created with no category.
 
 ## Persistent storage (important)
 

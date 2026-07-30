@@ -1367,6 +1367,7 @@ async def handle_chat_mention(message):
 # ─────────────────────────────────────────────────────────────
 
 TICKET_CATEGORY_ID = int(os.environ.get("TICKET_CATEGORY_ID", "0"))
+TICKET_CATEGORY_NAME = os.environ.get("TICKET_CATEGORY_NAME", "Host Requests")
 STAGE_PERMS_ROLE_NAME = os.environ.get("STAGE_PERMS_ROLE_NAME", "Stage Perms")
 HOST_REQUEST_TICKET_TYPE = "host_request"
 
@@ -1428,7 +1429,7 @@ async def create_ticket_channel(guild, opener, ticket_type, name_prefix):
 
     category = guild.get_channel(TICKET_CATEGORY_ID) if TICKET_CATEGORY_ID else None
     if not isinstance(category, discord.CategoryChannel):
-        category = None
+        category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
 
     safe_name = re.sub(r"[^a-z0-9-]", "", opener.display_name.lower().replace(" ", "-"))
     safe_name = safe_name[:20] or str(opener.id)
