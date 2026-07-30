@@ -13,6 +13,7 @@ from functools import wraps
 
 import urllib.error
 import urllib.request
+import discord
 from flask import Flask, Response, session, redirect, request, jsonify, render_template_string
 
 # ─────────────────────────────────────────────────────────────
@@ -329,16 +330,30 @@ async def _get_channel(channel_id):
     return channel
 
 
-async def _post_update_message(channel_id, content):
+def _build_update_embed(content, posted_by, posted_at):
+    embed = discord.Embed(
+        title="📢 Bot Update",
+        description=content,
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text=f"Posted by {posted_by}")
+    try:
+        embed.timestamp = datetime.fromisoformat(posted_at)
+    except (TypeError, ValueError):
+        pass
+    return embed
+
+
+async def _post_update_message(channel_id, content, posted_by, posted_at):
     channel = await _get_channel(channel_id)
-    message = await channel.send(content)
+    message = await channel.send(embed=_build_update_embed(content, posted_by, posted_at))
     return str(message.id)
 
 
-async def _edit_update_message(channel_id, message_id, content):
+async def _edit_update_message(channel_id, message_id, content, posted_by, posted_at):
     channel = await _get_channel(channel_id)
     message = await channel.fetch_message(int(message_id))
-    await message.edit(content=content)
+    await message.edit(embed=_build_update_embed(content, posted_by, posted_at))
 
 # ─────────────────────────────────────────────────────────────
 # DISCORD OAUTH2  (login with Discord, Administrator required)
@@ -1187,7 +1202,7 @@ def api_memories_delete(memory_id):
 
 # ── API: Bot updates (posted to the updates channel, editable after the fact) ──
 
-DISCORD_MESSAGE_LIMIT = 2000
+DISCORD_MESSAGE_LIMIT = 4096  # embed description limit
 
 @app.route("/api/updates", methods=["GET"])
 @admin_required
@@ -1211,9 +1226,11 @@ def api_updates_post():
     data = load_data()
     config = {**DEFAULT_CONFIG, **data.get("_config", {})}
     channel_id = int(config.get("updates_channel_id") or 0)
+    posted_by = session.get("user", {}).get("username", "dashboard")
+    posted_at = datetime.now(timezone.utc).isoformat()
 
     try:
-        future = run_on_bot(_post_update_message(channel_id, content))
+        future = run_on_bot(_post_update_message(channel_id, content, posted_by, posted_at))
         message_id = future.result(timeout=30)
     except Exception as exc:
         return jsonify({"error": f"Could not post to Discord: {exc}"}), 500
@@ -1223,8 +1240,8 @@ def api_updates_post():
         "channel_id": str(channel_id),
         "message_id": message_id,
         "content": content,
-        "posted_by": session.get("user", {}).get("username", "dashboard"),
-        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "posted_by": posted_by,
+        "posted_at": posted_at,
         "edited_at": None,
     }
     updates = data.get("_bot_updates", [])
@@ -1252,7 +1269,9 @@ def api_updates_edit(update_id):
         return jsonify({"error": "Bot isn't connected yet. Try again once it's online."}), 503
 
     try:
-        future = run_on_bot(_edit_update_message(int(record["channel_id"]), record["message_id"], content))
+        future = run_on_bot(_edit_update_message(
+            int(record["channel_id"]), record["message_id"], content,
+            record["posted_by"], record["posted_at"]))
         future.result(timeout=30)
     except Exception as exc:
         return jsonify({"error": f"Could not edit the Discord message: {exc}"}), 500
