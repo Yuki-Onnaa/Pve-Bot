@@ -1103,6 +1103,55 @@ def _squash(text):
     return re.sub(r"[^a-z0-9]", "", str(text).lower())
 
 
+# Fandom removed the TextExtracts API (prop=extracts) from its wikis, so plain
+# text has to be derived from the raw wikitext (prop=revisions) ourselves.
+_WIKI_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
+_WIKI_REF = re.compile(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>", re.IGNORECASE | re.DOTALL)
+_WIKI_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_WIKI_GALLERY = re.compile(r"<gallery.*?</gallery>", re.IGNORECASE | re.DOTALL)
+_WIKI_TAG = re.compile(r"<[^>]+>")
+_WIKI_FILE_LINK = re.compile(r"\[\[(?:File|Image):[^\]]*\]\]", re.IGNORECASE)
+_WIKI_LINK = re.compile(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]")
+_WIKI_EXTLINK = re.compile(r"\[https?://\S+\s+([^\]]*)\]")
+_WIKI_FILE_LINE = re.compile(r"^\s*\[*(File|Image):.*$", re.IGNORECASE | re.MULTILINE)
+
+
+def wikitext_to_plaintext(text):
+    """Strip MediaWiki markup down to readable prose the model can quote from."""
+    text = _WIKI_COMMENT.sub("", text)
+    text = _WIKI_GALLERY.sub("", text)
+    text = _WIKI_REF.sub("", text)
+    for _ in range(4):  # templates can nest a few levels (infoboxes, etc.)
+        text, changed = _WIKI_TEMPLATE.subn("", text)
+        if not changed:
+            break
+    text = _WIKI_FILE_LINK.sub("", text)
+    text = _WIKI_EXTLINK.sub(r"\1", text)
+    text = _WIKI_LINK.sub(r"\1", text)
+    text = _WIKI_FILE_LINE.sub("", text)
+    text = _WIKI_TAG.sub("", text)
+    text = re.sub(r"'''''|'''|''", "", text)
+    text = re.sub(r"^\s*={1,6}\s*|\s*={1,6}\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
+async def _wiki_page_text(session, title):
+    """Raw wikitext for a title, cleaned to plain prose. Empty string on failure."""
+    data = await _wiki_get(session, {
+        "action": "query", "prop": "revisions", "rvprop": "content",
+        "titles": title, "format": "json", "redirects": 1,
+    }, timeout=14)
+    if not data:
+        return ""
+    pages = data.get("query", {}).get("pages", {})
+    page = next(iter(pages.values()), {})
+    revisions = page.get("revisions") or []
+    raw = revisions[0].get("*", "") if revisions else ""
+    return wikitext_to_plaintext(raw) if raw else ""
+
+
 async def _wiki_search_titles(session, cleaned, raw_query):
     """Full text search, falling back to opensearch which is more forgiving."""
     data = await _wiki_get(session, {
@@ -1147,16 +1196,7 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
         for title in candidates:
             if len(results) >= max_sources:
                 break
-            data = await _wiki_get(session, {
-                "action": "query", "prop": "extracts", "explaintext": 1,
-                "titles": title, "format": "json", "redirects": 1,
-            }, timeout=14)
-            if not data:
-                continue
-
-            pages = data.get("query", {}).get("pages", {})
-            page = next(iter(pages.values()), {})
-            full_text = page.get("extract") or ""
+            full_text = await _wiki_page_text(session, title)
             if not full_text:
                 continue
 
@@ -1207,13 +1247,7 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
         # search found pages but none contained the term verbatim; the top hit is
         # still the best guess, so return its intro rather than nothing
         if not results and candidates:
-            data = await _wiki_get(session, {
-                "action": "query", "prop": "extracts", "explaintext": 1,
-                "titles": candidates[0], "format": "json", "redirects": 1,
-            }, timeout=14)
-            pages = (data or {}).get("query", {}).get("pages", {})
-            page = next(iter(pages.values()), {})
-            intro = (page.get("extract") or "").strip()
+            intro = await _wiki_page_text(session, candidates[0])
             if intro:
                 results.append({
                     "title": candidates[0],
