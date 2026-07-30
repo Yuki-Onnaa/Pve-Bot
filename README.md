@@ -210,14 +210,12 @@ Volume is set up — see below).
    - `NVIDIA_API_KEY` = the key you just generated
 4. Redeploy
 
-Uses `meta/llama-3.1-70b-instruct` by default — bigger and more capable
-than the original 49B Nemotron, and confirmed available on the free hosted
-endpoint (NVIDIA's 405B Llama model is currently listed as
-"download/self-host only" on their catalog and returns a 404 through the
-hosted API, so it's not usable here). You can override the model by setting
-an `NVIDIA_MODEL` variable to any model ID from the catalog at
-build.nvidia.com/models — just check the model's catalog page says it
-supports live API calls, not just download, before switching to it. The
+Uses `nvidia/llama3-chatqa-1.5-70b` by default — an NVIDIA-hosted chat model,
+picked because third-party catalog entries (Meta, Mistral, etc.) keep getting
+pulled from the free hosted API without notice and 404ing on every request
+once that happens. If that ever happens again, run `/aimodels` to see what's
+currently live for your account and set an `NVIDIA_MODEL` variable to one of
+the suggested IDs, or run `/aitest` to diagnose which step is failing. The
 free tier allows roughly 40 requests/minute.
 
 Note: chat memory is in-memory only, scoped per channel, and resets when

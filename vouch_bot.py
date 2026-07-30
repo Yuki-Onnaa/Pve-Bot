@@ -24,7 +24,7 @@ TOKEN = os.environ.get("DISCORD_TOKEN")
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY")
 NVIDIA_API_BASE = os.environ.get("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
 NVIDIA_API_URL = NVIDIA_API_BASE.rstrip("/") + "/chat/completions"
-NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "mistralai/mistral-small-3.1-24b-instruct-2503")
+NVIDIA_MODEL = os.environ.get("NVIDIA_MODEL", "nvidia/llama3-chatqa-1.5-70b")
 # Deepwoken Fandom wiki - used to ground chat answers in real info instead of guessing
 
 # Core behavior rules that apply no matter which persona is active
@@ -2644,7 +2644,9 @@ async def slash_ask(interaction: discord.Interaction, question: str):
 _CHAT_HINTS = ("instruct", "chat", "nemotron", "-it")
 _NOT_CHAT = ("bge", "embed", "rerank", "retriever", "starcoder", "codegen", "fuyu",
              "clip", "vila", "stable-diffusion", "sdxl", "riva", "parakeet", "whisper",
-             "molmo", "esm", "diffdock", "protein", "genmol", "ocr", "paddle", "nvclip")
+             "molmo", "esm", "diffdock", "protein", "genmol", "ocr", "paddle", "nvclip",
+             "reward", "parse", "-vl", "guard", "safety", "moderation", "judge",
+             "reranking", "asr", "tts")
 
 
 def pick_chat_models(ids, limit=12):
