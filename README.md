@@ -210,13 +210,17 @@ Volume is set up — see below).
    - `NVIDIA_API_KEY` = the key you just generated
 4. Redeploy
 
-Uses `nvidia/llama3-chatqa-1.5-70b` by default — an NVIDIA-hosted chat model,
-picked because third-party catalog entries (Meta, Mistral, etc.) keep getting
-pulled from the free hosted API without notice and 404ing on every request
-once that happens. If that ever happens again, run `/aimodels` to see what's
-currently live for your account and set an `NVIDIA_MODEL` variable to one of
-the suggested IDs, or run `/aitest` to diagnose which step is failing. The
-free tier allows roughly 40 requests/minute.
+Uses `nvidia/llama-3.3-nemotron-super-49b-v1.5` by default — NVIDIA's own
+actively-maintained "Nemotron Super" chat model, tuned for strong instruction
+following at a size that's still fast enough for a Discord bot. Picked over
+third-party (Meta, Mistral) entries because those keep getting pulled from
+the free hosted API without notice and 404ing on every request once that
+happens, and over NVIDIA's own frontier-scale models (Nemotron Ultra/340B+)
+since those are sometimes listed but restricted or too slow on the free
+tier. If it ever stops working, run `/aimodels` to see what's currently live
+for your account and set an `NVIDIA_MODEL` variable to one of the suggested
+IDs, or run `/aitest` to diagnose which step is failing. The free tier
+allows roughly 40 requests/minute.
 
 Note: chat memory is in-memory only, scoped per channel, and resets when
 the bot restarts — it doesn't persist to the vouch data file.
