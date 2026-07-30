@@ -2475,15 +2475,7 @@ async def syncvouches_error(ctx, error):
 @commands.has_permissions(manage_guild=True)
 async def ticketpanel_cmd(ctx):
     """Posts the ticket panel in this channel."""
-    embed = discord.Embed(
-        title="Open a Ticket",
-        description=(
-            "Click a button below to open a ticket.\n\n"
-            f"**Host Request** - opening this grants you the **{STAGE_PERMS_ROLE_NAME}** role for "
-            "your event. It's removed automatically once staff closes the ticket after you host."
-        ),
-        color=discord.Color.blurple(),
-    )
+    embed = discord.Embed(title="Host Request", color=discord.Color.blurple())
     await ctx.send(embed=embed, view=TicketPanelView())
 
 
@@ -2899,15 +2891,7 @@ async def slash_admin_error(interaction: discord.Interaction, error):
 @bot.tree.command(name="ticketpanel", description="Post the ticket panel in this channel (Manage Server only)")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def slash_ticketpanel(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="Open a Ticket",
-        description=(
-            "Click a button below to open a ticket.\n\n"
-            f"**Host Request** - opening this grants you the **{STAGE_PERMS_ROLE_NAME}** role for "
-            "your event. It's removed automatically once staff closes the ticket after you host."
-        ),
-        color=discord.Color.blurple(),
-    )
+    embed = discord.Embed(title="Host Request", color=discord.Color.blurple())
     await interaction.channel.send(embed=embed, view=TicketPanelView())
     await interaction.response.send_message("Panel posted.", ephemeral=True)
 
