@@ -2471,6 +2471,29 @@ async def syncvouches_error(ctx, error):
         await ctx.send(f"⚠️ Sync failed: {error}")
 
 
+@bot.command(name="ticketpanel")
+@commands.has_permissions(manage_guild=True)
+async def ticketpanel_cmd(ctx):
+    """Posts the ticket panel in this channel."""
+    embed = discord.Embed(
+        title="Open a Ticket",
+        description=(
+            "Click a button below to open a ticket.\n\n"
+            f"**Host Request** - opening this grants you the **{STAGE_PERMS_ROLE_NAME}** role for "
+            "your event. It's removed automatically once staff closes the ticket after you host."
+        ),
+        color=discord.Color.blurple(),
+    )
+    await ctx.send(embed=embed, view=TicketPanelView())
+
+
+@ticketpanel_cmd.error
+async def ticketpanel_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⚠️ You need Manage Server permission to post the ticket panel.")
+    else:
+        await ctx.send(f"⚠️ Couldn't post the ticket panel: {error}")
+
 
 # ─────────────────────────────────────────────────────────────
 # SLASH COMMANDS

@@ -249,7 +249,7 @@ To change the times, timezone, or channel, edit `EVENT_PING_SCHEDULE`,
 
 ## Tickets
 
-`/ticketpanel` (Manage Server only) posts a panel with an **Host Request**
+`?ticketpanel` / `/ticketpanel` (Manage Server only) posts a panel with a **Host Request**
 button in the current channel. Clicking it opens a private ticket channel
 (visible only to the opener and anyone with Manage Server) and immediately
 grants the opener the **Stage Perms** role. Staff closes the ticket with the
