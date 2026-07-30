@@ -247,6 +247,26 @@ logs a warning so you know to create the role.
 To change the times, timezone, or channel, edit `EVENT_PING_SCHEDULE`,
 `EVENT_PING_TZ`, and `EVENT_PING_CHANNEL_ID` near the top of `vouch_bot.py`.
 
+## Tickets
+
+`/ticketpanel` (Manage Server only) posts a panel with an **Host Request**
+button in the current channel. Clicking it opens a private ticket channel
+(visible only to the opener and anyone with Manage Server) and immediately
+grants the opener the **Stage Perms** role. Staff closes the ticket with the
+"Close Ticket (after host)" button in that channel, which removes Stage Perms
+from the opener and deletes the channel a few seconds later.
+
+Only the Host Request ticket type touches Stage Perms — any other ticket
+type added to the panel later would not grant or remove it. If someone
+already has an open Host Request ticket, clicking the button again just
+points them back to it instead of opening a duplicate.
+
+- `STAGE_PERMS_ROLE_NAME` (env var, default `Stage Perms`) — the exact role
+  name to grant/revoke. Must already exist in the server, and the bot's role
+  must sit above it.
+- `TICKET_CATEGORY_ID` (env var, optional) — category channel ID new ticket
+  channels are created under. Leave unset to create them with no category.
+
 ## Persistent storage (important)
 
 Railway wipes its normal filesystem on every redeploy. Attach a **Volume**

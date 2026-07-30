@@ -1361,6 +1361,168 @@ async def handle_chat_mention(message):
 
 
 # ─────────────────────────────────────────────────────────────
+# TICKETS
+# Only the Host Request ticket type grants/revokes the Stage Perms role.
+# Any other ticket type added later to the panel should NOT touch it.
+# ─────────────────────────────────────────────────────────────
+
+TICKET_CATEGORY_ID = int(os.environ.get("TICKET_CATEGORY_ID", "0"))
+STAGE_PERMS_ROLE_NAME = os.environ.get("STAGE_PERMS_ROLE_NAME", "Stage Perms")
+HOST_REQUEST_TICKET_TYPE = "host_request"
+
+
+def get_tickets(data=None):
+    data = load_data() if data is None else data
+    return data.get("_tickets", {})
+
+
+def save_ticket(channel_id, user_id, ticket_type):
+    data = load_data()
+    tickets = data.get("_tickets", {})
+    tickets[str(channel_id)] = {
+        "user_id": user_id,
+        "type": ticket_type,
+        "opened_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data["_tickets"] = tickets
+    save_data(data)
+
+
+def pop_ticket(channel_id):
+    data = load_data()
+    tickets = data.get("_tickets", {})
+    ticket = tickets.pop(str(channel_id), None)
+    data["_tickets"] = tickets
+    save_data(data)
+    return ticket
+
+
+def find_open_ticket_channel(guild, user_id, ticket_type):
+    for channel_id, info in get_tickets().items():
+        if info.get("user_id") == user_id and info.get("type") == ticket_type:
+            channel = guild.get_channel(int(channel_id))
+            if channel is not None:
+                return channel
+    return None
+
+
+def staff_ticket_roles(guild):
+    """Every role that can see/manage tickets - anyone with Manage Server."""
+    return [r for r in guild.roles if r.permissions.manage_guild]
+
+
+async def create_ticket_channel(guild, opener, ticket_type, name_prefix):
+    """Creates (or reuses) the ticket channel for this opener/type. Returns (channel, created)."""
+    existing = find_open_ticket_channel(guild, opener.id, ticket_type)
+    if existing is not None:
+        return existing, False
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        opener: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+    }
+    for role in staff_ticket_roles(guild):
+        overwrites[role] = discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True)
+
+    category = guild.get_channel(TICKET_CATEGORY_ID) if TICKET_CATEGORY_ID else None
+    if not isinstance(category, discord.CategoryChannel):
+        category = None
+
+    safe_name = re.sub(r"[^a-z0-9-]", "", opener.display_name.lower().replace(" ", "-"))
+    safe_name = safe_name[:20] or str(opener.id)
+    channel_name = f"{name_prefix}-{safe_name}"[:95]
+
+    channel = await guild.create_text_channel(
+        channel_name,
+        category=category,
+        overwrites=overwrites,
+        reason=f"Ticket opened by {opener}",
+    )
+    save_ticket(channel.id, opener.id, ticket_type)
+    return channel, True
+
+
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Host Request", style=discord.ButtonStyle.green,
+                        custom_id="ticket_panel_host_request", emoji="🎤")
+    async def open_host_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        channel, created = await create_ticket_channel(
+            guild, interaction.user, HOST_REQUEST_TICKET_TYPE, "host-request")
+
+        if created:
+            stage_role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
+            granted = False
+            if stage_role is not None and stage_role < guild.me.top_role:
+                try:
+                    await interaction.user.add_roles(stage_role, reason="Opened a Host Request ticket")
+                    granted = True
+                except discord.Forbidden:
+                    pass
+
+            note = (f"You've been given **{STAGE_PERMS_ROLE_NAME}** for this session - it's removed "
+                     f"once staff closes this ticket after you host.") if granted else (
+                     f"⚠️ Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and the "
+                     f"bot's role sits above it.")
+            embed = discord.Embed(
+                title="Host Request",
+                description=f"{interaction.user.mention} opened a Host Request ticket.\n{note}",
+                color=discord.Color.green(),
+            )
+            await channel.send(content=interaction.user.mention, embed=embed, view=HostTicketCloseView())
+            await log_audit(
+                f"🎫 {interaction.user.mention} opened a Host Request ticket ({channel.mention})"
+                + (f" - granted **{STAGE_PERMS_ROLE_NAME}**." if granted else "."))
+
+        await interaction.followup.send(f"Your ticket: {channel.mention}", ephemeral=True)
+
+
+class HostTicketCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Close Ticket (after host)", style=discord.ButtonStyle.red,
+                        custom_id="ticket_close_host_request")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message(
+                "Only staff (Manage Server) can close this ticket.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        guild = interaction.guild
+        ticket = pop_ticket(interaction.channel.id)
+
+        if ticket:
+            stage_role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
+            member = guild.get_member(ticket["user_id"])
+            removed = False
+            if stage_role is not None and member is not None and stage_role in member.roles:
+                try:
+                    await member.remove_roles(stage_role, reason="Host Request ticket closed")
+                    removed = True
+                except discord.Forbidden:
+                    pass
+            await log_audit(
+                f"🎫 Host Request ticket closed by {interaction.user.mention}"
+                + (f" - removed **{STAGE_PERMS_ROLE_NAME}** from <@{ticket['user_id']}>."
+                   if removed else f" for <@{ticket['user_id']}>."))
+
+        await interaction.channel.send("🔒 Closing this ticket in 5 seconds...")
+        await asyncio.sleep(5)
+        try:
+            await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
+        except discord.HTTPException:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
 
@@ -1445,6 +1607,9 @@ async def on_ready():
     if not warn_expiring_streaks.is_running():
         warn_expiring_streaks.start()
         print(f"[Streak] Daily warnings scheduled for {STREAK_WARNING_HOUR:02d}:00 UTC")
+
+    bot.add_view(TicketPanelView())
+    bot.add_view(HostTicketCloseView())
 
     try:
         synced = await bot.tree.sync()
@@ -2698,6 +2863,35 @@ async def slash_resyncroles(interaction: discord.Interaction):
 async def slash_admin_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You need the Administrator permission to use that."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="ticketpanel", description="Post the ticket panel in this channel (Manage Server only)")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def slash_ticketpanel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Open a Ticket",
+        description=(
+            "Click a button below to open a ticket.\n\n"
+            f"**Host Request** - opening this grants you the **{STAGE_PERMS_ROLE_NAME}** role for "
+            "your event. It's removed automatically once staff closes the ticket after you host."
+        ),
+        color=discord.Color.blurple(),
+    )
+    await interaction.channel.send(embed=embed, view=TicketPanelView())
+    await interaction.response.send_message("Panel posted.", ephemeral=True)
+
+
+@slash_ticketpanel.error
+async def slash_ticketpanel_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Manage Server permission to use that."
     else:
         msg = "Something went wrong running that command."
         print(f"[Slash] Error: {error}")
