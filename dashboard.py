@@ -97,6 +97,7 @@ DEFAULT_CONFIG = {
     "audit_log_channel_id": 1530317395669815438,
     "event_ping_channel_id": 1529142467658649640,
     "chime_in_channel_id": 1478405937080307806,
+    "updates_channel_id": 1532474881915097118,
 }
 
 DEFAULT_EVENT_SCHEDULE = {
@@ -318,6 +319,26 @@ def run_on_bot(coro):
         return None
     import asyncio
     return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
+async def _get_channel(channel_id):
+    bot = _bridge["bot"]
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        channel = await bot.fetch_channel(channel_id)
+    return channel
+
+
+async def _post_update_message(channel_id, content):
+    channel = await _get_channel(channel_id)
+    message = await channel.send(content)
+    return str(message.id)
+
+
+async def _edit_update_message(channel_id, message_id, content):
+    channel = await _get_channel(channel_id)
+    message = await channel.fetch_message(int(message_id))
+    await message.edit(content=content)
 
 # ─────────────────────────────────────────────────────────────
 # DISCORD OAUTH2  (login with Discord, Administrator required)
@@ -1164,6 +1185,84 @@ def api_memories_delete(memory_id):
     save_data(data)
     return jsonify({"ok": True})
 
+# ── API: Bot updates (posted to the updates channel, editable after the fact) ──
+
+DISCORD_MESSAGE_LIMIT = 2000
+
+@app.route("/api/updates", methods=["GET"])
+@admin_required
+def api_updates_get():
+    data = load_data()
+    updates = sorted(data.get("_bot_updates", []), key=lambda u: u.get("posted_at", ""), reverse=True)
+    return jsonify(updates)
+
+@app.route("/api/updates", methods=["POST"])
+@admin_required
+def api_updates_post():
+    body = request.json or {}
+    content = (body.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "Message text is required."}), 400
+    if len(content) > DISCORD_MESSAGE_LIMIT:
+        return jsonify({"error": f"Message is too long ({DISCORD_MESSAGE_LIMIT} character limit)."}), 400
+    if _bridge.get("bot") is None or _bridge.get("loop") is None:
+        return jsonify({"error": "Bot isn't connected yet. Try again once it's online."}), 503
+
+    data = load_data()
+    config = {**DEFAULT_CONFIG, **data.get("_config", {})}
+    channel_id = int(config.get("updates_channel_id") or 0)
+
+    try:
+        future = run_on_bot(_post_update_message(channel_id, content))
+        message_id = future.result(timeout=30)
+    except Exception as exc:
+        return jsonify({"error": f"Could not post to Discord: {exc}"}), 500
+
+    record = {
+        "id": uuid.uuid4().hex[:8],
+        "channel_id": str(channel_id),
+        "message_id": message_id,
+        "content": content,
+        "posted_by": session.get("user", {}).get("username", "dashboard"),
+        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "edited_at": None,
+    }
+    updates = data.get("_bot_updates", [])
+    updates.append(record)
+    data["_bot_updates"] = updates[-200:]
+    save_data(data)
+    return jsonify({"ok": True, "update": record})
+
+@app.route("/api/updates/<update_id>", methods=["POST"])
+@admin_required
+def api_updates_edit(update_id):
+    body = request.json or {}
+    content = (body.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "Message text is required."}), 400
+    if len(content) > DISCORD_MESSAGE_LIMIT:
+        return jsonify({"error": f"Message is too long ({DISCORD_MESSAGE_LIMIT} character limit)."}), 400
+
+    data = load_data()
+    updates = data.get("_bot_updates", [])
+    record = next((u for u in updates if u["id"] == update_id), None)
+    if record is None:
+        return jsonify({"error": "Not found"}), 404
+    if _bridge.get("bot") is None or _bridge.get("loop") is None:
+        return jsonify({"error": "Bot isn't connected yet. Try again once it's online."}), 503
+
+    try:
+        future = run_on_bot(_edit_update_message(int(record["channel_id"]), record["message_id"], content))
+        future.result(timeout=30)
+    except Exception as exc:
+        return jsonify({"error": f"Could not edit the Discord message: {exc}"}), 500
+
+    record["content"] = content
+    record["edited_at"] = datetime.now(timezone.utc).isoformat()
+    data["_bot_updates"] = updates
+    save_data(data)
+    return jsonify({"ok": True, "update": record})
+
 # ── API: Settings ──
 
 @app.route("/api/settings", methods=["GET"])
@@ -1194,7 +1293,7 @@ def api_settings_update():
     channel_keys = [
         "pve_channel_id", "security_channel_id", "support_channel_id",
         "live_leaderboard_channel_id", "audit_log_channel_id",
-        "event_ping_channel_id", "chime_in_channel_id",
+        "event_ping_channel_id", "chime_in_channel_id", "updates_channel_id",
     ]
     for key in channel_keys:
         if key in body:
@@ -2701,6 +2800,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
     <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
     <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
+    <div class="nav-item" data-sec="updates" onclick="showSection('updates',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg> Updates</div>
     <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
   </nav>
   <div class="drawer-foot">
@@ -2944,6 +3044,20 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <section id="sec-events" class="section">
     <div class="section-head"><h2>Event schedule</h2></div>
     <div id="events-content"><div class="empty">Loading…</div></div>
+  </section>
+
+  <!-- UPDATES -->
+  <section id="sec-updates" class="section">
+    <div class="section-head"><h2>Bot updates</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Post an update</div>
+      <div class="form-group">
+        <textarea id="new-update-text" rows="4" placeholder="What changed?"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="postUpdate()">Post to Discord</button>
+      <div id="update-post-result" style="margin-top:12px"></div>
+    </div>
+    <div class="card"><div id="updates-list"><div class="empty">Loading…</div></div></div>
   </section>
 
   <!-- SITE ACTIVITY -->
@@ -3199,6 +3313,7 @@ function showSection(name, el){
   if(name==='audit') loadAudit();
   if(name==='memories') loadMemories();
   if(name==='events') loadEvents();
+  if(name==='updates') loadUpdates();
   if(name==='settings') loadSettings();
   if(name==='users') loadUsers();
   if(name==='overview'){loadStatus();loadChart();}
@@ -3445,6 +3560,52 @@ async function loadEvents(){
     '<div class="card-title" style="margin:0">'+esc(event)+'</div>'+
     '<span class="mono">'+times.length+' times</span></div>'+
     '<div class="times-grid">'+times.map(t=>'<span class="time-chip">'+t+'</span>').join('')+'</div></div>').join('');
+}
+
+// ── Bot updates ──
+function fmtUpdateTime(iso){
+  return (iso||'').substring(0,16).replace('T',' ');
+}
+async function loadUpdates(){
+  const data = await api('/api/updates');
+  const el = document.getElementById('updates-list');
+  if(!data.length){el.innerHTML='<div class="empty">No updates posted yet.</div>';return;}
+  el.innerHTML = data.map(u=>
+    '<div class="memory-item" style="align-items:flex-start;flex-direction:column;gap:8px">'+
+      '<div style="width:100%;display:flex;justify-content:space-between;gap:12px;align-items:flex-start">'+
+        '<div style="flex:1"><div class="text" style="white-space:pre-wrap">'+esc(u.content)+'</div>'+
+        '<div class="id">Posted by '+esc(u.posted_by)+' \u00b7 '+fmtUpdateTime(u.posted_at)+
+        (u.edited_at ? ' \u00b7 edited '+fmtUpdateTime(u.edited_at) : '')+'</div></div>'+
+        '<button class="btn btn-ghost btn-sm" onclick="toggleEditUpdate(\\''+u.id+'\\')">Edit</button>'+
+      '</div>'+
+      '<div id="update-edit-'+u.id+'" style="display:none;width:100%">'+
+        '<textarea id="update-edit-text-'+u.id+'" rows="4" style="width:100%">'+esc(u.content)+'</textarea>'+
+        '<div style="margin-top:8px;display:flex;gap:8px">'+
+          '<button class="btn btn-primary btn-sm" onclick="saveUpdate(\\''+u.id+'\\')">Save changes</button>'+
+          '<button class="btn btn-ghost btn-sm" onclick="toggleEditUpdate(\\''+u.id+'\\')">Cancel</button>'+
+        '</div>'+
+        '<div id="update-edit-result-'+u.id+'"></div>'+
+      '</div>'+
+    '</div>'
+  ).join('');
+}
+function toggleEditUpdate(id){
+  const box = document.getElementById('update-edit-'+id);
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+async function postUpdate(){
+  const text = document.getElementById('new-update-text').value.trim();
+  if(!text) return;
+  const r = await api('/api/updates',{method:'POST',body:JSON.stringify({content:text})});
+  showAlert(document.getElementById('update-post-result'), r.ok?'Posted to Discord.':(r.error||'Could not post.'), r.ok?'success':'err');
+  if(r.ok){document.getElementById('new-update-text').value='';loadUpdates();}
+}
+async function saveUpdate(id){
+  const text = document.getElementById('update-edit-text-'+id).value.trim();
+  if(!text) return;
+  const r = await api('/api/updates/'+id,{method:'POST',body:JSON.stringify({content:text})});
+  showAlert(document.getElementById('update-edit-result-'+id), r.ok?'Message updated on Discord.':(r.error||'Could not save.'), r.ok?'success':'err');
+  if(r.ok) loadUpdates();
 }
 
 // ── Site activity ──
