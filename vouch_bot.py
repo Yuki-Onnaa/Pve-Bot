@@ -1527,7 +1527,12 @@ class TicketPanelView(discord.ui.View):
                 description=f"{interaction.user.mention} opened a Host Request ticket.\n{note}",
                 color=discord.Color.green(),
             )
-            await channel.send(content=interaction.user.mention, embed=embed, view=HostTicketCloseView())
+            mod_role_names = set(get_ticket_mod_role_names())
+            mod_roles = [r for r in guild.roles if r.name in mod_role_names]
+            ping = " ".join([interaction.user.mention] + [r.mention for r in mod_roles])
+            await channel.send(
+                content=ping, embed=embed, view=HostTicketCloseView(),
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True))
             await log_audit(
                 f"🎫 {interaction.user.mention} opened a Host Request ticket ({channel.mention})"
                 + (f" - granted **{STAGE_PERMS_ROLE_NAME}**." if granted else "."))
