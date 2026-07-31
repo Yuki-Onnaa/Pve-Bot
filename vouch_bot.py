@@ -1580,6 +1580,30 @@ class HostTicketCloseView(discord.ui.View):
 
 
 # ─────────────────────────────────────────────────────────────
+# HOST EVENT ANNOUNCEMENTS (/host)
+# ─────────────────────────────────────────────────────────────
+
+HOST_ANNOUNCE_CHANNEL_ID = int(os.environ.get("HOST_ANNOUNCE_CHANNEL_ID", "1527833921071616110"))
+
+# Region keyword -> support role name. Word-boundary matched against the
+# free-text region field, so "EU NA doesn't matter" pings both EU and NA.
+REGION_SUPPORT_ROLES = [
+    (re.compile(r"\beu\b|\beurope\b", re.IGNORECASE), "SUPPORT (EU)"),
+    (re.compile(r"\bna\b|\bnorth america\b", re.IGNORECASE), "SUPPORT (NA)"),
+    (re.compile(r"\basia\b", re.IGNORECASE), "SUPPORT (ASIA)"),
+]
+
+
+def support_roles_for_region(guild, region_text):
+    """Support roles to ping for a region string. No recognizable region -> ping all of them."""
+    matched_names = {name for pattern, name in REGION_SUPPORT_ROLES if pattern.search(region_text)}
+    if not matched_names:
+        matched_names = {name for _, name in REGION_SUPPORT_ROLES}
+    roles = [discord.utils.get(guild.roles, name=name) for name in matched_names]
+    return [r for r in roles if r is not None]
+
+
+# ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
 
@@ -2966,6 +2990,58 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
     else:
         await interaction.response.send_message(msg, ephemeral=True)
 
+
+@bot.tree.command(name="host", description="Announce a hosted event - pings the right support roles")
+@app_commands.describe(
+    event="Event type (e.g. Hellmode)",
+    region="Region(s) this is for - e.g. EU, NA, Asia, or doesn't matter",
+    co_host="Who's co-hosting with you",
+    stage="Which stage/location for this event",
+    notes="Anything hosts should know - channel mentions work",
+)
+async def slash_host(interaction: discord.Interaction, event: str, region: str,
+                      co_host: discord.Member, stage: str, notes: str):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    stage_role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
+    has_stage_perms = stage_role is not None and stage_role in interaction.user.roles
+    if not has_stage_perms and not is_ticket_staff(interaction.user):
+        await interaction.response.send_message(
+            f"You need the **{STAGE_PERMS_ROLE_NAME}** role to host an event - open a Host Request ticket first.",
+            ephemeral=True)
+        return
+
+    channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
+    if channel is None:
+        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    event_role = discord.utils.get(guild.roles, name=event)
+    event_display = event_role.mention if event_role else f"**{event}**"
+
+    support_roles = support_roles_for_region(guild, region)
+    role_ping = " ".join(r.mention for r in support_roles)
+
+    message = (
+        f"{role_ping}\n"
+        f"**Event Host:** {interaction.user.mention}\n"
+        f"**Co Host:** {co_host.mention}\n"
+        f"**Region:** {region}\n"
+        f"**Event Type:** {event_display}\n"
+        f"**Stage:** {stage}\n"
+        f"**Notes:** {notes}\n"
+        f"**vouches:** vouch {interaction.user.mention} {co_host.mention} {event.lower()}"
+    )
+    await channel.send(
+        content=message,
+        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+    )
+    await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
+    await log_audit(
+        f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")
 
 
 if __name__ == "__main__":
