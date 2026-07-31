@@ -1603,6 +1603,21 @@ def support_roles_for_region(guild, region_text):
     return [r for r in roles if r is not None]
 
 
+def build_host_embed(host, co_host, region, event, event_display, stage, notes, test=False):
+    embed = discord.Embed(
+        title="🧪 TEST - Host Announcement" if test else "📣 Host Announcement",
+        color=discord.Color.orange() if test else discord.Color.blurple(),
+    )
+    embed.add_field(name="Event Host", value=host.mention, inline=True)
+    embed.add_field(name="Co Host", value=co_host.mention, inline=True)
+    embed.add_field(name="Region", value=region, inline=True)
+    embed.add_field(name="Event Type", value=event_display, inline=True)
+    embed.add_field(name="Stage", value=stage, inline=True)
+    embed.add_field(name="Notes", value=notes, inline=False)
+    embed.add_field(name="Vouches", value=f"vouch {host.mention} {co_host.mention} {event.lower()}", inline=False)
+    return embed
+
+
 # ─────────────────────────────────────────────────────────────
 # BOT
 # ─────────────────────────────────────────────────────────────
@@ -3023,25 +3038,70 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     event_display = event_role.mention if event_role else f"**{event}**"
 
     support_roles = support_roles_for_region(guild, region)
-    role_ping = " ".join(r.mention for r in support_roles)
+    ping_parts = [interaction.user.mention, co_host.mention] + [r.mention for r in support_roles]
+    if event_role:
+        ping_parts.append(event_role.mention)
 
-    message = (
-        f"{role_ping}\n"
-        f"**Event Host:** {interaction.user.mention}\n"
-        f"**Co Host:** {co_host.mention}\n"
-        f"**Region:** {region}\n"
-        f"**Event Type:** {event_display}\n"
-        f"**Stage:** {stage}\n"
-        f"**Notes:** {notes}\n"
-        f"**vouches:** vouch {interaction.user.mention} {co_host.mention} {event.lower()}"
-    )
+    embed = build_host_embed(interaction.user, co_host, region, event, event_display, stage, notes)
     await channel.send(
-        content=message,
+        content=" ".join(ping_parts), embed=embed,
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     await log_audit(
         f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")
+
+
+@bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
+@app_commands.describe(event="Event name to test the role lookup with (optional)")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Event"):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
+    if channel is None:
+        await interaction.response.send_message(
+            f"Couldn't find the events channel (ID `{HOST_ANNOUNCE_CHANNEL_ID}`).", ephemeral=True)
+        return
+
+    region = "EU NA Asia - test post, pings everyone"
+    event_role = discord.utils.get(guild.roles, name=event)
+    event_display = event_role.mention if event_role else f"**{event}** (no matching role found)"
+    support_roles = support_roles_for_region(guild, region)
+
+    ping_parts = [interaction.user.mention] + [r.mention for r in support_roles]
+    if event_role:
+        ping_parts.append(event_role.mention)
+
+    embed = build_host_embed(
+        interaction.user, interaction.user, region, event, event_display,
+        "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
+    await channel.send(
+        content=" ".join(ping_parts), embed=embed,
+        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+    )
+    await interaction.response.send_message(
+        f"Test posted in {channel.mention}. Pinged: "
+        + ", ".join(r.name for r in support_roles)
+        + (f", **{event_role.name}**" if event_role else f" (no role found named '{event}')"),
+        ephemeral=True,
+    )
+
+
+@slash_hosttest.error
+async def slash_hosttest_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Manage Server permission to use that."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
 if __name__ == "__main__":
