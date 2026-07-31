@@ -3067,24 +3067,17 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
             f"Couldn't find the events channel (ID `{HOST_ANNOUNCE_CHANNEL_ID}`).", ephemeral=True)
         return
 
-    region = "EU NA Asia - test post, pings everyone"
+    region = "EU NA Asia - test post, matches all regions"
     event_role = discord.utils.get(guild.roles, name=event)
     event_display = event_role.mention if event_role else f"**{event}** (no matching role found)"
     support_roles = support_roles_for_region(guild, region)
 
-    ping_parts = [interaction.user.mention] + [r.mention for r in support_roles]
-    if event_role:
-        ping_parts.append(event_role.mention)
-
     embed = build_host_embed(
         interaction.user, interaction.user, region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
-    await channel.send(
-        content=" ".join(ping_parts), embed=embed,
-        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
-    )
+    await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
     await interaction.response.send_message(
-        f"Test posted in {channel.mention}. Pinged: "
+        f"Test posted in {channel.mention} (nobody was pinged). Would ping: "
         + ", ".join(r.name for r in support_roles)
         + (f", **{event_role.name}**" if event_role else f" (no role found named '{event}')"),
         ephemeral=True,
