@@ -1200,6 +1200,42 @@ def api_memories_delete(memory_id):
     save_data(data)
     return jsonify({"ok": True})
 
+# ── API: Ticket mods (roles granted ticket access, on top of Manage Server) ──
+
+@app.route("/api/ticket_mods", methods=["GET"])
+@admin_required
+def api_ticket_mods_get():
+    data = load_data()
+    return jsonify(data.get("_ticket_mod_roles", []))
+
+@app.route("/api/ticket_mods", methods=["POST"])
+@admin_required
+def api_ticket_mods_add():
+    body = request.json or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Role name is required."}), 400
+    data = load_data()
+    roles = data.get("_ticket_mod_roles", [])
+    if any(r["name"].lower() == name.lower() for r in roles):
+        return jsonify({"error": "That role is already a ticket mod."}), 400
+    roles.append({"id": uuid.uuid4().hex[:8], "name": name})
+    data["_ticket_mod_roles"] = roles
+    save_data(data)
+    return jsonify({"ok": True})
+
+@app.route("/api/ticket_mods/<mod_id>", methods=["DELETE"])
+@admin_required
+def api_ticket_mods_delete(mod_id):
+    data = load_data()
+    roles = data.get("_ticket_mod_roles", [])
+    new_roles = [r for r in roles if r["id"] != mod_id]
+    if len(new_roles) == len(roles):
+        return jsonify({"error": "Not found"}), 404
+    data["_ticket_mod_roles"] = new_roles
+    save_data(data)
+    return jsonify({"ok": True})
+
 # ── API: Bot updates (posted to the updates channel, editable after the fact) ──
 
 DISCORD_MESSAGE_LIMIT = 4096  # embed description limit
@@ -2820,6 +2856,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
     <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
     <div class="nav-item" data-sec="updates" onclick="showSection('updates',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg> Updates</div>
+    <div class="nav-item" data-sec="ticketmods" onclick="showSection('ticketmods',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 0 0 1.946-.806 3.42 3.42 0 0 1 4.438 0 3.42 3.42 0 0 0 1.946.806 3.42 3.42 0 0 1 3.138 3.138 3.42 3.42 0 0 0 .806 1.946 3.42 3.42 0 0 1 0 4.438 3.42 3.42 0 0 0-.806 1.946 3.42 3.42 0 0 1-3.138 3.138 3.42 3.42 0 0 0-1.946.806 3.42 3.42 0 0 1-4.438 0 3.42 3.42 0 0 0-1.946-.806 3.42 3.42 0 0 1-3.138-3.138 3.42 3.42 0 0 0-.806-1.946 3.42 3.42 0 0 1 0-4.438 3.42 3.42 0 0 0 .806-1.946 3.42 3.42 0 0 1 3.138-3.138z"/></svg> Ticket mods</div>
     <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
   </nav>
   <div class="drawer-foot">
@@ -3079,6 +3116,24 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="card"><div id="updates-list"><div class="empty">Loading…</div></div></div>
   </section>
 
+  <!-- TICKET MODS -->
+  <section id="sec-ticketmods" class="section">
+    <div class="section-head"><h2>Ticket mods</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Add a ticket mod role</div>
+      <div class="form-group"><label>Exact role name</label>
+        <input type="text" id="new-ticketmod-name" placeholder="e.g. Ticket Support" maxlength="100">
+      </div>
+      <button class="btn btn-primary" onclick="addTicketMod()">Add role</button>
+      <div id="ticketmod-result" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Roles with ticket access</div>
+      <div class="eco-note">Anyone with Manage Server always has ticket access. Roles added here get it too, without needing full admin. Role names must match your Discord roles exactly.</div>
+      <div id="ticketmods-list"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
   <!-- SITE ACTIVITY -->
   <section id="sec-activity" class="section">
     <div class="section-head">
@@ -3333,6 +3388,7 @@ function showSection(name, el){
   if(name==='memories') loadMemories();
   if(name==='events') loadEvents();
   if(name==='updates') loadUpdates();
+  if(name==='ticketmods') loadTicketMods();
   if(name==='settings') loadSettings();
   if(name==='users') loadUsers();
   if(name==='overview'){loadStatus();loadChart();}
@@ -3625,6 +3681,27 @@ async function saveUpdate(id){
   const r = await api('/api/updates/'+id,{method:'POST',body:JSON.stringify({content:text})});
   showAlert(document.getElementById('update-edit-result-'+id), r.ok?'Message updated on Discord.':(r.error||'Could not save.'), r.ok?'success':'err');
   if(r.ok) loadUpdates();
+}
+
+// ── Ticket mods ──
+async function loadTicketMods(){
+  const data = await api('/api/ticket_mods');
+  const el = document.getElementById('ticketmods-list');
+  if(!data.length){el.innerHTML='<div class="empty">No ticket mod roles added yet.</div>';return;}
+  el.innerHTML = data.map(m=>'<div class="memory-item"><div style="flex:1"><div class="text">'+esc(m.name)+
+    '</div></div><button class="btn btn-danger btn-sm" onclick="deleteTicketMod(\\''+m.id+'\\')">Remove</button></div>').join('');
+}
+async function addTicketMod(){
+  const name = document.getElementById('new-ticketmod-name').value.trim();
+  if(!name) return;
+  const r = await api('/api/ticket_mods',{method:'POST',body:JSON.stringify({name})});
+  showAlert(document.getElementById('ticketmod-result'), r.ok?'Role added.':(r.error||'Could not add.'), r.ok?'success':'err');
+  if(r.ok){document.getElementById('new-ticketmod-name').value='';loadTicketMods();}
+}
+async function deleteTicketMod(id){
+  if(!confirm('Remove this role from ticket mods?')) return;
+  await api('/api/ticket_mods/'+id,{method:'DELETE'});
+  loadTicketMods();
 }
 
 // ── Site activity ──

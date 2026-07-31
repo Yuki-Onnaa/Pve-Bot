@@ -1441,9 +1441,24 @@ def find_open_ticket_channel(guild, user_id, ticket_type):
     return None
 
 
+def get_ticket_mod_role_names(data=None):
+    """Role names granted ticket access from the dashboard, on top of Manage Server."""
+    data = load_data() if data is None else data
+    return [r.get("name") for r in data.get("_ticket_mod_roles", []) if r.get("name")]
+
+
 def staff_ticket_roles(guild):
-    """Every role that can see/manage tickets - anyone with Manage Server."""
-    return [r for r in guild.roles if r.permissions.manage_guild]
+    """Every role that can see/manage tickets - Manage Server holders plus configured ticket mods."""
+    mod_names = set(get_ticket_mod_role_names())
+    return [r for r in guild.roles if r.permissions.manage_guild or r.name in mod_names]
+
+
+def is_ticket_staff(member):
+    """Whether this member can manage tickets - Manage Server, or a configured ticket mod role."""
+    if member.guild_permissions.manage_guild:
+        return True
+    mod_names = set(get_ticket_mod_role_names())
+    return any(r.name in mod_names for r in member.roles)
 
 
 async def create_ticket_channel(guild, opener, ticket_type, name_prefix):
@@ -1525,9 +1540,9 @@ class HostTicketCloseView(discord.ui.View):
     @discord.ui.button(label="Close Ticket (after host)", style=discord.ButtonStyle.red,
                         custom_id="ticket_close_host_request")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.manage_guild:
+        if not is_ticket_staff(interaction.user):
             await interaction.response.send_message(
-                "Only staff (Manage Server) can close this ticket.", ephemeral=True)
+                "Only ticket staff can close this ticket.", ephemeral=True)
             return
 
         await interaction.response.defer()
