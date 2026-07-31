@@ -552,6 +552,19 @@ def api_profile():
     return jsonify(build_profile(str(session["user"]["id"]), own=True))
 
 
+@app.route("/api/profile/streak_pref", methods=["POST"])
+@member_required
+def api_profile_streak_pref():
+    body = request.json or {}
+    opted_out = bool(body.get("opted_out"))
+    uid = str(session["user"]["id"])
+    data = load_data()
+    record = data.setdefault(uid, {})
+    record["streak_dm_opt_out"] = opted_out
+    save_data(data)
+    return jsonify({"ok": True, "opted_out": opted_out})
+
+
 @app.route("/api/profile/<uid>")
 @member_required
 def api_member_profile(uid):
@@ -693,6 +706,7 @@ def build_profile(uid, own=True):
         "has_data": bool(record),
         "chart": {"labels": labels, "series": series},
         "streak": streak_stats(record),
+        "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")) if own else None,
         "bests": {
             "best_day": {"date": best_day[0], "points": round(best_day[1], 1)} if best_day else None,
             "active_days": active_days,
@@ -2053,7 +2067,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
 
-function renderStreak(s){
+function renderStreak(s, dmOptedOut){
   const el = document.getElementById('streak');
   if(!s){ el.style.display = 'none'; return; }
   let msg;
@@ -2072,13 +2086,34 @@ function renderStreak(s){
       '" title="' + w.label + ': ' + w.count + ' vouches"></div>';
   }).join('');
   const first = (s.days && s.days.length) ? s.days[0].label.slice(5) : '';
+  const dmBtn = VIEWING ? '' :
+    '<button class="btn" id="streak-dm-btn" style="margin-top:14px" onclick="toggleStreakDm()">' +
+    (dmOptedOut ? 'Enable streak reminder DMs' : 'Disable streak reminder DMs') + '</button>';
   el.innerHTML =
     '<div class="streak-top"><span class="streak-num">' + s.current + '</span>' +
     '<span class="streak-word">day streak</span>' +
     '<span class="streak-best">best ' + s.longest + ' | ' + s.total_days + ' active days</span></div>' +
     '<div class="streak-msg' + (s.at_risk ? ' warn' : '') + '">' + msg + '</div>' +
     '<div class="weeks">' + blocks + '</div>' +
-    '<div class="wk-labels"><span>' + first + '</span><span>today</span></div>';
+    '<div class="wk-labels"><span>' + first + '</span><span>today</span></div>' +
+    dmBtn;
+  el.dataset.dmOptedOut = dmOptedOut ? '1' : '0';
+}
+
+async function toggleStreakDm(){
+  const el = document.getElementById('streak');
+  const next = el.dataset.dmOptedOut !== '1';
+  const r = await fetch('/api/profile/streak_pref', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({opted_out: next}),
+  });
+  if(r.status === 401){window.location.href = '/login'; return;}
+  const d = await r.json();
+  if(d.ok){
+    el.dataset.dmOptedOut = d.opted_out ? '1' : '0';
+    document.getElementById('streak-dm-btn').textContent =
+      d.opted_out ? 'Enable streak reminder DMs' : 'Disable streak reminder DMs';
+  }
 }
 
 function rivalsHTML(r){
@@ -2162,7 +2197,7 @@ async function load(){
       '</div>';
   }).join('');
 
-  renderStreak(d.streak);
+  renderStreak(d.streak, d.streak_dm_opt_out);
 
   const b = d.bests || {};
   document.getElementById('bests').innerHTML =

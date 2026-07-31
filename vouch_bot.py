@@ -871,6 +871,8 @@ async def warn_expiring_streaks():
     for uid, record in list(data.items()):
         if not uid.isdigit():
             continue
+        if record.get("streak_dm_opt_out"):
+            continue  # opted out from the website
         if sent_log.get(uid) == today:
             continue  # already warned them today
 
