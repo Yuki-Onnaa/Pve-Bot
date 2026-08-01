@@ -1526,6 +1526,11 @@ class TicketPanelView(discord.ui.View):
     @discord.ui.button(label="Host Request", style=discord.ButtonStyle.green,
                         custom_id="ticket_panel_host_request", emoji="🎤")
     async def open_host_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+            await interaction.response.send_message(
+                "You need the Host role to open a Host Request ticket.", ephemeral=True)
+            return
+
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         channel, created = await create_ticket_channel(
@@ -1570,9 +1575,11 @@ class HostTicketCloseView(discord.ui.View):
     @discord.ui.button(label="Close Ticket (after host)", style=discord.ButtonStyle.red,
                         custom_id="ticket_close_host_request")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_ticket_staff(interaction.user):
+        ticket_peek = get_tickets().get(str(interaction.channel.id))
+        is_opener = ticket_peek is not None and interaction.user.id == ticket_peek.get("user_id")
+        if not is_opener and not is_ticket_staff(interaction.user):
             await interaction.response.send_message(
-                "Only ticket staff can close this ticket.", ephemeral=True)
+                "Only the ticket opener or ticket staff can close this ticket.", ephemeral=True)
             return
 
         await interaction.response.defer()
