@@ -260,8 +260,8 @@ SECURITY_EVENTS = {
 # ── Support events (format: "<event> @user", 1hr cooldown) ──
 SUPPORT_EVENTS = {
     "Support Vouch": {"points": 1, "cooldown": 3600},
-    "Backup Vouch": {"points": 2, "cooldown": 3600},
-    "Depths Safe Vouch": {"points": 5, "cooldown": 3600},
+    "Backup Vouch": {"points": 1, "cooldown": 0},
+    "Depths Safe Vouch": {"points": 5, "cooldown": 0},
 }
 
 CATEGORY_EVENTS = {
@@ -351,13 +351,17 @@ def get_events(category, data=None):
     """{event name: {points, cooldown}} for a category, with dashboard overrides applied."""
     base = CATEGORY_EVENTS.get(category, {})
     data = load_data() if data is None else data
-    override = (data.get("_economy", {}).get("events") or {}).get(category)
-    if not override:
+    econ = data.get("_economy", {})
+    points_override = (econ.get("events") or {}).get(category)
+    cooldown_override = (econ.get("cooldowns") or {}).get(category) or {}
+    if not points_override:
         return base
     merged = {}
-    for name, points in override.items():
+    for name, points in points_override.items():
         cfg = dict(base.get(name) or {"cooldown": 0})
         cfg["points"] = points
+        if name in cooldown_override:
+            cfg["cooldown"] = cooldown_override[name]
         merged[name] = cfg
     return merged
 

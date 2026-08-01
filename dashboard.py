@@ -240,19 +240,31 @@ def default_event_points():
     return {cat: dict(events) for cat, events in FALLBACK_EVENT_POINTS.items()}
 
 
+def default_event_cooldowns():
+    """The bot's CATEGORY_EVENTS flattened to {category: {event: cooldown_seconds}}."""
+    if _bridge["events"]:
+        return {
+            cat: {name: cfg.get("cooldown", 0) for name, cfg in events.items()}
+            for cat, events in _bridge["events"].items()
+        }
+    return {cat: {name: 0 for name in events} for cat, events in FALLBACK_EVENT_POINTS.items()}
+
+
 def default_ranks():
     return {cat: [list(row) for row in ladder] for cat, ladder in (_bridge["thresholds"] or {}).items()}
 
 
 def get_economy(data=None):
-    """Merged view of event points and rank ladders."""
+    """Merged view of event points, cooldowns, and rank ladders."""
     data = load_data() if data is None else data
     stored = data.get("_economy", {})
     events = default_event_points()
     events.update({c: dict(v) for c, v in (stored.get("events") or {}).items()})
+    cooldowns = default_event_cooldowns()
+    cooldowns.update({c: dict(v) for c, v in (stored.get("cooldowns") or {}).items()})
     ranks = default_ranks()
     ranks.update({c: [list(r) for r in v] for c, v in (stored.get("ranks") or {}).items()})
-    return {"events": events, "ranks": ranks}
+    return {"events": events, "cooldowns": cooldowns, "ranks": ranks}
 
 
 def event_points(category, event, data=None):
@@ -1551,10 +1563,15 @@ def api_economy_get():
     economy = get_economy()
     return jsonify({
         "events": economy["events"],
+        "cooldowns": economy["cooldowns"],
         "ranks": economy["ranks"],
         "metric": _bridge["metric"] or {},
         "category_names": CATEGORY_NAMES,
-        "defaults": {"events": default_event_points(), "ranks": default_ranks()},
+        "defaults": {
+            "events": default_event_points(),
+            "cooldowns": default_event_cooldowns(),
+            "ranks": default_ranks(),
+        },
     })
 
 
@@ -1573,6 +1590,7 @@ def api_economy_save():
     if section == "events":
         rows = body.get("events") or []
         cleaned = {}
+        cooldowns_cleaned = {}
         for row in rows:
             name = str(row.get("name", "")).strip()
             if not name:
@@ -1588,11 +1606,20 @@ def api_economy_save():
             if points < 0 or points > 1000:
                 return jsonify({"error": f"'{name}' must be between 0 and 1000 points."}), 400
             cleaned[name] = int(points) if points == int(points) else points
+
+            try:
+                cooldown_minutes = float(row.get("cooldown", 0) or 0)
+            except (ValueError, TypeError):
+                return jsonify({"error": f"'{name}' needs a number for cooldown."}), 400
+            if cooldown_minutes < 0 or cooldown_minutes > 1440:
+                return jsonify({"error": f"'{name}' cooldown must be between 0 and 1440 minutes."}), 400
+            cooldowns_cleaned[name] = int(round(cooldown_minutes * 60))
         if not cleaned:
             return jsonify({"error": "Keep at least one event in this category."}), 400
 
         removed = [e for e in get_economy(data)["events"].get(category, {}) if e not in cleaned]
         economy.setdefault("events", {})[category] = cleaned
+        economy.setdefault("cooldowns", {})[category] = cooldowns_cleaned
         save_data(data)
         return jsonify({"ok": True, "removed": removed, "count": len(cleaned)})
 
@@ -1641,8 +1668,14 @@ def api_economy_reset():
         return jsonify({"error": "Unknown category or section."}), 400
     data = load_data()
     economy = data.get("_economy", {})
+    changed = False
     if category in economy.get(section, {}):
         del economy[section][category]
+        changed = True
+    if section == "events" and category in economy.get("cooldowns", {}):
+        del economy["cooldowns"][category]
+        changed = True
+    if changed:
         save_data(data)
     return jsonify({"ok": True})
 
@@ -3204,8 +3237,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-title">Event points</div>
-      <div class="eco-note" id="ev-note">What each vouch is worth in this category.</div>
-      <div class="eco-head"><span class="nm">Event</span><span class="num">Points</span><span class="sp"></span></div>
+      <div class="eco-note" id="ev-note">What each vouch is worth in this category, and its cooldown per target.</div>
+      <div class="eco-head"><span class="nm">Event</span><span class="num">Points</span><span class="num">Cooldown (min)</span><span class="sp"></span></div>
       <div id="ev-rows"></div>
       <div class="eco-actions">
         <button class="btn btn-ghost btn-sm" id="ev-add">Add event</button>
@@ -3814,7 +3847,7 @@ function drawActivityChart(d){
 let ECONOMY = null;
 let ecoCat = 'pve';
 
-function ecoRow(name, value, numMin){
+function ecoRow(name, value, numMin, cooldownMin){
   const row = document.createElement('div');
   row.className = 'eco-row';
   const a = document.createElement('input');
@@ -3822,13 +3855,21 @@ function ecoRow(name, value, numMin){
   const b = document.createElement('input');
   b.className = 'num'; b.type = 'number'; b.step = '0.5'; b.min = String(numMin);
   b.value = value == null ? '' : value;
+  row.appendChild(a); row.appendChild(b);
+  if(cooldownMin !== undefined){
+    const c = document.createElement('input');
+    c.className = 'num cd'; c.type = 'number'; c.step = '1'; c.min = '0';
+    c.title = 'Cooldown in minutes, 0 = none';
+    c.value = cooldownMin == null ? 0 : cooldownMin;
+    row.appendChild(c);
+  }
   const x = document.createElement('button');
   x.className = 'del'; x.type = 'button'; x.title = 'Remove'; x.textContent = '\u00d7';
   x.onclick = function(){ row.remove(); };
-  row.appendChild(a); row.appendChild(b); row.appendChild(x);
+  row.appendChild(x);
   return row;
 }
-function readRows(id, valueKey){
+function readRows(id, valueKey, extraKey){
   const out = [];
   document.getElementById(id).querySelectorAll('.eco-row').forEach(function(r){
     const name = r.querySelector('.nm').value.trim();
@@ -3836,6 +3877,10 @@ function readRows(id, valueKey){
     if(!name && num === '') return;
     const item = {name: name};
     item[valueKey] = num === '' ? 0 : Number(num);
+    if(extraKey){
+      const cd = r.querySelector('.cd');
+      item[extraKey] = cd && cd.value !== '' ? Number(cd.value) : 0;
+    }
     out.push(item);
   });
   return out;
@@ -3852,9 +3897,13 @@ function renderEconomy(){
   const ranks = ECONOMY.ranks[ecoCat] || [];
   const metric = (ECONOMY.metric || {})[ecoCat] === 'vouches' ? 'vouches' : 'points';
 
+  const cooldowns = (ECONOMY.cooldowns || {})[ecoCat] || {};
   const ev = document.getElementById('ev-rows');
   ev.innerHTML = '';
-  Object.keys(events).forEach(function(name){ ev.appendChild(ecoRow(name, events[name], 0)); });
+  Object.keys(events).forEach(function(name){
+    const cdMin = Math.round((cooldowns[name] || 0) / 60);
+    ev.appendChild(ecoRow(name, events[name], 0, cdMin));
+  });
 
   const rk = document.getElementById('rk-rows');
   rk.innerHTML = '';
@@ -3868,7 +3917,7 @@ function renderEconomy(){
 async function saveEconomy(section){
   const el = document.getElementById(section === 'events' ? 'ev-result' : 'rk-result');
   const body = {section: section, category: ecoCat};
-  if(section === 'events') body.events = readRows('ev-rows', 'points');
+  if(section === 'events') body.events = readRows('ev-rows', 'points', 'cooldown');
   else body.ranks = readRows('rk-rows', 'at');
   const r = await api('/api/economy', {method:'POST', body: JSON.stringify(body)});
   if(!r.ok){ showAlert(el, r.error || 'Could not save.', 'err'); return; }
@@ -3898,7 +3947,7 @@ document.addEventListener('DOMContentLoaded', function(){
     renderEconomy();
   });
   document.getElementById('ev-add').onclick = function(){
-    document.getElementById('ev-rows').appendChild(ecoRow('', '', 0));
+    document.getElementById('ev-rows').appendChild(ecoRow('', '', 0, 0));
   };
   document.getElementById('rk-add').onclick = function(){
     const rk = document.getElementById('rk-rows');
