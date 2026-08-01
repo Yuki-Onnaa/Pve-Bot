@@ -655,23 +655,27 @@ async def update_role_for_user(guild, user_id, category, notify=True):
 
     category_role_names = get_all_role_names(category, data)
 
-    # Host ranks are gated behind a required role. Points still accumulate either
-    # way, so the rank lands the moment someone is given the gate role.
-    if category == HOSTER_GATE_CATEGORY and HOSTER_GATE_ROLE_ID:
-        if not any(r.id == HOSTER_GATE_ROLE_ID for r in member.roles):
-            stale = [r for r in member.roles if r.name in category_role_names]
-            if stale:
-                try:
-                    await member.remove_roles(*stale, reason="Missing the required role for Host ranks")
-                    await log_audit(
-                        f"🔒 Removed {', '.join(r.name for r in stale)} from {member.mention} "
-                        f"(missing <@&{HOSTER_GATE_ROLE_ID}>)"
-                    )
-                except discord.Forbidden:
-                    print(f"[Roles] Missing permission to strip Host ranks from {member.id}")
-                except discord.HTTPException as e:
-                    print(f"[Roles] Could not strip Host ranks from {member.id}: {e}")
-            return
+    # Some categories' ranks are gated behind a required role. Points still
+    # accumulate either way, so the rank lands the moment someone is given
+    # the gate role.
+    is_gated = (category == HOSTER_GATE_CATEGORY and HOSTER_GATE_ROLE_ID) or category in CATEGORY_GATE_ROLE_NAMES
+    if is_gated and not member_has_gate_role(member, category):
+        stale = [r for r in member.roles if r.name in category_role_names]
+        if stale:
+            gate_label = (f"<@&{HOSTER_GATE_ROLE_ID}>" if category == HOSTER_GATE_CATEGORY
+                          else CATEGORY_GATE_ROLE_NAMES.get(category, ""))
+            try:
+                await member.remove_roles(
+                    *stale, reason=f"Missing the required role for {CATEGORY_NAMES.get(category, category)} ranks")
+                await log_audit(
+                    f"🔒 Removed {', '.join(r.name for r in stale)} from {member.mention} "
+                    f"(missing {gate_label})"
+                )
+            except discord.Forbidden:
+                print(f"[Roles] Missing permission to strip {category} ranks from {member.id}")
+            except discord.HTTPException as e:
+                print(f"[Roles] Could not strip {category} ranks from {member.id}: {e}")
+        return
 
     roles_to_remove = [r for r in member.roles if r.name in category_role_names and r.name != achieved_role_name]
     role_to_add = discord.utils.get(guild.roles, name=achieved_role_name)
@@ -741,6 +745,25 @@ async def resync_all_roles():
 # Set HOSTER_GATE_ROLE_ID to 0 to turn the gate off.
 HOSTER_GATE_ROLE_ID = int(os.environ.get("HOSTER_GATE_ROLE_ID", "1528603062715813959"))
 HOSTER_GATE_CATEGORY = "pve"
+
+# Support/Security rank roles are likewise only handed out to members holding
+# the matching gate role below, even if their points/vouches qualify.
+# Set a value to "" to turn that category's gate off.
+CATEGORY_GATE_ROLE_NAMES = {
+    "support": os.environ.get("SUPPORT_GATE_ROLE_NAME", "ㅤㅤㅤㅤㅤㅤㅤSupportㅤㅤㅤㅤㅤㅤㅤㅤ"),
+    "security": os.environ.get("SECURITY_GATE_ROLE_NAME", "ㅤㅤㅤㅤㅤㅤㅤSecurityㅤㅤㅤㅤㅤㅤㅤㅤ"),
+}
+CATEGORY_GATE_ROLE_NAMES = {k: v for k, v in CATEGORY_GATE_ROLE_NAMES.items() if v}
+
+
+def member_has_gate_role(member, category):
+    """Whether this member holds the role required for this category's ranks, if gated."""
+    if category == HOSTER_GATE_CATEGORY and HOSTER_GATE_ROLE_ID:
+        return any(r.id == HOSTER_GATE_ROLE_ID for r in member.roles)
+    gate_name = CATEGORY_GATE_ROLE_NAMES.get(category)
+    if gate_name:
+        return any(r.name == gate_name for r in member.roles)
+    return True  # not gated
 
 TOP_VOUCHER_ROLE = os.environ.get("TOP_VOUCHER_ROLE", "Top Voucher")
 TOP_VOUCHER_COUNT = int(os.environ.get("TOP_VOUCHER_COUNT", "2"))
@@ -1662,17 +1685,26 @@ async def before_event_ping_loop():
 
 @bot.event
 async def on_member_update(before, after):
-    """Grant or strip Host ranks the moment the gate role changes hands."""
-    if not HOSTER_GATE_ROLE_ID:
-        return
-    had = any(r.id == HOSTER_GATE_ROLE_ID for r in before.roles)
-    has = any(r.id == HOSTER_GATE_ROLE_ID for r in after.roles)
-    if had == has:
-        return
-    try:
-        await update_role_for_user(after.guild, after.id, HOSTER_GATE_CATEGORY, notify=has)
-    except Exception as e:
-        print(f"[Roles] Gate role update failed for {after.id}: {e}")
+    """Grant or strip gated ranks the moment a required role changes hands."""
+    if HOSTER_GATE_ROLE_ID:
+        had = any(r.id == HOSTER_GATE_ROLE_ID for r in before.roles)
+        has = any(r.id == HOSTER_GATE_ROLE_ID for r in after.roles)
+        if had != has:
+            try:
+                await update_role_for_user(after.guild, after.id, HOSTER_GATE_CATEGORY, notify=has)
+            except Exception as e:
+                print(f"[Roles] Gate role update failed for {after.id} ({HOSTER_GATE_CATEGORY}): {e}")
+
+    before_names = {r.name for r in before.roles}
+    after_names = {r.name for r in after.roles}
+    for category, gate_name in CATEGORY_GATE_ROLE_NAMES.items():
+        had = gate_name in before_names
+        has = gate_name in after_names
+        if had != has:
+            try:
+                await update_role_for_user(after.guild, after.id, category, notify=has)
+            except Exception as e:
+                print(f"[Roles] Gate role update failed for {after.id} ({category}): {e}")
 
 
 @bot.event
@@ -3006,7 +3038,7 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="host", description="Announce a hosted event - pings the right support roles")
+@bot.tree.command(name="host", description="Announce a hosted event - pings the right support roles (Administrator only for now)")
 @app_commands.describe(
     event="Event type (e.g. Hellmode)",
     region="Region(s) this is for - e.g. EU, NA, Asia, or doesn't matter",
@@ -3014,19 +3046,12 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
     stage="Which stage/location for this event",
     notes="Anything hosts should know - channel mentions work",
 )
+@app_commands.checks.has_permissions(administrator=True)
 async def slash_host(interaction: discord.Interaction, event: str, region: str,
                       co_host: discord.Member, stage: str, notes: str):
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
-        return
-
-    stage_role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
-    has_stage_perms = stage_role is not None and stage_role in interaction.user.roles
-    if not has_stage_perms and not is_ticket_staff(interaction.user):
-        await interaction.response.send_message(
-            f"You need the **{STAGE_PERMS_ROLE_NAME}** role to host an event - open a Host Request ticket first.",
-            ephemeral=True)
         return
 
     channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
@@ -3050,6 +3075,19 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     await log_audit(
         f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")
+
+
+@slash_host.error
+async def slash_host_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Administrator permission to use that (for now)."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
 @bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
