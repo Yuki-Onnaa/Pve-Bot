@@ -1619,22 +1619,22 @@ class HostTicketCloseView(discord.ui.View):
 
 HOST_ANNOUNCE_CHANNEL_ID = int(os.environ.get("HOST_ANNOUNCE_CHANNEL_ID", "1527833921071616110"))
 
-# Region keyword -> support role name. Word-boundary matched against the
-# free-text region field, so "EU NA doesn't matter" pings both EU and NA.
-REGION_SUPPORT_ROLES = [
-    (re.compile(r"\beu\b|\beurope\b", re.IGNORECASE), "SUPPORT (EU)"),
-    (re.compile(r"\bna\b|\bnorth america\b", re.IGNORECASE), "SUPPORT (NA)"),
-    (re.compile(r"\basia\b", re.IGNORECASE), "SUPPORT (ASIA)"),
-]
+# /host's region option - a fixed dropdown, not free text.
+REGION_ROLE_NAME = {
+    "EU": "SUPPORT (EU)",
+    "NA": "SUPPORT (NA)",
+    "Asia": "SUPPORT (ASIA)",
+}
+HOST_REGION_CHOICES = [app_commands.Choice(name=r, value=r) for r in REGION_ROLE_NAME]
+
+# /host's event option - same list as the Host category on the website (Points & ranks).
+HOST_EVENT_CHOICES = [app_commands.Choice(name=n, value=n) for n in CATEGORY_EVENTS["pve"]]
 
 
-def support_roles_for_region(guild, region_text):
-    """Support roles to ping for a region string. No recognizable region -> ping all of them."""
-    matched_names = {name for pattern, name in REGION_SUPPORT_ROLES if pattern.search(region_text)}
-    if not matched_names:
-        matched_names = {name for _, name in REGION_SUPPORT_ROLES}
-    roles = [discord.utils.get(guild.roles, name=name) for name in matched_names]
-    return [r for r in roles if r is not None]
+def support_role_for_region(guild, region):
+    """The single support role to ping for a chosen region, or None."""
+    name = REGION_ROLE_NAME.get(region)
+    return discord.utils.get(guild.roles, name=name) if name else None
 
 
 def build_host_embed(host, co_host, region, event, event_display, stage, notes, test=False):
@@ -3051,12 +3051,13 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
 
 @bot.tree.command(name="host", description="Announce a hosted event - pings the right support roles (Administrator only for now)")
 @app_commands.describe(
-    event="Event type (e.g. Hellmode)",
-    region="Region(s) this is for - e.g. EU, NA, Asia, or doesn't matter",
+    event="Event type",
+    region="Region this is for",
     co_host="Who's co-hosting with you",
     stage="Which stage/location for this event",
     notes="Anything hosts should know - channel mentions work",
 )
+@app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES)
 @app_commands.checks.has_permissions(administrator=True)
 async def slash_host(interaction: discord.Interaction, event: str, region: str,
                       co_host: discord.Member, stage: str, notes: str):
@@ -3073,8 +3074,10 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     event_role = discord.utils.get(guild.roles, name=event)
     event_display = event_role.mention if event_role else f"**{event}**"
 
-    support_roles = support_roles_for_region(guild, region)
-    ping_parts = [interaction.user.mention, co_host.mention] + [r.mention for r in support_roles]
+    support_role = support_role_for_region(guild, region)
+    ping_parts = [interaction.user.mention, co_host.mention]
+    if support_role:
+        ping_parts.append(support_role.mention)
     if event_role:
         ping_parts.append(event_role.mention)
 
@@ -3102,7 +3105,8 @@ async def slash_host_error(interaction: discord.Interaction, error):
 
 
 @bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
-@app_commands.describe(event="Event name to test the role lookup with (optional)")
+@app_commands.describe(event="Event to test the role lookup with (optional)")
+@app_commands.choices(event=HOST_EVENT_CHOICES)
 @app_commands.checks.has_permissions(manage_guild=True)
 async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Event"):
     guild = interaction.guild
@@ -3116,19 +3120,24 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
             f"Couldn't find the events channel (ID `{HOST_ANNOUNCE_CHANNEL_ID}`).", ephemeral=True)
         return
 
-    region = "EU NA Asia - test post, matches all regions"
+    region = "EU/NA/Asia (test)"
     event_role = discord.utils.get(guild.roles, name=event)
     event_display = event_role.mention if event_role else f"**{event}** (no matching role found)"
-    support_roles = support_roles_for_region(guild, region)
+
+    found, missing = [], []
+    for region_name, role_name in REGION_ROLE_NAME.items():
+        role = discord.utils.get(guild.roles, name=role_name)
+        (found if role else missing).append(region_name)
 
     embed = build_host_embed(
         interaction.user, interaction.user, region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
     await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
     await interaction.response.send_message(
-        f"Test posted in {channel.mention} (nobody was pinged). Would ping: "
-        + ", ".join(r.name for r in support_roles)
-        + (f", **{event_role.name}**" if event_role else f" (no role found named '{event}')"),
+        f"Test posted in {channel.mention} (nobody was pinged). Region roles found: "
+        + (", ".join(found) or "none")
+        + (f". Missing: {', '.join(missing)}" if missing else "")
+        + (f". Event role: **{event_role.name}**" if event_role else f". No role found named '{event}'."),
         ephemeral=True,
     )
 
