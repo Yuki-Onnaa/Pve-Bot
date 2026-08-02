@@ -1635,13 +1635,15 @@ def support_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def record_host_run(user_id):
-    """Logs a /host run for the host streak (rolling 24h window, computed on read)."""
+def record_host_run(user_id, event):
+    """Logs a /host run for the host streak (rolling 24h window) and remembers the
+    event hosted, so /reping knows what to re-announce."""
     data = load_data()
     record = data.setdefault(str(user_id), {})
     runs = record.get("host_runs", [])
     runs.append(datetime.now(timezone.utc).isoformat())
     record["host_runs"] = runs[-100:]
+    record["last_host_event"] = event
     save_data(data)
 
 
@@ -3093,7 +3095,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
-    record_host_run(interaction.user.id)
+    record_host_run(interaction.user.id, event)
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     await log_audit(
         f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")
@@ -3101,6 +3103,53 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
 
 @slash_host.error
 async def slash_host_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Administrator permission to use that (for now)."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="reping", description="Re-ping the event from your last /host (Administrator only for now)")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_reping(interaction: discord.Interaction):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    data = load_data()
+    event = data.get(str(interaction.user.id), {}).get("last_host_event")
+    if not event:
+        await interaction.response.send_message(
+            "You haven't run /host yet, so there's nothing to re-ping.", ephemeral=True)
+        return
+
+    channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
+    if channel is None:
+        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    event_role = discord.utils.get(guild.roles, name=event)
+    ping_parts = [interaction.user.mention]
+    if event_role:
+        ping_parts.append(event_role.mention)
+
+    await channel.send(
+        content=f"{' '.join(ping_parts)}\n🔔 {interaction.user.mention} is re-pinging "
+                f"**{event}** - come join!",
+        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+    )
+    await interaction.response.send_message(f"Re-pinged **{event}** in {channel.mention}.", ephemeral=True)
+    await log_audit(f"🔔 {interaction.user.mention} re-pinged **{event}**")
+
+
+@slash_reping.error
+async def slash_reping_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You need the Administrator permission to use that (for now)."
     else:
