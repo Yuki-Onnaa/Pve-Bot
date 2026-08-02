@@ -1649,15 +1649,16 @@ def record_host_run(user_id, event):
 
 def build_host_message(host, co_host, region, event, event_display, stage, notes, test=False):
     title = "🧪 TEST - Host Announcement" if test else "📣 Host Announcement"
+    vouch_targets = f"{host.mention} {co_host.mention}" if co_host else host.mention
     return (
         f"**{title}**\n"
         f"**Event Host:** {host.mention}\n"
-        f"**Co Host:** {co_host.mention}\n"
+        f"**Co Host:** {co_host.mention if co_host else '-'}\n"
         f"**Region:** {region}\n"
         f"**Event Type:** {event_display}\n"
         f"**Stage:** {stage}\n"
         f"**Notes:** {notes}\n"
-        f"**vouches:** vouch {host.mention} {co_host.mention} {event.lower()}"
+        f"**vouches:** vouch {vouch_targets} {event.lower()}"
     )
 
 
@@ -3069,7 +3070,7 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES)
 @app_commands.checks.has_permissions(administrator=True)
 async def slash_host(interaction: discord.Interaction, event: str, region: str,
-                      co_host: discord.Member, stage: str, notes: str):
+                      stage: str, notes: str, co_host: discord.Member = None):
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
@@ -3084,7 +3085,9 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     event_display = event_role.mention if event_role else f"**{event}**"
 
     support_role = support_role_for_region(guild, region)
-    ping_parts = [interaction.user.mention, co_host.mention]
+    ping_parts = [interaction.user.mention]
+    if co_host:
+        ping_parts.append(co_host.mention)
     if support_role:
         ping_parts.append(support_role.mention)
     if event_role:
@@ -3097,8 +3100,9 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     )
     record_host_run(interaction.user.id, event)
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
+    co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
-        f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")
+        f"📣 {interaction.user.mention} hosted **{event}** (region: {region}{co_host_note})")
 
 
 @slash_host.error
