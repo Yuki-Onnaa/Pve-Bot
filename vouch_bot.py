@@ -161,6 +161,10 @@ PVE_CHANNEL_ID = 1529113596657799178
 SECURITY_CHANNEL_ID = 1527834552150659103
 SUPPORT_CHANNEL_ID = 1527834504658550924
 
+# The main server. If set, slash commands sync here immediately on top of the
+# normal global sync (which can take up to an hour to propagate on its own).
+GUILD_ID = int(os.environ.get("GUILD_ID", "0"))
+
 # Channel where the 3 live, auto-updating leaderboards get posted
 LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
 
@@ -1778,9 +1782,18 @@ async def on_ready():
 
     try:
         synced = await bot.tree.sync()
-        print(f"[Slash] Synced {len(synced)} command(s)")
+        print(f"[Slash] Synced {len(synced)} command(s) globally (can take up to an hour to show up)")
     except discord.HTTPException as e:
-        print(f"[Slash] Sync failed: {e}")
+        print(f"[Slash] Global sync failed: {e}")
+
+    if GUILD_ID:
+        try:
+            guild_obj = discord.Object(id=GUILD_ID)
+            bot.tree.copy_global_to(guild=guild_obj)
+            guild_synced = await bot.tree.sync(guild=guild_obj)
+            print(f"[Slash] Synced {len(guild_synced)} command(s) instantly to guild {GUILD_ID}")
+        except discord.HTTPException as e:
+            print(f"[Slash] Guild sync failed: {e}")
     await refresh_live_leaderboards()
     if not event_ping_loop.is_running():
         event_ping_loop.start()
