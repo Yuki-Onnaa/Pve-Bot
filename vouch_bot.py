@@ -5,7 +5,7 @@ import os
 import random
 import re
 import uuid
-from datetime import datetime, time as dtime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -875,22 +875,19 @@ async def before_top_voucher_loop():
 
 # ─────────────────────────────────────────────────────────────
 # STREAK WARNINGS
-# Runs once a day and DMs anyone whose daily streak is about to lapse.
+# Checks hourly and DMs anyone whose /host streak (rolling 24h since
+# their last /host run) is about to lapse.
 # ─────────────────────────────────────────────────────────────
 
-STREAK_WARNING_HOUR = int(os.environ.get("STREAK_WARNING_HOUR", "20"))  # UTC
-
-
-@tasks.loop(time=dtime(hour=STREAK_WARNING_HOUR, minute=0, tzinfo=timezone.utc))
+@tasks.loop(hours=1)
 async def warn_expiring_streaks():
-    """DM members who had a vouch yesterday but none today."""
+    """DM members whose /host streak is within 4 hours of breaking."""
     try:
         import dashboard
     except ImportError:
         return
 
     data = load_data()
-    today = datetime.now(timezone.utc).date().isoformat()
     sent_log = data.setdefault("_streak_dm", {})
     warned = 0
     changed = False
@@ -900,17 +897,17 @@ async def warn_expiring_streaks():
             continue
         if record.get("streak_dm_opt_out"):
             continue  # opted out from the website
-        if sent_log.get(uid) == today:
-            continue  # already warned them today
 
         try:
-            streak = dashboard.streak_stats(record)
+            streak = dashboard.host_streak_stats(record)
         except Exception as e:
-            print(f"[Streak] Could not read streak for {uid}: {e}")
+            print(f"[Streak] Could not read host streak for {uid}: {e}")
             continue
 
-        if not streak["at_risk"] or streak["current"] < 1:
+        if not streak["at_risk"] or streak["current"] < 1 or not streak["last_at"]:
             continue
+        if sent_log.get(uid) == streak["last_at"]:
+            continue  # already warned for this run
 
         user = bot.get_user(int(uid))
         if user is None:
@@ -922,8 +919,8 @@ async def warn_expiring_streaks():
         hours = max(1, streak["hours_left"])
         try:
             await user.send(
-                f"Your **{streak['current']} day** streak is about to break. "
-                f"Get a vouch in the next {hours} hour{'s' if hours != 1 else ''} to keep it alive."
+                f"Your **{streak['current']} run** /host streak is about to break. "
+                f"Run `/host` in the next {hours} hour{'s' if hours != 1 else ''} to keep it alive."
             )
             warned += 1
         except discord.Forbidden:
@@ -932,13 +929,13 @@ async def warn_expiring_streaks():
             print(f"[Streak] DM to {uid} failed: {e}")
             continue
 
-        sent_log[uid] = today
+        sent_log[uid] = streak["last_at"]
         changed = True
         await asyncio.sleep(1.2)  # stay polite with the DM rate limit
 
-    # forget warnings older than a week so the log does not grow forever
-    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=7)).isoformat()
-    stale = [u for u, day in sent_log.items() if day < cutoff]
+    # forget warnings for runs more than 30 days old, so the log does not grow forever
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    stale = [u for u, last_at in sent_log.items() if last_at < cutoff]
     for u in stale:
         del sent_log[u]
         changed = True
@@ -1638,6 +1635,16 @@ def support_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
+def record_host_run(user_id):
+    """Logs a /host run for the host streak (rolling 24h window, computed on read)."""
+    data = load_data()
+    record = data.setdefault(str(user_id), {})
+    runs = record.get("host_runs", [])
+    runs.append(datetime.now(timezone.utc).isoformat())
+    record["host_runs"] = runs[-100:]
+    save_data(data)
+
+
 def build_host_message(host, co_host, region, event, event_display, stage, notes, test=False):
     title = "🧪 TEST - Host Announcement" if test else "📣 Host Announcement"
     return (
@@ -1745,7 +1752,7 @@ async def on_ready():
 
     if not warn_expiring_streaks.is_running():
         warn_expiring_streaks.start()
-        print(f"[Streak] Daily warnings scheduled for {STREAK_WARNING_HOUR:02d}:00 UTC")
+        print("[Streak] Host streak warnings checking hourly")
 
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
@@ -3086,6 +3093,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
+    record_host_run(interaction.user.id)
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     await log_audit(
         f"📣 {interaction.user.mention} hosted **{event}** (co-host {co_host.mention}, region: {region})")

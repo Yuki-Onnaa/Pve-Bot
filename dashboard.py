@@ -718,7 +718,7 @@ def build_profile(uid, own=True):
         "last_week": round(last_week, 1),
         "has_data": bool(record),
         "chart": {"labels": labels, "series": series},
-        "streak": streak_stats(record),
+        "streak": host_streak_stats(record),
         "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")) if own else None,
         "last_vouch": last_vouch,
         "bests": {
@@ -730,65 +730,44 @@ def build_profile(uid, own=True):
     }
 
 
-def day_key(iso_time):
-    """The UTC date a stored timestamp falls on, or None if unparseable."""
-    try:
-        return datetime.fromisoformat(str(iso_time).replace("Z", "+00:00")).date()
-    except (ValueError, TypeError):
-        return None
-
-
-def streak_stats(record, days_shown=30):
-    """Consecutive days with at least one vouch, across every category."""
-    counts = {}
-    for cat in ALL_CATEGORIES:
-        for entry in (record.get(cat) or {}).get("log", []):
-            key = day_key(entry.get("time", ""))
-            if key:
-                counts[key] = counts.get(key, 0) + 1
-
-    now = datetime.now(timezone.utc)
-    today = now.date()
-    yesterday = today - timedelta(days=1)
-
-    # alive if today has a vouch, or yesterday did and today is not over yet
-    if today in counts:
-        cursor, at_risk = today, False
-    elif yesterday in counts:
-        cursor, at_risk = yesterday, True
-    else:
-        cursor, at_risk = None, False
-
-    current = 0
-    while cursor is not None and cursor in counts:
-        current += 1
-        cursor -= timedelta(days=1)
+def host_streak_stats(record):
+    """Consecutive /host runs, each within 24h of the previous one (rolling window, not calendar days)."""
+    times = []
+    for iso in record.get("host_runs", []):
+        try:
+            times.append(datetime.fromisoformat(str(iso)))
+        except (ValueError, TypeError):
+            continue
+    times.sort()
 
     longest = 0
     run = 0
-    for key in sorted(counts):
-        run = run + 1 if run and (key - timedelta(days=1)) in counts else 1
+    prev = None
+    for t in times:
+        run = run + 1 if prev is not None and (t - prev).total_seconds() <= 24 * 3600 else 1
         longest = max(longest, run)
+        prev = t
 
-    days = []
-    for i in range(days_shown - 1, -1, -1):
-        key = today - timedelta(days=i)
-        days.append({
-            "label": key.isoformat(),
-            "count": counts.get(key, 0),
-            "active": key in counts,
-            "current": key == today,
-        })
+    last_at = times[-1] if times else None
+    now = datetime.now(timezone.utc)
+    if last_at is None:
+        current, at_risk, hours_left = 0, False, 0
+    else:
+        seconds_since = (now - last_at).total_seconds()
+        if seconds_since <= 24 * 3600:
+            current = run
+            at_risk = seconds_since >= 20 * 3600  # heads-up in the last 4 hours
+            hours_left = max(0, round(24 - seconds_since / 3600))
+        else:
+            current, at_risk, hours_left = 0, False, 0
 
-    hours_left = 23 - now.hour
     return {
         "current": current,
-        "longest": max(longest, current),
+        "longest": longest,
         "at_risk": at_risk,
-        "today": counts.get(today, 0),
         "hours_left": hours_left,
-        "days": days,
-        "total_days": len(counts),
+        "last_at": last_at.isoformat() if last_at else None,
+        "total_runs": len(times),
     }
 
 
@@ -1960,13 +1939,6 @@ h2.sec{font-size:19px;font-weight:600;letter-spacing:-.3px;margin:26px 0 14px}
 .streak-best{margin-left:auto;font-size:12px;color:var(--muted);font-family:var(--mono)}
 .streak-msg{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px}
 .streak-msg.warn{color:var(--amber)}
-.weeks{display:flex;gap:3px}
-.wk{flex:1;min-width:7px;height:32px;border-radius:3px;background:#20242c;border:1px solid var(--border);
-  position:relative}
-.wk.on{background:linear-gradient(180deg,#8e97a6,#f4f6f9);border-color:transparent}
-.wk.now{outline:1px solid var(--moon);outline-offset:2px}
-.wk-labels{display:flex;justify-content:space-between;margin-top:7px;font-size:10.5px;
-  color:var(--dim);font-family:var(--mono)}
 .bests{display:flex;flex-wrap:wrap;gap:18px;padding:16px 18px;background:var(--card);
   border:1px solid var(--border);border-radius:var(--radius);margin-bottom:22px}
 .bests div{font-size:12px;color:var(--muted)}
@@ -2118,30 +2090,25 @@ function renderStreak(s, dmOptedOut){
   if(!s){ el.style.display = 'none'; return; }
   let msg;
   if(s.current === 0){
-    msg = 'No streak going. Get a vouch today to start one.';
+    msg = s.last_at
+      ? 'Streak broken - it’s been more than 24h since the last /host.'
+      : 'No streak going. Run /host to start one.';
   } else if(s.at_risk){
     const h = s.hours_left;
-    msg = 'Your streak breaks at midnight UTC. ' +
-      (h <= 0 ? 'Get a vouch now to keep it alive.'
-              : 'About ' + h + ' hour' + (h === 1 ? '' : 's') + ' left to get a vouch.');
+    msg = 'Breaks 24h after the last /host. ' +
+      (h <= 0 ? 'Run /host now to keep it alive.'
+              : 'About ' + h + ' hour' + (h === 1 ? '' : 's') + ' left to run it again.');
   } else {
-    msg = s.today + ' vouch' + (s.today === 1 ? '' : 'es') + ' today. Come back tomorrow to keep it going.';
+    msg = 'Last hosted ' + timeAgo(s.last_at) + '. Run /host again within 24h to keep it going.';
   }
-  const blocks = (s.days || []).map(function(w){
-    return '<div class="wk' + (w.active ? ' on' : '') + (w.current ? ' now' : '') +
-      '" title="' + w.label + ': ' + w.count + ' vouches"></div>';
-  }).join('');
-  const first = (s.days && s.days.length) ? s.days[0].label.slice(5) : '';
   const dmBtn = VIEWING ? '' :
     '<button class="btn" id="streak-dm-btn" style="margin-top:14px" onclick="toggleStreakDm()">' +
     (dmOptedOut ? 'Enable streak reminder DMs' : 'Disable streak reminder DMs') + '</button>';
   el.innerHTML =
     '<div class="streak-top"><span class="streak-num">' + s.current + '</span>' +
-    '<span class="streak-word">day streak</span>' +
-    '<span class="streak-best">best ' + s.longest + ' | ' + s.total_days + ' active days</span></div>' +
+    '<span class="streak-word">host streak</span>' +
+    '<span class="streak-best">best ' + s.longest + ' | ' + s.total_runs + ' total /host runs</span></div>' +
     '<div class="streak-msg' + (s.at_risk ? ' warn' : '') + '">' + msg + '</div>' +
-    '<div class="weeks">' + blocks + '</div>' +
-    '<div class="wk-labels"><span>' + first + '</span><span>today</span></div>' +
     dmBtn;
   el.dataset.dmOptedOut = dmOptedOut ? '1' : '0';
 }
