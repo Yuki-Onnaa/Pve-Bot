@@ -3075,7 +3075,7 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="host", description="Announce a hosted event - pings the right support/security roles (Administrator only for now)")
+@bot.tree.command(name="host", description="Announce a hosted event - pings the right support/security roles")
 @app_commands.describe(
     event="Event type",
     region="Support region this is for",
@@ -3086,12 +3086,16 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
 )
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
                        security_region=HOST_SECURITY_REGION_CHOICES)
-@app_commands.checks.has_permissions(administrator=True)
 async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
                       stage: str, notes: str, co_host: discord.Member = None):
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.response.send_message(
+            "You need the Host role to use this.", ephemeral=True)
         return
 
     channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
@@ -3130,23 +3134,24 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
 
 @slash_host.error
 async def slash_host_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.MissingPermissions):
-        msg = "You need the Administrator permission to use that (for now)."
-    else:
-        msg = "Something went wrong running that command."
-        print(f"[Slash] Error: {error}")
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="reping", description="Re-ping the event from your last /host (Administrator only for now)")
-@app_commands.checks.has_permissions(administrator=True)
+@bot.tree.command(name="reping", description="Re-ping the event from your last /host")
 async def slash_reping(interaction: discord.Interaction):
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.response.send_message(
+            "You need the Host role to use this.", ephemeral=True)
         return
 
     data = load_data()
@@ -3177,11 +3182,8 @@ async def slash_reping(interaction: discord.Interaction):
 
 @slash_reping.error
 async def slash_reping_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.MissingPermissions):
-        msg = "You need the Administrator permission to use that (for now)."
-    else:
-        msg = "Something went wrong running that command."
-        print(f"[Slash] Error: {error}")
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)
     else:
