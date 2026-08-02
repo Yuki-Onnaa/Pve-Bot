@@ -342,6 +342,9 @@ async def _get_channel(channel_id):
     return channel
 
 
+UPDATE_PING_ROLE_NAME = "Bot Update"
+
+
 def _build_update_embed(content, posted_by, posted_at):
     embed = discord.Embed(
         title="📢 Bot Update",
@@ -356,16 +359,30 @@ def _build_update_embed(content, posted_by, posted_at):
     return embed
 
 
+def _update_ping_kwargs(guild):
+    """content/allowed_mentions kwargs to ping the Bot Update role, if it exists."""
+    role = discord.utils.get(guild.roles, name=UPDATE_PING_ROLE_NAME) if guild else None
+    if not role:
+        return {}
+    return {"content": role.mention, "allowed_mentions": discord.AllowedMentions(roles=True)}
+
+
 async def _post_update_message(channel_id, content, posted_by, posted_at):
     channel = await _get_channel(channel_id)
-    message = await channel.send(embed=_build_update_embed(content, posted_by, posted_at))
+    message = await channel.send(
+        embed=_build_update_embed(content, posted_by, posted_at),
+        **_update_ping_kwargs(getattr(channel, "guild", None)),
+    )
     return str(message.id)
 
 
 async def _edit_update_message(channel_id, message_id, content, posted_by, posted_at):
     channel = await _get_channel(channel_id)
     message = await channel.fetch_message(int(message_id))
-    await message.edit(embed=_build_update_embed(content, posted_by, posted_at))
+    await message.edit(
+        embed=_build_update_embed(content, posted_by, posted_at),
+        **_update_ping_kwargs(getattr(channel, "guild", None)),
+    )
 
 # ─────────────────────────────────────────────────────────────
 # DISCORD OAUTH2  (login with Discord, Administrator required)
