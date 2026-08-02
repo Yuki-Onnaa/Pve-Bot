@@ -699,6 +699,7 @@ def build_profile(uid, own=True):
     best_day = max(by_day.items(), key=lambda kv: kv[1]) if by_day else None
     active_days = len(by_day)
     first_seen = min((e["time"] for e in recent), default="")
+    last_vouch = {"event": recent[0]["event"], "time": recent[0]["time"]} if recent else None
 
     who = resolve_user(uid)
     if own:
@@ -719,6 +720,7 @@ def build_profile(uid, own=True):
         "chart": {"labels": labels, "series": series},
         "streak": streak_stats(record),
         "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")) if own else None,
+        "last_vouch": last_vouch,
         "bests": {
             "best_day": {"date": best_day[0], "points": round(best_day[1], 1)} if best_day else None,
             "active_days": active_days,
@@ -2099,6 +2101,17 @@ const VIEWING = "{{ viewing|default('', true) }}";
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function fmt(n){return typeof n==='number'?n.toLocaleString('en-US',{maximumFractionDigits:1}):n;}
+function timeAgo(iso){
+  if(!iso) return '';
+  const then = new Date(iso);
+  if(isNaN(then)) return '';
+  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+  if(mins < 1) return 'just now';
+  if(mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if(hours < 24) return hours + 'h ago';
+  return Math.floor(hours / 24) + 'd ago';
+}
 
 function renderStreak(s, dmOptedOut){
   const el = document.getElementById('streak');
@@ -2233,12 +2246,14 @@ async function load(){
   renderStreak(d.streak, d.streak_dm_opt_out);
 
   const b = d.bests || {};
+  const lastVouch = d.last_vouch ? (esc(d.last_vouch.event) + ' ' + timeAgo(d.last_vouch.time)) : 'none yet';
   document.getElementById('bests').innerHTML =
     '<div><b>' + (b.best_day ? fmt(b.best_day.points) : '0') + '</b>best day' +
       (b.best_day ? ' (' + b.best_day.date + ')' : '') + '</div>' +
     '<div><b>' + (b.active_days || 0) + '</b>active days</div>' +
     '<div><b>' + (b.total_vouches || 0) + '</b>vouches</div>' +
-    '<div><b>' + (b.first_seen || '-') + '</b>first vouch</div>';
+    '<div><b>' + (b.first_seen || '-') + '</b>first vouch</div>' +
+    '<div><b>' + lastVouch + '</b>last vouch</div>';
 
   renderChart(d.chart);
   if(!VIEWING) loadHistory();

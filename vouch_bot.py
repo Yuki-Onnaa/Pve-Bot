@@ -1618,6 +1618,7 @@ class HostTicketCloseView(discord.ui.View):
 # ─────────────────────────────────────────────────────────────
 
 HOST_ANNOUNCE_CHANNEL_ID = int(os.environ.get("HOST_ANNOUNCE_CHANNEL_ID", "1527833921071616110"))
+HOST_TEST_CHANNEL_ID = int(os.environ.get("HOST_TEST_CHANNEL_ID", "1478409787883524096"))
 
 # /host's region option - a fixed dropdown, not free text.
 REGION_ROLE_NAME = {
@@ -1637,19 +1638,18 @@ def support_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def build_host_embed(host, co_host, region, event, event_display, stage, notes, test=False):
-    embed = discord.Embed(
-        title="🧪 TEST - Host Announcement" if test else "📣 Host Announcement",
-        color=discord.Color.orange() if test else discord.Color.blurple(),
+def build_host_message(host, co_host, region, event, event_display, stage, notes, test=False):
+    title = "🧪 TEST - Host Announcement" if test else "📣 Host Announcement"
+    return (
+        f"**{title}**\n"
+        f"**Event Host:** {host.mention}\n"
+        f"**Co Host:** {co_host.mention}\n"
+        f"**Region:** {region}\n"
+        f"**Event Type:** {event_display}\n"
+        f"**Stage:** {stage}\n"
+        f"**Notes:** {notes}\n"
+        f"**vouches:** vouch {host.mention} {co_host.mention} {event.lower()}"
     )
-    embed.add_field(name="Event Host", value=host.mention, inline=True)
-    embed.add_field(name="Co Host", value=co_host.mention, inline=True)
-    embed.add_field(name="Region", value=region, inline=True)
-    embed.add_field(name="Event Type", value=event_display, inline=True)
-    embed.add_field(name="Stage", value=stage, inline=True)
-    embed.add_field(name="Notes", value=notes, inline=False)
-    embed.add_field(name="Vouches", value=f"vouch {host.mention} {co_host.mention} {event.lower()}", inline=False)
-    return embed
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3081,9 +3081,9 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     if event_role:
         ping_parts.append(event_role.mention)
 
-    embed = build_host_embed(interaction.user, co_host, region, event, event_display, stage, notes)
+    message = build_host_message(interaction.user, co_host, region, event, event_display, stage, notes)
     await channel.send(
-        content=" ".join(ping_parts), embed=embed,
+        content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
@@ -3114,10 +3114,10 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
         return
 
-    channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
+    channel = bot.get_channel(HOST_TEST_CHANNEL_ID)
     if channel is None:
         await interaction.response.send_message(
-            f"Couldn't find the events channel (ID `{HOST_ANNOUNCE_CHANNEL_ID}`).", ephemeral=True)
+            f"Couldn't find the test channel (ID `{HOST_TEST_CHANNEL_ID}`).", ephemeral=True)
         return
 
     region = "EU/NA/Asia (test)"
@@ -3129,10 +3129,10 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
         role = discord.utils.get(guild.roles, name=role_name)
         (found if role else missing).append(region_name)
 
-    embed = build_host_embed(
+    message = build_host_message(
         interaction.user, interaction.user, region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
-    await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
     await interaction.response.send_message(
         f"Test posted in {channel.mention} (nobody was pinged). Region roles found: "
         + (", ".join(found) or "none")
