@@ -1617,13 +1617,22 @@ class HostTicketCloseView(discord.ui.View):
 HOST_ANNOUNCE_CHANNEL_ID = int(os.environ.get("HOST_ANNOUNCE_CHANNEL_ID", "1527833921071616110"))
 HOST_TEST_CHANNEL_ID = int(os.environ.get("HOST_TEST_CHANNEL_ID", "1478409787883524096"))
 
-# /host's region option - a fixed dropdown, not free text.
+# /host's region options - fixed dropdowns, not free text.
 REGION_ROLE_NAME = {
     "EU": "SUPPORT (EU)",
     "NA": "SUPPORT (NA)",
     "Asia": "SUPPORT (ASIA)",
 }
 HOST_REGION_CHOICES = [app_commands.Choice(name=r, value=r) for r in REGION_ROLE_NAME]
+
+SECURITY_REGION_ROLE_NAME = {
+    "EU": "SECURITY (EU)",
+    "NA": "SECURITY (NA)",
+    "Asia": "SECURITY (ASIA)",
+    "SA": "SECURITY (SA)",
+    "OCE": "SECURITY (OCE)",
+}
+HOST_SECURITY_REGION_CHOICES = [app_commands.Choice(name=r, value=r) for r in SECURITY_REGION_ROLE_NAME]
 
 # /host's event option - same list as the Host category on the website (Points & ranks).
 HOST_EVENT_CHOICES = [app_commands.Choice(name=n, value=n) for n in CATEGORY_EVENTS["pve"]]
@@ -1632,6 +1641,12 @@ HOST_EVENT_CHOICES = [app_commands.Choice(name=n, value=n) for n in CATEGORY_EVE
 def support_role_for_region(guild, region):
     """The single support role to ping for a chosen region, or None."""
     name = REGION_ROLE_NAME.get(region)
+    return discord.utils.get(guild.roles, name=name) if name else None
+
+
+def security_role_for_region(guild, region):
+    """The single security role to ping for a chosen region, or None."""
+    name = SECURITY_REGION_ROLE_NAME.get(region)
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
@@ -1647,7 +1662,7 @@ def record_host_run(user_id, event):
     save_data(data)
 
 
-def build_host_message(host, co_host, region, event, event_display, stage, notes, test=False):
+def build_host_message(host, co_host, region, security_region, event, event_display, stage, notes, test=False):
     title = "🧪 TEST - Host Announcement" if test else "📣 Host Announcement"
     vouch_targets = f"{host.mention} {co_host.mention}" if co_host else host.mention
     return (
@@ -1655,6 +1670,7 @@ def build_host_message(host, co_host, region, event, event_display, stage, notes
         f"**Event Host:** {host.mention}\n"
         f"**Co Host:** {co_host.mention if co_host else '-'}\n"
         f"**Region:** {region}\n"
+        f"**Security Region:** {security_region}\n"
         f"**Event Type:** {event_display}\n"
         f"**Stage:** {stage}\n"
         f"**Notes:** {notes}\n"
@@ -3059,17 +3075,19 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="host", description="Announce a hosted event - pings the right support roles (Administrator only for now)")
+@bot.tree.command(name="host", description="Announce a hosted event - pings the right support/security roles (Administrator only for now)")
 @app_commands.describe(
     event="Event type",
-    region="Region this is for",
+    region="Support region this is for",
+    security_region="Security region this is for",
     co_host="Who's co-hosting with you",
     stage="Which stage/location for this event",
     notes="Anything hosts should know - channel mentions work",
 )
-@app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES)
+@app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
+                       security_region=HOST_SECURITY_REGION_CHOICES)
 @app_commands.checks.has_permissions(administrator=True)
-async def slash_host(interaction: discord.Interaction, event: str, region: str,
+async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
                       stage: str, notes: str, co_host: discord.Member = None):
     guild = interaction.guild
     if guild is None:
@@ -3085,15 +3103,19 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     event_display = event_role.mention if event_role else f"**{event}**"
 
     support_role = support_role_for_region(guild, region)
+    security_role = security_role_for_region(guild, security_region)
     ping_parts = [interaction.user.mention]
     if co_host:
         ping_parts.append(co_host.mention)
     if support_role:
         ping_parts.append(support_role.mention)
+    if security_role:
+        ping_parts.append(security_role.mention)
     if event_role:
         ping_parts.append(event_role.mention)
 
-    message = build_host_message(interaction.user, co_host, region, event, event_display, stage, notes)
+    message = build_host_message(
+        interaction.user, co_host, region, security_region, event, event_display, stage, notes)
     await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
@@ -3102,7 +3124,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str,
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
-        f"📣 {interaction.user.mention} hosted **{event}** (region: {region}{co_host_note})")
+        f"📣 {interaction.user.mention} hosted **{event}** "
+        f"(region: {region}, security region: {security_region}{co_host_note})")
 
 
 @slash_host.error
@@ -3182,23 +3205,31 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
         return
 
     region = "EU/NA/Asia (test)"
+    security_region = "EU/NA/Asia/SA/OCE (test)"
     event_role = discord.utils.get(guild.roles, name=event)
     event_display = event_role.mention if event_role else f"**{event}** (no matching role found)"
 
-    found, missing = [], []
-    for region_name, role_name in REGION_ROLE_NAME.items():
-        role = discord.utils.get(guild.roles, name=role_name)
-        (found if role else missing).append(region_name)
+    def check_roles(mapping):
+        found, missing = [], []
+        for region_name, role_name in mapping.items():
+            role = discord.utils.get(guild.roles, name=role_name)
+            (found if role else missing).append(region_name)
+        return found, missing
+
+    support_found, support_missing = check_roles(REGION_ROLE_NAME)
+    security_found, security_missing = check_roles(SECURITY_REGION_ROLE_NAME)
 
     message = build_host_message(
-        interaction.user, interaction.user, region, event, event_display,
+        interaction.user, interaction.user, region, security_region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
     await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
     await interaction.response.send_message(
-        f"Test posted in {channel.mention} (nobody was pinged). Region roles found: "
-        + (", ".join(found) or "none")
-        + (f". Missing: {', '.join(missing)}" if missing else "")
-        + (f". Event role: **{event_role.name}**" if event_role else f". No role found named '{event}'."),
+        f"Test posted in {channel.mention} (nobody was pinged).\n"
+        f"Support roles found: " + (", ".join(support_found) or "none")
+        + (f". Missing: {', '.join(support_missing)}" if support_missing else "") + "\n"
+        f"Security roles found: " + (", ".join(security_found) or "none")
+        + (f". Missing: {', '.join(security_missing)}" if security_missing else "") + "\n"
+        + (f"Event role: **{event_role.name}**" if event_role else f"No role found named '{event}'."),
         ephemeral=True,
     )
 
