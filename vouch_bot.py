@@ -1655,15 +1655,21 @@ def security_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def record_host_run(user_id, event):
+def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id=None):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
-    event hosted, so /reping knows what to re-announce."""
+    event hosted plus the posted message, so /reping and /end know what to act on."""
     data = load_data()
     record = data.setdefault(str(user_id), {})
     runs = record.get("host_runs", [])
     runs.append(datetime.now(timezone.utc).isoformat())
     record["host_runs"] = runs[-100:]
     record["last_host_event"] = event
+    record["last_host"] = {
+        "event": event,
+        "message_id": str(message_id) if message_id else None,
+        "channel_id": str(channel_id) if channel_id else None,
+        "co_host_id": co_host_id,
+    }
     save_data(data)
 
 
@@ -3144,11 +3150,15 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
 
     message = build_host_message(
         interaction.user, co_host, region, security_region, event, event_display, stage, notes)
-    await channel.send(
+    sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
-    record_host_run(interaction.user.id, event)
+    record_host_run(
+        interaction.user.id, event,
+        message_id=sent_message.id, channel_id=channel.id,
+        co_host_id=co_host.id if co_host else None,
+    )
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
@@ -3206,6 +3216,60 @@ async def slash_reping(interaction: discord.Interaction):
 
 @slash_reping.error
 async def slash_reping_error(interaction: discord.Interaction, error):
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="end", description="Reply to your last /host announcement saying the event has ended")
+async def slash_end(interaction: discord.Interaction):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.response.send_message(
+            "You need the Host role to use this.", ephemeral=True)
+        return
+
+    last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
+    if not last_host or not last_host.get("message_id"):
+        await interaction.response.send_message(
+            "You haven't run /host yet, so there's nothing to end.", ephemeral=True)
+        return
+
+    channel_id = last_host.get("channel_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    if channel is None:
+        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    try:
+        original = await channel.fetch_message(int(last_host["message_id"]))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        await interaction.response.send_message(
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+        return
+
+    users = [interaction.user.mention]
+    co_host_id = last_host.get("co_host_id")
+    if co_host_id:
+        users.append(f"<@{co_host_id}>")
+
+    await original.reply(
+        f"{' '.join(users)} event has ended",
+        allowed_mentions=discord.AllowedMentions(users=True),
+    )
+    await interaction.response.send_message("Marked your event as ended.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} ended their hosted event")
+
+
+@slash_end.error
+async def slash_end_error(interaction: discord.Interaction, error):
     msg = "Something went wrong running that command."
     print(f"[Slash] Error: {error}")
     if interaction.response.is_done():
