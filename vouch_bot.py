@@ -1529,7 +1529,7 @@ class TicketPanelView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="Host Request", style=discord.ButtonStyle.green,
-                        custom_id="ticket_panel_host_request", emoji="🎤")
+                        custom_id="ticket_panel_host_request")
     async def open_host_request(self, interaction: discord.Interaction, button: discord.ui.Button):
         if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
             await interaction.response.send_message(
@@ -1567,7 +1567,7 @@ class TicketPanelView(discord.ui.View):
                 content=ping, embed=embed, view=HostTicketCloseView(),
                 allowed_mentions=discord.AllowedMentions(users=True, roles=True))
             await log_audit(
-                f"🎫 {interaction.user.mention} opened a Host Request ticket ({channel.mention})"
+                f"{interaction.user.mention} opened a Host Request ticket ({channel.mention})"
                 + (f" - granted **{STAGE_PERMS_ROLE_NAME}**." if granted else "."))
 
         await interaction.followup.send(f"Your ticket: {channel.mention}", ephemeral=True)
@@ -1602,11 +1602,11 @@ class HostTicketCloseView(discord.ui.View):
                 except discord.Forbidden:
                     pass
             await log_audit(
-                f"🎫 Host Request ticket closed by {interaction.user.mention}"
+                f"Host Request ticket closed by {interaction.user.mention}"
                 + (f" - removed **{STAGE_PERMS_ROLE_NAME}** from <@{ticket['user_id']}>."
                    if removed else f" for <@{ticket['user_id']}>."))
 
-        await interaction.channel.send("🔒 Closing this ticket in 5 seconds...")
+        await interaction.channel.send("Closing this ticket in 5 seconds...")
         await asyncio.sleep(5)
         try:
             await interaction.channel.delete(reason=f"Ticket closed by {interaction.user}")
@@ -1620,6 +1620,7 @@ class HostTicketCloseView(discord.ui.View):
 
 HOST_ANNOUNCE_CHANNEL_ID = int(os.environ.get("HOST_ANNOUNCE_CHANNEL_ID", "1527833921071616110"))
 HOST_TEST_CHANNEL_ID = int(os.environ.get("HOST_TEST_CHANNEL_ID", "1478409787883524096"))
+HOST_COOLDOWN_SECONDS = int(os.environ.get("HOST_COOLDOWN_SECONDS", str(30 * 60)))
 
 # /host's region options - fixed dropdowns, not free text.
 REGION_ROLE_NAME = {
@@ -1667,7 +1668,7 @@ def record_host_run(user_id, event):
 
 
 def build_host_message(host, co_host, region, security_region, event, event_display, stage, notes, test=False):
-    title = "🧪 TEST - Host Announcement" if test else "📣 Host Announcement"
+    title = "TEST - Host Announcement" if test else "Host Announcement"
     vouch_targets = f"{host.mention} {co_host.mention}" if co_host else host.mention
     return (
         f"**{title}**\n"
@@ -3111,6 +3112,16 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
             "You need the Host role to use this.", ephemeral=True)
         return
 
+    host_runs = load_data().get(str(interaction.user.id), {}).get("host_runs", [])
+    if host_runs:
+        elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(host_runs[-1])).total_seconds()
+        if elapsed < HOST_COOLDOWN_SECONDS:
+            remaining = int((HOST_COOLDOWN_SECONDS - elapsed) // 60) + 1
+            await interaction.response.send_message(
+                f"You can run /host again in about {remaining} minute{'s' if remaining != 1 else ''}.",
+                ephemeral=True)
+            return
+
     channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
     if channel is None:
         await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
@@ -3141,7 +3152,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
     await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
     co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
-        f"📣 {interaction.user.mention} hosted **{event}** "
+        f"{interaction.user.mention} hosted **{event}** "
         f"(region: {region}, security region: {security_region}{co_host_note})")
 
 
@@ -3185,12 +3196,12 @@ async def slash_reping(interaction: discord.Interaction):
         ping_parts.append(event_role.mention)
 
     await channel.send(
-        content=f"{' '.join(ping_parts)}\n🔔 {interaction.user.mention} is re-pinging "
+        content=f"{' '.join(ping_parts)}\n{interaction.user.mention} is re-pinging "
                 f"**{event}** - come join!",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
     await interaction.response.send_message(f"Re-pinged **{event}** in {channel.mention}.", ephemeral=True)
-    await log_audit(f"🔔 {interaction.user.mention} re-pinged **{event}**")
+    await log_audit(f"{interaction.user.mention} re-pinged **{event}**")
 
 
 @slash_reping.error

@@ -347,7 +347,7 @@ UPDATE_PING_ROLE_NAME = "Bot Update"
 
 def _build_update_embed(content, posted_by, posted_at):
     embed = discord.Embed(
-        title="📢 Bot Update",
+        title="Bot Update",
         description=content,
         color=discord.Color.blurple(),
     )
