@@ -3176,7 +3176,7 @@ async def slash_host_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="reping", description="Re-ping the event from your last /host")
+@bot.tree.command(name="reping", description="Reply to your last /host announcement to bump it - pings nobody")
 async def slash_reping(interaction: discord.Interaction):
     guild = interaction.guild
     if guild is None:
@@ -3188,30 +3188,30 @@ async def slash_reping(interaction: discord.Interaction):
             "You need the Host role to use this.", ephemeral=True)
         return
 
-    data = load_data()
-    event = data.get(str(interaction.user.id), {}).get("last_host_event")
-    if not event:
+    last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
+    if not last_host or not last_host.get("message_id"):
         await interaction.response.send_message(
             "You haven't run /host yet, so there's nothing to re-ping.", ephemeral=True)
         return
 
-    channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
+    channel_id = last_host.get("channel_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
     if channel is None:
         await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
         return
 
-    event_role = discord.utils.get(guild.roles, name=event)
-    ping_parts = [interaction.user.mention]
-    if event_role:
-        ping_parts.append(event_role.mention)
+    try:
+        original = await channel.fetch_message(int(last_host["message_id"]))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        await interaction.response.send_message(
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+        return
 
-    await channel.send(
-        content=f"{' '.join(ping_parts)}\n{interaction.user.mention} is re-pinging "
-                f"**{event}** - come join!",
-        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
-    )
-    await interaction.response.send_message(f"Re-pinged **{event}** in {channel.mention}.", ephemeral=True)
-    await log_audit(f"{interaction.user.mention} re-pinged **{event}**")
+    event = last_host.get("event", "")
+    event_note = f" **{event}**" if event else ""
+    await original.reply(f"Still going{event_note} - come join!", allowed_mentions=discord.AllowedMentions.none())
+    await interaction.response.send_message(f"Re-pinged in {channel.mention}.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} re-pinged their hosted event")
 
 
 @slash_reping.error
