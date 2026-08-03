@@ -3208,8 +3208,13 @@ async def slash_reping(interaction: discord.Interaction):
         return
 
     event = last_host.get("event", "")
-    event_note = f" **{event}**" if event else ""
-    await original.reply(f"Still going{event_note} - come join!", allowed_mentions=discord.AllowedMentions.none())
+    event_role = discord.utils.get(guild.roles, name=event) if event else None
+    content = event_role.mention if event_role else f"**{event}**"
+
+    await original.reply(
+        content,
+        allowed_mentions=discord.AllowedMentions(everyone=False, users=False, roles=True, replied_user=False),
+    )
     await interaction.response.send_message(f"Re-pinged in {channel.mention}.", ephemeral=True)
     await log_audit(f"{interaction.user.mention} re-pinged their hosted event")
 
