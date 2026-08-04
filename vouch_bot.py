@@ -1698,6 +1698,18 @@ async def revoke_stage_perms(guild, member, reason):
         return False
 
 
+def find_host_for_stage(channel_id, topic):
+    """Which user's last /host this live stage instance belongs to, by channel+topic match."""
+    data = load_data()
+    for uid, record in data.items():
+        if not uid.isdigit():
+            continue
+        last_host = record.get("last_host") or {}
+        if str(last_host.get("stage_channel_id")) == str(channel_id) and last_host.get("event") == topic:
+            return uid
+    return None
+
+
 def build_host_message(host, co_host, region, security_region, event, event_display, stage, notes, test=False):
     title = "TEST - Host Announcement" if test else "Host Announcement"
     vouch_targets = f"{host.mention} {co_host.mention}" if co_host else host.mention
@@ -1783,10 +1795,25 @@ async def on_member_update(before, after):
 @bot.event
 async def on_stage_instance_delete(stage_instance):
     """Logs every stage that ends, not just ones ended through /end - Discord's native
-    Stage UI lets a stage moderator end it directly, bypassing the bot entirely."""
+    Stage UI lets a stage moderator end it directly, bypassing the bot entirely. Also
+    strips Stage Perms from whoever hosted it, so perms are bound to the stage itself
+    rather than relying on the host remembering to run /end."""
     channel = stage_instance.channel
     where = channel.mention if channel else f"channel `{stage_instance.channel_id}`"
     await log_audit(f"Stage ended in {where} (topic: **{stage_instance.topic}**)")
+
+    guild = getattr(channel, "guild", None)
+    if guild is None:
+        return
+    host_uid = find_host_for_stage(stage_instance.channel_id, stage_instance.topic)
+    if host_uid is None:
+        return
+    member = guild.get_member(int(host_uid))
+    if member is None:
+        return
+    removed = await revoke_stage_perms(guild, member, reason="Their stage ended")
+    if removed:
+        await log_audit(f"{member.mention}'s **{STAGE_PERMS_ROLE_NAME}** removed - their stage ended.")
 
 
 @bot.event
