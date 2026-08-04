@@ -1781,6 +1781,15 @@ async def on_member_update(before, after):
 
 
 @bot.event
+async def on_stage_instance_delete(stage_instance):
+    """Logs every stage that ends, not just ones ended through /end - Discord's native
+    Stage UI lets a stage moderator end it directly, bypassing the bot entirely."""
+    channel = stage_instance.channel
+    where = channel.mention if channel else f"channel `{stage_instance.channel_id}`"
+    await log_audit(f"Stage ended in {where} (topic: **{stage_instance.topic}**)")
+
+
+@bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
     # Start the web dashboard in a background thread
