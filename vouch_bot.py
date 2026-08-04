@@ -3322,21 +3322,29 @@ async def slash_end(interaction: discord.Interaction):
     )
 
     stage_ended = False
+    stage_skipped = False
     stage_channel_id = last_host.get("stage_channel_id")
     if stage_channel_id:
         stage_channel = guild.get_channel(int(stage_channel_id))
         if isinstance(stage_channel, discord.StageChannel) and stage_channel.instance:
-            try:
-                await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
-                stage_ended = True
-            except discord.HTTPException:
-                pass
+            # Someone else may have started a new event on the same stage channel
+            # since this host's last /host - only end it if it's still theirs.
+            if stage_channel.instance.topic == last_host.get("event"):
+                try:
+                    await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
+                    stage_ended = True
+                except discord.HTTPException:
+                    pass
+            else:
+                stage_skipped = True
 
     revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
 
     notice = "Marked your event as ended."
     if stage_ended:
         notice += " Stage ended."
+    elif stage_skipped:
+        notice += " Didn't touch the stage - someone else has a different event live on it now."
     if revoked:
         notice += f" **{STAGE_PERMS_ROLE_NAME}** removed."
     await interaction.response.send_message(notice, ephemeral=True)
