@@ -3138,9 +3138,10 @@ async def slash_admin_error(interaction: discord.Interaction, error):
 @bot.tree.command(name="ticketpanel", description="Post the ticket panel in this channel (Manage Server only)")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def slash_ticketpanel(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(title="Host Request", color=discord.Color.blurple())
     await interaction.channel.send(embed=embed, view=TicketPanelView())
-    await interaction.response.send_message("Panel posted.", ephemeral=True)
+    await interaction.followup.send("Panel posted.", ephemeral=True)
 
 
 @slash_ticketpanel.error
@@ -3169,13 +3170,14 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
                        security_region=HOST_SECURITY_REGION_CHOICES)
 async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
                       stage: discord.StageChannel, notes: str, co_host: discord.Member = None):
+    await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
-        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You need the Host role to use this.", ephemeral=True)
         return
 
@@ -3184,14 +3186,14 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(host_runs[-1])).total_seconds()
         if elapsed < HOST_COOLDOWN_SECONDS:
             remaining = int((HOST_COOLDOWN_SECONDS - elapsed) // 60) + 1
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"You can run /host again in about {remaining} minute{'s' if remaining != 1 else ''}.",
                 ephemeral=True)
             return
 
     channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
     if channel is None:
-        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
         return
 
     event_role = discord.utils.get(guild.roles, name=event)
@@ -3236,7 +3238,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         notice += " Couldn't start the stage (it may already be live, or I'm missing permission)."
     if not granted:
         notice += f" Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and my role sits above it."
-    await interaction.response.send_message(notice, ephemeral=True)
+    await interaction.followup.send(notice, ephemeral=True)
 
     co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
@@ -3256,32 +3258,33 @@ async def slash_host_error(interaction: discord.Interaction, error):
 
 @bot.tree.command(name="reping", description="Reply to your last /host announcement to bump it - pings nobody")
 async def slash_reping(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
-        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You need the Host role to use this.", ephemeral=True)
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
     if not last_host or not last_host.get("message_id"):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You haven't run /host yet, so there's nothing to re-ping.", ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
     channel = bot.get_channel(int(channel_id)) if channel_id else None
     if channel is None:
-        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
         return
 
     try:
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
         return
 
@@ -3293,7 +3296,7 @@ async def slash_reping(interaction: discord.Interaction):
         content,
         allowed_mentions=discord.AllowedMentions(everyone=False, users=False, roles=True, replied_user=False),
     )
-    await interaction.response.send_message(f"Re-pinged in {channel.mention}.", ephemeral=True)
+    await interaction.followup.send(f"Re-pinged in {channel.mention}.", ephemeral=True)
     await log_audit(f"{interaction.user.mention} re-pinged their hosted event")
 
 
@@ -3309,32 +3312,33 @@ async def slash_reping_error(interaction: discord.Interaction, error):
 
 @bot.tree.command(name="end", description="Reply to your last /host announcement saying the event has ended")
 async def slash_end(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
-        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You need the Host role to use this.", ephemeral=True)
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
     if not last_host or not last_host.get("message_id"):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "You haven't run /host yet, so there's nothing to end.", ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
     channel = bot.get_channel(int(channel_id)) if channel_id else None
     if channel is None:
-        await interaction.response.send_message("Couldn't find the events channel.", ephemeral=True)
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
         return
 
     try:
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
         return
 
@@ -3374,7 +3378,7 @@ async def slash_end(interaction: discord.Interaction):
         notice += " Didn't touch the stage - someone else has a different event live on it now."
     if revoked:
         notice += f" **{STAGE_PERMS_ROLE_NAME}** removed."
-    await interaction.response.send_message(notice, ephemeral=True)
+    await interaction.followup.send(notice, ephemeral=True)
     await log_audit(f"{interaction.user.mention} ended their hosted event")
 
 
@@ -3393,14 +3397,15 @@ async def slash_end_error(interaction: discord.Interaction, error):
 @app_commands.choices(event=HOST_EVENT_CHOICES)
 @app_commands.checks.has_permissions(manage_guild=True)
 async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Event"):
+    await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
-        await interaction.response.send_message("This only works inside the server.", ephemeral=True)
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
         return
 
     channel = bot.get_channel(HOST_TEST_CHANNEL_ID)
     if channel is None:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Couldn't find the test channel (ID `{HOST_TEST_CHANNEL_ID}`).", ephemeral=True)
         return
 
@@ -3423,7 +3428,7 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
         interaction.user, interaction.user, region, security_region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
     await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"Test posted in {channel.mention} (nobody was pinged).\n"
         f"Support roles found: " + (", ".join(support_found) or "none")
         + (f". Missing: {', '.join(support_missing)}" if support_missing else "") + "\n"
