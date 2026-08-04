@@ -3179,6 +3179,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
+    await channel.send("-----")
     record_host_run(
         interaction.user.id, event,
         message_id=sent_message.id, channel_id=channel.id,
