@@ -1655,9 +1655,9 @@ def security_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id=None):
+def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id=None, stage_channel_id=None):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
-    event hosted plus the posted message, so /reping and /end know what to act on."""
+    event hosted plus the posted message/stage, so /reping and /end know what to act on."""
     data = load_data()
     record = data.setdefault(str(user_id), {})
     runs = record.get("host_runs", [])
@@ -1669,8 +1669,33 @@ def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id
         "message_id": str(message_id) if message_id else None,
         "channel_id": str(channel_id) if channel_id else None,
         "co_host_id": co_host_id,
+        "stage_channel_id": str(stage_channel_id) if stage_channel_id else None,
     }
     save_data(data)
+
+
+async def grant_stage_perms(guild, member, reason):
+    """Adds the Stage Perms role if it exists and the bot can manage it. Returns True if granted."""
+    role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
+    if role is None or role >= guild.me.top_role:
+        return False
+    try:
+        await member.add_roles(role, reason=reason)
+        return True
+    except discord.Forbidden:
+        return False
+
+
+async def revoke_stage_perms(guild, member, reason):
+    """Removes the Stage Perms role if the member currently has it. Returns True if removed."""
+    role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
+    if role is None or member is None or role not in member.roles:
+        return False
+    try:
+        await member.remove_roles(role, reason=reason)
+        return True
+    except discord.Forbidden:
+        return False
 
 
 def build_host_message(host, co_host, region, security_region, event, event_display, stage, notes, test=False):
@@ -3101,13 +3126,13 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
     region="Support region this is for",
     security_region="Security region this is for",
     co_host="Who's co-hosting with you",
-    stage="Which stage/location for this event",
+    stage="Which stage channel this event is in - starts it and grants you Stage Perms",
     notes="Anything hosts should know - channel mentions work",
 )
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
                        security_region=HOST_SECURITY_REGION_CHOICES)
 async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
-                      stage: str, notes: str, co_host: discord.Member = None):
+                      stage: discord.StageChannel, notes: str, co_host: discord.Member = None):
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message("This only works inside the server.", ephemeral=True)
@@ -3149,7 +3174,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         ping_parts.append(event_role.mention)
 
     message = build_host_message(
-        interaction.user, co_host, region, security_region, event, event_display, stage, notes)
+        interaction.user, co_host, region, security_region, event, event_display, stage.mention, notes)
     sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
@@ -3158,11 +3183,27 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         interaction.user.id, event,
         message_id=sent_message.id, channel_id=channel.id,
         co_host_id=co_host.id if co_host else None,
+        stage_channel_id=stage.id,
     )
-    await interaction.response.send_message(f"Posted in {channel.mention}.", ephemeral=True)
+
+    granted = await grant_stage_perms(guild, interaction.user, reason=f"Hosting {event} via /host")
+    stage_started = False
+    try:
+        await stage.create_instance(topic=event, reason=f"Hosted by {interaction.user}")
+        stage_started = True
+    except discord.HTTPException:
+        pass
+
+    notice = f"Posted in {channel.mention}."
+    if not stage_started:
+        notice += " Couldn't start the stage (it may already be live, or I'm missing permission)."
+    if not granted:
+        notice += f" Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and my role sits above it."
+    await interaction.response.send_message(notice, ephemeral=True)
+
     co_host_note = f", co-host {co_host.mention}" if co_host else ""
     await log_audit(
-        f"{interaction.user.mention} hosted **{event}** "
+        f"{interaction.user.mention} hosted **{event}** in {stage.mention} "
         f"(region: {region}, security region: {security_region}{co_host_note})")
 
 
@@ -3269,7 +3310,26 @@ async def slash_end(interaction: discord.Interaction):
         f"{' '.join(users)} event has ended",
         allowed_mentions=discord.AllowedMentions(users=True),
     )
-    await interaction.response.send_message("Marked your event as ended.", ephemeral=True)
+
+    stage_ended = False
+    stage_channel_id = last_host.get("stage_channel_id")
+    if stage_channel_id:
+        stage_channel = guild.get_channel(int(stage_channel_id))
+        if isinstance(stage_channel, discord.StageChannel) and stage_channel.instance:
+            try:
+                await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
+                stage_ended = True
+            except discord.HTTPException:
+                pass
+
+    revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
+
+    notice = "Marked your event as ended."
+    if stage_ended:
+        notice += " Stage ended."
+    if revoked:
+        notice += f" **{STAGE_PERMS_ROLE_NAME}** removed."
+    await interaction.response.send_message(notice, ephemeral=True)
     await log_audit(f"{interaction.user.mention} ended their hosted event")
 
 
