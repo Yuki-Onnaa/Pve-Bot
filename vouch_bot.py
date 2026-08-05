@@ -3392,6 +3392,71 @@ async def slash_end_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
+@bot.tree.command(name="cohost", description="Add or change the co-host on your last /host announcement")
+@app_commands.describe(co_host="Who's co-hosting with you")
+async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
+        return
+
+    last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
+    if not last_host or not last_host.get("message_id"):
+        await interaction.followup.send(
+            "You haven't run /host yet, so there's nothing to update.", ephemeral=True)
+        return
+
+    channel_id = last_host.get("channel_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    if channel is None:
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    try:
+        original = await channel.fetch_message(int(last_host["message_id"]))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        await interaction.followup.send(
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+        return
+
+    event = last_host.get("event", "")
+    content = re.sub(r"\*\*Co Host:\*\*.*", f"**Co Host:** {co_host.mention}", original.content)
+    content = re.sub(
+        r"\*\*vouches:\*\*.*",
+        f"**vouches:** vouch {interaction.user.mention} {co_host.mention} {event.lower()}",
+        content,
+    )
+    try:
+        await original.edit(content=content)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Couldn't edit the message: {e}", ephemeral=True)
+        return
+
+    data = load_data()
+    record = data.setdefault(str(interaction.user.id), {})
+    if record.get("last_host"):
+        record["last_host"]["co_host_id"] = co_host.id
+    save_data(data)
+
+    await interaction.followup.send(f"Added {co_host.mention} as co-host on your announcement.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} added {co_host.mention} as co-host on their hosted event")
+
+
+@slash_cohost.error
+async def slash_cohost_error(interaction: discord.Interaction, error):
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
 @app_commands.describe(event="Event to test the role lookup with (optional)")
 @app_commands.choices(event=HOST_EVENT_CHOICES)
