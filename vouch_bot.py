@@ -1860,20 +1860,25 @@ async def on_ready():
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
 
+    # Guild-scoped commands sync instantly; global commands can take up to an hour
+    # and would show up as duplicates alongside a guild-scoped copy of the same
+    # commands, so when a main guild is configured, register there ONLY and clear
+    # any previously-registered global commands to remove the duplicates.
     try:
-        synced = await bot.tree.sync()
-        print(f"[Slash] Synced {len(synced)} command(s) globally (can take up to an hour to show up)")
-    except discord.HTTPException as e:
-        print(f"[Slash] Global sync failed: {e}")
-
-    if GUILD_ID:
-        try:
+        if GUILD_ID:
             guild_obj = discord.Object(id=GUILD_ID)
             bot.tree.copy_global_to(guild=guild_obj)
             guild_synced = await bot.tree.sync(guild=guild_obj)
             print(f"[Slash] Synced {len(guild_synced)} command(s) instantly to guild {GUILD_ID}")
-        except discord.HTTPException as e:
-            print(f"[Slash] Guild sync failed: {e}")
+
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+            print("[Slash] Cleared global command registrations (guild-scoped copies are now the only ones)")
+        else:
+            synced = await bot.tree.sync()
+            print(f"[Slash] Synced {len(synced)} command(s) globally (can take up to an hour to show up)")
+    except discord.HTTPException as e:
+        print(f"[Slash] Sync failed: {e}")
     await refresh_live_leaderboards()
     if not event_ping_loop.is_running():
         event_ping_loop.start()
