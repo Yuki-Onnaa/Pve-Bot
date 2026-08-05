@@ -1642,6 +1642,18 @@ HOST_SECURITY_REGION_CHOICES = [app_commands.Choice(name=r, value=r) for r in SE
 # /host's event option - same list as the Host category on the website (Points & ranks).
 HOST_EVENT_CHOICES = [app_commands.Choice(name=n, value=n) for n in CATEGORY_EVENTS["pve"]]
 
+# Some event ping roles aren't named exactly like the event choice shown in /host.
+EVENT_ROLE_NAME_OVERRIDES = {
+    "Elder": "Elder Primadon",
+}
+
+
+def event_role_for(guild, event):
+    """The role to ping for an event, using an override name where the role isn't
+    named exactly like the event (e.g. "Elder" pings the "Elder Primadon" role)."""
+    role_name = EVENT_ROLE_NAME_OVERRIDES.get(event, event)
+    return discord.utils.get(guild.roles, name=role_name)
+
 
 def support_role_for_region(guild, region):
     """The single support role to ping for a chosen region, or None."""
@@ -3196,7 +3208,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
         return
 
-    event_role = discord.utils.get(guild.roles, name=event)
+    event_role = event_role_for(guild, event)
     event_display = event_role.mention if event_role else f"**{event}**"
 
     support_role = support_role_for_region(guild, region)
@@ -3289,7 +3301,7 @@ async def slash_reping(interaction: discord.Interaction):
         return
 
     event = last_host.get("event", "")
-    event_role = discord.utils.get(guild.roles, name=event) if event else None
+    event_role = event_role_for(guild, event) if event else None
     content = event_role.mention if event_role else f"**{event}**"
 
     await original.reply(
@@ -3457,6 +3469,114 @@ async def slash_cohost_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
+@bot.tree.command(name="takeover", description="Take over hosting from another host - no need to /end and re-/host")
+@app_commands.describe(current_host="Who's currently hosting the event you're taking over")
+async def slash_takeover(interaction: discord.Interaction, current_host: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
+        return
+
+    if current_host.id == interaction.user.id:
+        await interaction.followup.send("You can't take over your own event.", ephemeral=True)
+        return
+
+    data = load_data()
+    last_host = data.get(str(current_host.id), {}).get("last_host")
+    if not last_host or not last_host.get("message_id"):
+        await interaction.followup.send(f"{current_host.mention} hasn't run /host recently.", ephemeral=True)
+        return
+
+    channel_id = last_host.get("channel_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    if channel is None:
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    try:
+        original = await channel.fetch_message(int(last_host["message_id"]))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        await interaction.followup.send(
+            "Couldn't find that host's /host message - it may have been deleted.", ephemeral=True)
+        return
+
+    event = last_host.get("event", "")
+    co_host_id = last_host.get("co_host_id")
+    vouch_targets = f"{interaction.user.mention} <@{co_host_id}>" if co_host_id else interaction.user.mention
+    content = re.sub(r"\*\*Event Host:\*\*.*", f"**Event Host:** {interaction.user.mention}", original.content)
+    content = re.sub(
+        r"\*\*vouches:\*\*.*",
+        f"**vouches:** vouch {vouch_targets} {event.lower()}",
+        content,
+    )
+    try:
+        await original.edit(content=content)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Couldn't edit the message: {e}", ephemeral=True)
+        return
+
+    # Move the tracking from the outgoing host to the incoming one
+    data = load_data()
+    old_record = data.setdefault(str(current_host.id), {})
+    old_record["last_host"] = None
+    new_record = data.setdefault(str(interaction.user.id), {})
+    new_record["last_host_event"] = event
+    new_record["last_host"] = {
+        "event": event,
+        "message_id": last_host.get("message_id"),
+        "channel_id": last_host.get("channel_id"),
+        "co_host_id": co_host_id,
+        "stage_channel_id": last_host.get("stage_channel_id"),
+    }
+    save_data(data)
+
+    await revoke_stage_perms(guild, current_host, reason=f"Handed off hosting to {interaction.user}")
+    granted = await grant_stage_perms(guild, interaction.user, reason=f"Took over hosting from {current_host}")
+
+    speaker_note = ""
+    stage_channel_id = last_host.get("stage_channel_id")
+    if stage_channel_id:
+        stage_channel = guild.get_channel(int(stage_channel_id))
+        if isinstance(stage_channel, discord.StageChannel):
+            try:
+                if current_host.voice and current_host.voice.channel and current_host.voice.channel.id == stage_channel.id:
+                    await current_host.edit(suppress=True)
+            except discord.HTTPException:
+                pass
+            try:
+                if interaction.user.voice and interaction.user.voice.channel and interaction.user.voice.channel.id == stage_channel.id:
+                    await interaction.user.edit(suppress=False)
+                elif interaction.user.voice:
+                    await interaction.user.move_to(stage_channel)
+                    await interaction.user.edit(suppress=False)
+                else:
+                    speaker_note = " Join the stage yourself to be promoted to speaker - I can't pull you in from outside voice."
+            except discord.HTTPException:
+                speaker_note = " Couldn't update your speaker status on the stage - do it manually if needed."
+
+    notice = f"Took over hosting **{event}** from {current_host.mention}."
+    if not granted:
+        notice += f" Couldn't grant **{STAGE_PERMS_ROLE_NAME}**."
+    notice += speaker_note
+    await interaction.followup.send(notice, ephemeral=True)
+    await log_audit(f"{interaction.user.mention} took over hosting **{event}** from {current_host.mention}")
+
+
+@slash_takeover.error
+async def slash_takeover_error(interaction: discord.Interaction, error):
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
 @app_commands.describe(event="Event to test the role lookup with (optional)")
 @app_commands.choices(event=HOST_EVENT_CHOICES)
@@ -3476,7 +3596,7 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
 
     region = "EU/NA/Asia (test)"
     security_region = "EU/NA/Asia/SA/OCE (test)"
-    event_role = discord.utils.get(guild.roles, name=event)
+    event_role = event_role_for(guild, event)
     event_display = event_role.mention if event_role else f"**{event}** (no matching role found)"
 
     def check_roles(mapping):
