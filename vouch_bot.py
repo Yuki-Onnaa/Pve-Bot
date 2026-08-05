@@ -3216,6 +3216,23 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
                 ephemeral=True)
             return
 
+    if stage.instance:
+        other_host_id = find_host_for_stage(stage.id, stage.instance.topic)
+        if other_host_id and str(other_host_id) != str(interaction.user.id):
+            other_member = guild.get_member(int(other_host_id))
+            mention = other_member.mention if other_member else f"<@{other_host_id}>"
+            await interaction.followup.send(
+                f"{stage.mention} is already live with **{stage.instance.topic}**, hosted by {mention}. "
+                f"Use /takeover if you're picking it up, or choose a different stage.",
+                ephemeral=True)
+            return
+        else:
+            await interaction.followup.send(
+                f"{stage.mention} already has a live stage instance (**{stage.instance.topic}**). "
+                f"End it first or choose a different stage.",
+                ephemeral=True)
+            return
+
     host_runs = load_data().get(str(interaction.user.id), {}).get("host_runs", [])
     if host_runs:
         elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(host_runs[-1])).total_seconds()
@@ -3513,6 +3530,20 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
     last_host = data.get(str(current_host.id), {}).get("last_host")
     if not last_host or not last_host.get("message_id"):
         await interaction.followup.send(f"{current_host.mention} hasn't run /host recently.", ephemeral=True)
+        return
+
+    stage_channel_id = last_host.get("stage_channel_id")
+    stage_channel = guild.get_channel(int(stage_channel_id)) if stage_channel_id else None
+    stage_live = (
+        isinstance(stage_channel, discord.StageChannel)
+        and stage_channel.instance
+        and stage_channel.instance.topic == last_host.get("event")
+    )
+    if not stage_live:
+        await interaction.followup.send(
+            f"{current_host.mention}'s last hosted event isn't live anymore, so there's nothing to take over.",
+            ephemeral=True,
+        )
         return
 
     channel_id = last_host.get("channel_id")
