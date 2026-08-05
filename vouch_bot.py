@@ -1673,7 +1673,7 @@ def security_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id=None, stage_channel_id=None):
+def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_ids=None, stage_channel_id=None):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
     event hosted plus the posted message/stage, so /reping and /end know what to act on."""
     data = load_data()
@@ -1686,10 +1686,20 @@ def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id
         "event": event,
         "message_id": str(message_id) if message_id else None,
         "channel_id": str(channel_id) if channel_id else None,
-        "co_host_id": co_host_id,
+        "co_host_ids": [str(c) for c in co_host_ids] if co_host_ids else [],
         "stage_channel_id": str(stage_channel_id) if stage_channel_id else None,
     }
     save_data(data)
+
+
+def co_host_ids_from(last_host):
+    """Reads the co-host id list from a last_host record, falling back to the old
+    single co_host_id key for records saved before multiple co-hosts were supported."""
+    ids = last_host.get("co_host_ids")
+    if ids:
+        return [str(i) for i in ids]
+    legacy = last_host.get("co_host_id")
+    return [str(legacy)] if legacy else []
 
 
 async def grant_stage_perms(guild, member, reason):
@@ -1728,13 +1738,15 @@ def find_host_for_stage(channel_id, topic):
     return None
 
 
-def build_host_message(host, co_host, region, security_region, event, event_display, stage, notes, test=False):
+def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes, test=False):
     title = "TEST - Host Announcement" if test else "Host Announcement"
-    vouch_targets = f"{host.mention} {co_host.mention}" if co_host else host.mention
+    co_hosts = co_hosts or []
+    vouch_targets = " ".join([host.mention] + [c.mention for c in co_hosts])
+    co_host_line = ", ".join(c.mention for c in co_hosts) if co_hosts else "-"
     return (
         f"**{title}**\n"
         f"**Event Host:** {host.mention}\n"
-        f"**Co Host:** {co_host.mention if co_host else '-'}\n"
+        f"**Co Host:** {co_host_line}\n"
         f"**Region:** {region}\n"
         f"**Security Region:** {security_region}\n"
         f"**Event Type:** {event_display}\n"
@@ -3186,13 +3198,20 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
     region="Support region this is for",
     security_region="Security region this is for",
     co_host="Who's co-hosting with you",
+    co_host2="Another co-host (optional)",
+    co_host3="Another co-host (optional)",
     stage="Which stage channel this event is in - starts it and grants you Stage Perms",
     notes="Anything hosts should know - channel mentions work",
 )
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
                        security_region=HOST_SECURITY_REGION_CHOICES)
 async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
-                      stage: discord.StageChannel, notes: str, co_host: discord.Member = None):
+                      stage: discord.StageChannel, notes: str, co_host: discord.Member = None,
+                      co_host2: discord.Member = None, co_host3: discord.Member = None):
+    co_hosts = []
+    for c in (co_host, co_host2, co_host3):
+        if c and c.id != interaction.user.id and c.id not in {h.id for h in co_hosts}:
+            co_hosts.append(c)
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
@@ -3253,9 +3272,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
 
     support_role = support_role_for_region(guild, region)
     security_role = security_role_for_region(guild, security_region)
-    ping_parts = [interaction.user.mention]
-    if co_host:
-        ping_parts.append(co_host.mention)
+    ping_parts = [interaction.user.mention] + [c.mention for c in co_hosts]
     if support_role:
         ping_parts.append(support_role.mention)
     if security_role:
@@ -3264,7 +3281,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         ping_parts.append(event_role.mention)
 
     message = build_host_message(
-        interaction.user, co_host, region, security_region, event, event_display, stage.mention, notes)
+        interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes)
     sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
@@ -3273,7 +3290,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
     record_host_run(
         interaction.user.id, event,
         message_id=sent_message.id, channel_id=channel.id,
-        co_host_id=co_host.id if co_host else None,
+        co_host_ids=[c.id for c in co_hosts],
         stage_channel_id=stage.id,
     )
 
@@ -3292,7 +3309,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         notice += f" Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and my role sits above it."
     await interaction.followup.send(notice, ephemeral=True)
 
-    co_host_note = f", co-host {co_host.mention}" if co_host else ""
+    co_host_note = f", co-hosts {', '.join(c.mention for c in co_hosts)}" if co_hosts else ""
     await log_audit(
         f"{interaction.user.mention} hosted **{event}** in {stage.mention} "
         f"(region: {region}, security region: {security_region}{co_host_note})")
@@ -3394,10 +3411,7 @@ async def slash_end(interaction: discord.Interaction):
             "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
         return
 
-    users = [interaction.user.mention]
-    co_host_id = last_host.get("co_host_id")
-    if co_host_id:
-        users.append(f"<@{co_host_id}>")
+    users = [interaction.user.mention] + [f"<@{cid}>" for cid in co_host_ids_from(last_host)]
 
     await original.reply(
         f"{' '.join(users)} event has ended",
@@ -3444,9 +3458,18 @@ async def slash_end_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="cohost", description="Add or change the co-host on your last /host announcement")
-@app_commands.describe(co_host="Who's co-hosting with you")
-async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member):
+@bot.tree.command(name="cohost", description="Add or change the co-hosts on your last /host announcement")
+@app_commands.describe(
+    co_host="Who's co-hosting with you",
+    co_host2="Another co-host (optional)",
+    co_host3="Another co-host (optional)",
+)
+async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member,
+                        co_host2: discord.Member = None, co_host3: discord.Member = None):
+    co_hosts = []
+    for c in (co_host, co_host2, co_host3):
+        if c and c.id != interaction.user.id and c.id not in {h.id for h in co_hosts}:
+            co_hosts.append(c)
     await interaction.response.defer(ephemeral=True)
     guild = interaction.guild
     if guild is None:
@@ -3477,10 +3500,12 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
         return
 
     event = last_host.get("event", "")
-    content = re.sub(r"\*\*Co Host:\*\*.*", f"**Co Host:** {co_host.mention}", original.content)
+    co_host_line = ", ".join(c.mention for c in co_hosts) if co_hosts else "-"
+    vouch_targets = " ".join([interaction.user.mention] + [c.mention for c in co_hosts])
+    content = re.sub(r"\*\*Co Host:\*\*.*", f"**Co Host:** {co_host_line}", original.content)
     content = re.sub(
         r"\*\*vouches:\*\*.*",
-        f"**vouches:** vouch {interaction.user.mention} {co_host.mention} {event.lower()}",
+        f"**vouches:** vouch {vouch_targets} {event.lower()}",
         content,
     )
     try:
@@ -3492,11 +3517,13 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
     data = load_data()
     record = data.setdefault(str(interaction.user.id), {})
     if record.get("last_host"):
-        record["last_host"]["co_host_id"] = co_host.id
+        record["last_host"]["co_host_ids"] = [str(c.id) for c in co_hosts]
+        record["last_host"].pop("co_host_id", None)
     save_data(data)
 
-    await interaction.followup.send(f"Added {co_host.mention} as co-host on your announcement.", ephemeral=True)
-    await log_audit(f"{interaction.user.mention} added {co_host.mention} as co-host on their hosted event")
+    names = ", ".join(c.mention for c in co_hosts)
+    await interaction.followup.send(f"Set {names} as co-host(s) on your announcement.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} set {names} as co-host(s) on their hosted event")
 
 
 @slash_cohost.error
@@ -3560,8 +3587,8 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         return
 
     event = last_host.get("event", "")
-    co_host_id = last_host.get("co_host_id")
-    vouch_targets = f"{interaction.user.mention} <@{co_host_id}>" if co_host_id else interaction.user.mention
+    co_host_ids = co_host_ids_from(last_host)
+    vouch_targets = " ".join([interaction.user.mention] + [f"<@{cid}>" for cid in co_host_ids])
     content = re.sub(r"\*\*Event Host:\*\*.*", f"**Event Host:** {interaction.user.mention}", original.content)
     content = re.sub(
         r"\*\*vouches:\*\*.*",
@@ -3584,7 +3611,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         "event": event,
         "message_id": last_host.get("message_id"),
         "channel_id": last_host.get("channel_id"),
-        "co_host_id": co_host_id,
+        "co_host_ids": co_host_ids,
         "stage_channel_id": last_host.get("stage_channel_id"),
     }
     save_data(data)
@@ -3664,7 +3691,7 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
     security_found, security_missing = check_roles(SECURITY_REGION_ROLE_NAME)
 
     message = build_host_message(
-        interaction.user, interaction.user, region, security_region, event, event_display,
+        interaction.user, [interaction.user], region, security_region, event, event_display,
         "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
     await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
     await interaction.followup.send(
