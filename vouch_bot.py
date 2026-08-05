@@ -3198,6 +3198,18 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
             "You need the Host role to use this.", ephemeral=True)
         return
 
+    last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
+    if last_host and last_host.get("stage_channel_id"):
+        prev_stage = guild.get_channel(int(last_host["stage_channel_id"]))
+        if (isinstance(prev_stage, discord.StageChannel) and prev_stage.instance
+                and prev_stage.instance.topic == last_host.get("event")):
+            await interaction.followup.send(
+                f"You still have an active hosted event (**{last_host.get('event')}**) on "
+                f"{prev_stage.mention}. Run /end to close it first, or /takeover if someone "
+                f"else is picking it up.",
+                ephemeral=True)
+            return
+
     host_runs = load_data().get(str(interaction.user.id), {}).get("host_runs", [])
     if host_runs:
         elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(host_runs[-1])).total_seconds()
