@@ -1645,6 +1645,12 @@ HOST_EVENT_CHOICES = [app_commands.Choice(name=n, value=n) for n in CATEGORY_EVE
 # Some event ping roles aren't named exactly like the event choice shown in /host.
 EVENT_ROLE_NAME_OVERRIDES = {
     "Elder": "Elder Primadon",
+    "Deep Champion": "Kyrsgarde Champion",
+    "Parasol": "Interluminary Parasol",
+    "Layer 2 (1)": "Layer 2",
+    "Layer 2 (2)": "Layer 2",
+    "Diluvian W (25)": "Other Bosses",
+    "Diluvian W (50)": "Other Bosses",
 }
 
 
