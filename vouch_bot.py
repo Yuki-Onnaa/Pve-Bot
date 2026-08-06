@@ -253,8 +253,10 @@ PVE_ALIASES = {
     "otherbosses": "Other Bosses",
 }
 
-# Universal per-target cooldown for Host (PVE) vouches - applies no matter which
+# Per-author, per-target cooldown for Host (PVE) vouches - applies no matter which
 # event they're vouched for, on top of (not instead of) any per-event cooldown above.
+# It's individual: one host vouching someone doesn't block a different host from
+# vouching that same person - it only blocks that same author/target pair.
 HOST_VOUCH_COOLDOWN_SECONDS = int(os.environ.get("HOST_VOUCH_COOLDOWN_SECONDS", str(5 * 60)))
 
 # ── Security events (format: "<event> @user", 1hr cooldown unless noted) ──
@@ -501,8 +503,9 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
                     cooldown_ids.append(target_id)
                     continue
 
+        any_key = f"_any_{author_id}"
         if category == "pve" and HOST_VOUCH_COOLDOWN_SECONDS > 0:
-            last_any = record["cooldowns"].get("_any_")
+            last_any = record["cooldowns"].get(any_key)
             if last_any:
                 last_any_dt = datetime.fromisoformat(last_any)
                 if (when - last_any_dt).total_seconds() < HOST_VOUCH_COOLDOWN_SECONDS:
@@ -514,7 +517,7 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
         record["events"][event_name] += 1
         record["cooldowns"][event_name] = when.isoformat()
         if category == "pve":
-            record["cooldowns"]["_any_"] = when.isoformat()
+            record["cooldowns"][any_key] = when.isoformat()
         record["log"].append({
             "id": uuid.uuid4().hex[:8],
             "by": str(author_id),
