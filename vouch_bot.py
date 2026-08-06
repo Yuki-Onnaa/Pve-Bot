@@ -1738,6 +1738,33 @@ def find_host_for_stage(channel_id, topic):
     return None
 
 
+async def announce_event_ended(guild, host_uid, last_host):
+    """Posts the 'event has ended' reply on a host's original /host announcement.
+    Shared by /end and on_stage_instance_delete so the announcement gets the same
+    reply whether a host runs /end or just ends the stage natively in Discord."""
+    channel_id = last_host.get("channel_id")
+    message_id = last_host.get("message_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    if channel is None or not message_id:
+        return False
+    try:
+        original = await channel.fetch_message(int(message_id))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        return False
+
+    member = guild.get_member(int(host_uid))
+    host_mention = member.mention if member else f"<@{host_uid}>"
+    users = [host_mention] + [f"<@{cid}>" for cid in co_host_ids_from(last_host)]
+    try:
+        await original.reply(
+            f"{' '.join(users)} event has ended",
+            allowed_mentions=discord.AllowedMentions(users=True),
+        )
+    except discord.HTTPException:
+        return False
+    return True
+
+
 def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes, test=False):
     title = "TEST - Host Announcement" if test else "Host Announcement"
     co_hosts = co_hosts or []
@@ -1826,8 +1853,8 @@ async def on_member_update(before, after):
 async def on_stage_instance_delete(stage_instance):
     """Logs every stage that ends, not just ones ended through /end - Discord's native
     Stage UI lets a stage moderator end it directly, bypassing the bot entirely. Also
-    strips Stage Perms from whoever hosted it, so perms are bound to the stage itself
-    rather than relying on the host remembering to run /end."""
+    posts the same 'event has ended' reply /end would post, and strips Stage Perms from
+    whoever hosted it, so ending the stage itself is enough - no need to also run /end."""
     channel = stage_instance.channel
     where = channel.mention if channel else f"channel `{stage_instance.channel_id}`"
     await log_audit(f"Stage ended in {where} (topic: **{stage_instance.topic}**)")
@@ -1838,6 +1865,10 @@ async def on_stage_instance_delete(stage_instance):
     host_uid = find_host_for_stage(stage_instance.channel_id, stage_instance.topic)
     if host_uid is None:
         return
+
+    last_host = load_data().get(host_uid, {}).get("last_host") or {}
+    await announce_event_ended(guild, host_uid, last_host)
+
     member = guild.get_member(int(host_uid))
     if member is None:
         return
@@ -3405,18 +3436,11 @@ async def slash_end(interaction: discord.Interaction):
         return
 
     try:
-        original = await channel.fetch_message(int(last_host["message_id"]))
+        await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
             "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
         return
-
-    users = [interaction.user.mention] + [f"<@{cid}>" for cid in co_host_ids_from(last_host)]
-
-    await original.reply(
-        f"{' '.join(users)} event has ended",
-        allowed_mentions=discord.AllowedMentions(users=True),
-    )
 
     stage_ended = False
     stage_skipped = False
@@ -3428,6 +3452,8 @@ async def slash_end(interaction: discord.Interaction):
             # since this host's last /host - only end it if it's still theirs.
             if stage_channel.instance.topic == last_host.get("event"):
                 try:
+                    # Deleting it fires on_stage_instance_delete, which posts the
+                    # "event has ended" reply and strips Stage Perms for us.
                     await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
                     stage_ended = True
                 except discord.HTTPException:
@@ -3435,7 +3461,12 @@ async def slash_end(interaction: discord.Interaction):
             else:
                 stage_skipped = True
 
-    revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
+    revoked = False
+    if not stage_ended:
+        # No live stage of theirs to delete (already ended, or never started) -
+        # on_stage_instance_delete won't fire, so post the notice and strip perms ourselves.
+        await announce_event_ended(guild, str(interaction.user.id), last_host)
+        revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
 
     notice = "Marked your event as ended."
     if stage_ended:
