@@ -3489,13 +3489,13 @@ async def slash_end_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="cohost", description="Add or change the co-hosts on your last /host announcement")
+@bot.tree.command(name="cohost", description="Set (or clear) the co-hosts on your last /host announcement")
 @app_commands.describe(
-    co_host="Who's co-hosting with you",
+    co_host="Who's co-hosting with you - leave all three blank to remove all co-hosts",
     co_host2="Another co-host (optional)",
     co_host3="Another co-host (optional)",
 )
-async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member,
+async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member = None,
                         co_host2: discord.Member = None, co_host3: discord.Member = None):
     co_hosts = []
     for c in (co_host, co_host2, co_host3):
@@ -3552,9 +3552,13 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
         record["last_host"].pop("co_host_id", None)
     save_data(data)
 
-    names = ", ".join(c.mention for c in co_hosts)
-    await interaction.followup.send(f"Set {names} as co-host(s) on your announcement.", ephemeral=True)
-    await log_audit(f"{interaction.user.mention} set {names} as co-host(s) on their hosted event")
+    if co_hosts:
+        names = ", ".join(c.mention for c in co_hosts)
+        await interaction.followup.send(f"Set {names} as co-host(s) on your announcement.", ephemeral=True)
+        await log_audit(f"{interaction.user.mention} set {names} as co-host(s) on their hosted event")
+    else:
+        await interaction.followup.send("Removed all co-hosts from your announcement.", ephemeral=True)
+        await log_audit(f"{interaction.user.mention} removed all co-hosts from their hosted event")
 
 
 @slash_cohost.error
