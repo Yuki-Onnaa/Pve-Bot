@@ -3481,6 +3481,7 @@ async def slash_end(interaction: discord.Interaction):
 
     stage_ended = False
     stage_skipped = False
+    stage_delete_failed = False
     stage_channel_id = last_host.get("stage_channel_id")
     if stage_channel_id:
         stage_channel = guild.get_channel(int(stage_channel_id))
@@ -3494,15 +3495,15 @@ async def slash_end(interaction: discord.Interaction):
                     await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
                     stage_ended = True
                 except discord.HTTPException:
-                    pass
+                    stage_delete_failed = True
             else:
                 stage_skipped = True
 
     revoked = False
     if not stage_ended:
         # No live stage of theirs to delete (already ended, taken by someone else's
-        # event, or never started) - on_stage_instance_delete won't fire for us, so
-        # post the notice, strip perms, and unlink the stage tracking ourselves.
+        # event, delete failed, or never started) - on_stage_instance_delete won't
+        # fire for us, so post the notice, strip perms, and unlink tracking ourselves.
         clear_stage_tracking(interaction.user.id)
         await announce_event_ended(guild, str(interaction.user.id), last_host)
         revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
@@ -3510,12 +3511,16 @@ async def slash_end(interaction: discord.Interaction):
     notice = "Marked your event as ended."
     if stage_ended:
         notice += " Stage ended."
+    elif stage_delete_failed:
+        notice += (" I couldn't actually end the Stage though - check my permissions there "
+                   "and end it manually if it's still live.")
     elif stage_skipped:
         notice += " Didn't touch the stage - someone else has a different event live on it now."
     if revoked:
         notice += f" **{STAGE_PERMS_ROLE_NAME}** removed."
     await interaction.followup.send(notice, ephemeral=True)
-    await log_audit(f"{interaction.user.mention} ended their hosted event")
+    await log_audit(f"{interaction.user.mention} ended their hosted event"
+                     + (" (couldn't end the Stage - check bot permissions)" if stage_delete_failed else ""))
 
 
 @slash_end.error
