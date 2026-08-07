@@ -1755,6 +1755,19 @@ def find_host_for_stage(channel_id, topic):
     return None
 
 
+def clear_stage_tracking(host_uid):
+    """Unlinks a host's last_host from the stage it was on once that stage ends.
+    Without this, a host's stale record keeps matching on (stage_channel_id, event)
+    after they're done, so if anyone else later hosts the same event type on the
+    same stage, find_host_for_stage / /host's ghost-check / /end's safety check can
+    all misattribute that new, unrelated live stage to the old, finished host."""
+    data = load_data()
+    record = data.get(str(host_uid))
+    if record and record.get("last_host"):
+        record["last_host"]["stage_channel_id"] = None
+        save_data(data)
+
+
 async def announce_event_ended(guild, host_uid, last_host):
     """Posts the 'event has ended' reply on a host's original /host announcement.
     Shared by /end and on_stage_instance_delete so the announcement gets the same
@@ -1884,6 +1897,7 @@ async def on_stage_instance_delete(stage_instance):
         return
 
     last_host = load_data().get(host_uid, {}).get("last_host") or {}
+    clear_stage_tracking(host_uid)
     await announce_event_ended(guild, host_uid, last_host)
 
     member = guild.get_member(int(host_uid))
@@ -3480,8 +3494,10 @@ async def slash_end(interaction: discord.Interaction):
 
     revoked = False
     if not stage_ended:
-        # No live stage of theirs to delete (already ended, or never started) -
-        # on_stage_instance_delete won't fire, so post the notice and strip perms ourselves.
+        # No live stage of theirs to delete (already ended, taken by someone else's
+        # event, or never started) - on_stage_instance_delete won't fire for us, so
+        # post the notice, strip perms, and unlink the stage tracking ourselves.
+        clear_stage_tracking(interaction.user.id)
         await announce_event_ended(guild, str(interaction.user.id), last_host)
         revoked = await revoke_stage_perms(guild, interaction.user, reason="Ended their event via /end")
 
