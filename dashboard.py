@@ -2748,6 +2748,18 @@ tr:hover td{background:rgba(255,255,255,.02)}
   .content{padding:22px 16px 32px}
   .feature{padding:20px}
 }
+
+/* ── Persistent sidebar on wide screens - no more hidden-until-clicked drawer ── */
+@media (min-width:960px){
+  body{display:grid;grid-template-columns:260px 1fr;grid-template-rows:auto 1fr auto;min-height:100dvh}
+  .overlay{display:none}
+  .drawer{position:sticky;top:0;left:0;transform:none;grid-column:1;grid-row:1 / 4;height:100dvh}
+  .header{grid-column:2;grid-row:1}
+  .content{grid-column:2;grid-row:2}
+  .footer{grid-column:2;grid-row:3}
+  .icon-btn{display:none}
+  .header .brand{display:none}
+}
 </style>
 </head>
 <body>
