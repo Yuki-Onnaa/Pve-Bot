@@ -722,7 +722,7 @@ async def update_role_for_user(guild, user_id, category, notify=True):
             await member.remove_roles(*roles_to_remove, reason="Vouch rank update")
         if role_to_add and role_to_add not in member.roles:
             await member.add_roles(role_to_add, reason="Vouch rank update")
-            if notify and promoted:
+            if notify and promoted and not data.get(str(user_id), {}).get("rank_up_dm_opt_out"):
                 sent = await send_rank_up_dm(member, old_rank, achieved_role_name)
                 if not sent:
                     await log_audit(
