@@ -1765,6 +1765,7 @@ def clear_stage_tracking(host_uid):
     record = data.get(str(host_uid))
     if record and record.get("last_host"):
         record["last_host"]["stage_channel_id"] = None
+        record["last_host"]["ended"] = True
         save_data(data)
 
 
@@ -3458,6 +3459,11 @@ async def slash_end(interaction: discord.Interaction):
     if not last_host or not last_host.get("message_id"):
         await interaction.followup.send(
             "You haven't run /host yet, so there's nothing to end.", ephemeral=True)
+        return
+
+    if last_host.get("ended"):
+        await interaction.followup.send(
+            "That event's already been marked as ended.", ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
