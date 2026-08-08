@@ -1769,6 +1769,26 @@ def clear_stage_tracking(host_uid):
         save_data(data)
 
 
+def reset_stale_live_tracking():
+    """One-time cleanup for the new dashboard "Live now" page: clears every
+    existing last_host's live-stage link so nothing carried over from before
+    this feature existed shows up as live. Only /host sessions started after
+    this runs will ever appear there. Runs once, gated by a flag in the data
+    so it's a no-op on every restart after the first."""
+    data = load_data()
+    if data.get("_live_tracking_reset"):
+        return
+    for uid, record in data.items():
+        if not uid.isdigit():
+            continue
+        last_host = record.get("last_host")
+        if last_host and last_host.get("stage_channel_id") and not last_host.get("ended"):
+            last_host["stage_channel_id"] = None
+            last_host["ended"] = True
+    data["_live_tracking_reset"] = True
+    save_data(data)
+
+
 async def announce_event_ended(guild, host_uid, last_host):
     """Posts the 'event has ended' reply on a host's original /host announcement.
     Shared by /end and on_stage_instance_delete so the announcement gets the same
@@ -1912,6 +1932,7 @@ async def on_stage_instance_delete(stage_instance):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
+    reset_stale_live_tracking()
     # Start the web dashboard in a background thread
     try:
         import dashboard
