@@ -1934,208 +1934,55 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Matzys Overseer - Kyrsgarde</title>
+<title>Sign in - Matzys Overseer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
 :root{
-  --bg:#0c0a10;--panel:#151119;--panel-2:#1c1622;--border:#2a2432;--border-2:#3a3244;
-  --text:#f5f1f6;--muted:#a89bb0;--dim:#6b5f78;--accent:#c98fa8;--steel:#b9a3e0;--sage:#8fae93;--amber:#d1a86a;--red:#c77a80;
+  --bg:#0c0a10;--panel:#151119;--panel-2:#1c1622;--border:#2a2432;
+  --text:#f5f1f6;--muted:#a89bb0;--accent:#c98fa8;--red:#c77a80;
   --serif:ui-serif,"Iowan Old Style",Palatino,"Palatino Linotype",Georgia,serif;
   --sans:-apple-system,"Segoe UI",system-ui,sans-serif;
-  --mono:ui-monospace,"SF Mono",Consolas,monospace;
 }
-body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
-img,svg{display:block}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-a{color:inherit}
-
-/* nav */
-.nav{display:flex;align-items:center;justify-content:space-between;max-width:1080px;margin:0 auto;
-  padding:22px 24px;gap:12px}
-.nav-brand{display:flex;align-items:center;gap:10px}
-.nav-brand img{width:32px;height:32px;border-radius:9px;object-fit:cover;border:1px solid var(--border)}
-.nav-brand span{font-family:var(--serif);font-size:16px}
-.nav-cta{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--border);
-  color:var(--text);border-radius:10px;padding:9px 16px;font-size:13px;font-weight:600;text-decoration:none;
-  transition:border-color .15s}
-.nav-cta:hover{border-color:var(--border-2)}
-
-/* hero */
-.hero{max-width:720px;margin:60px auto 0;padding:0 24px;text-align:center}
-.eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:12px;letter-spacing:.6px;color:var(--accent);
-  background:rgba(201,143,168,.1);border:1px solid rgba(201,143,168,.25);border-radius:999px;padding:6px 14px}
-.hero h1{font-family:var(--serif);font-weight:500;font-size:44px;line-height:1.18;margin-top:22px;letter-spacing:.2px}
-.hero h1 span{color:var(--accent)}
-.hero p.sub{color:var(--muted);font-size:16px;line-height:1.6;margin:18px auto 0;max-width:560px}
-.hero-actions{display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:32px}
-.discord-btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;
-  background:#5865f2;color:#fff;border:none;border-radius:12px;padding:15px 28px;font-size:15px;font-weight:600;
-  font-family:var(--sans);cursor:pointer;text-decoration:none;transition:background .15s,transform .15s}
-.discord-btn:hover{background:#4752c4;transform:translateY(-1px)}
-.discord-btn:disabled{background:var(--panel-2);color:var(--muted);cursor:not-allowed;transform:none}
-.discord-btn svg{width:20px;height:20px;fill:currentColor}
-.hero-note{font-size:12.5px;color:var(--dim)}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;overflow-x:hidden}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:18px;
+  padding:40px 32px;width:100%;max-width:420px;text-align:center}
+.mark{width:72px;height:72px;margin:0 auto 22px;border-radius:16px;display:block;object-fit:cover;
+  border:1px solid var(--border)}
+h1{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:.1px}
+h1 span{color:var(--accent)}
+p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
+.discord-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin-top:30px;
+  background:#5865f2;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:600;
+  font-family:var(--sans);cursor:pointer;text-decoration:none;transition:background .15s}
+.discord-btn:hover{background:#4752c4}
+.discord-btn:disabled{background:var(--panel-2);color:var(--muted);cursor:not-allowed}
+.discord-btn svg{width:22px;height:22px;fill:currentColor}
+.note{margin-top:18px;font-size:12px;color:var(--muted);line-height:1.6}
+.note code{font-family:ui-monospace,"SF Mono",Consolas,monospace;color:var(--text);font-size:11px}
 .error{background:rgba(199,122,128,0.12);border:1px solid rgba(199,122,128,0.3);color:var(--red);
-  border-radius:12px;padding:12px 16px;font-size:13px;margin:26px auto 0;max-width:480px;text-align:left;line-height:1.5}
-.note{margin-top:14px;font-size:12px;color:var(--muted);line-height:1.6;max-width:440px;margin-left:auto;margin-right:auto}
-.note code{font-family:var(--mono);color:var(--text);font-size:11px}
-
-/* preview frame */
-.preview-wrap{max-width:920px;margin:56px auto 0;padding:0 24px}
-.frame{background:var(--panel);border:1px solid var(--border);border-radius:16px;overflow:hidden;
-  box-shadow:0 40px 80px -30px rgba(0,0,0,.6)}
-.frame-bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--panel-2)}
-.frame-bar i{width:10px;height:10px;border-radius:50%;background:var(--border-2);display:block}
-.frame-bar span{margin-left:10px;font-size:11.5px;color:var(--dim);font-family:var(--mono)}
-.frame-body{display:grid;grid-template-columns:180px 1fr;min-height:340px}
-.frame-side{border-right:1px solid var(--border);padding:16px 10px;display:flex;flex-direction:column;gap:2px}
-.frame-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;font-size:12px;color:var(--muted)}
-.frame-item svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;flex-shrink:0}
-.frame-item.on{color:var(--accent);background:rgba(201,143,168,.12)}
-.frame-main{padding:22px 24px}
-.frame-main h3{font-family:var(--serif);font-size:18px;font-weight:500;margin-bottom:14px}
-.lb-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
-.lb-row:last-child{border-bottom:none}
-.lb-rank{width:20px;font-family:var(--mono);font-size:12px;color:var(--dim)}
-.lb-name{flex:1;font-size:13px;font-weight:600}
-.lb-bar{width:120px;height:6px;border-radius:3px;background:var(--panel-2);overflow:hidden}
-.lb-bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
-.lb-pts{font-family:var(--mono);font-size:12px;color:var(--muted);width:54px;text-align:right}
-
-/* features */
-.features{max-width:1080px;margin:88px auto 0;padding:0 24px}
-.features h2{font-family:var(--serif);font-weight:500;font-size:26px;text-align:center}
-.features p.lead{color:var(--muted);text-align:center;margin-top:8px;font-size:14px}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:36px}
-.feat{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px}
-.feat .ic{width:34px;height:34px;border-radius:10px;background:rgba(201,143,168,.12);display:flex;
-  align-items:center;justify-content:center;margin-bottom:14px}
-.feat .ic svg{width:17px;height:17px;stroke:var(--accent);fill:none;stroke-width:1.8}
-.feat h4{font-size:14.5px;font-weight:600}
-.feat p{color:var(--muted);font-size:13px;line-height:1.55;margin-top:6px}
-
-/* footer cta */
-.foot-cta{max-width:640px;margin:88px auto 0;padding:40px 32px;text-align:center;background:var(--panel);
-  border:1px solid var(--border);border-radius:18px}
-.foot-cta h3{font-family:var(--serif);font-size:21px;font-weight:500}
-.foot-cta p{color:var(--muted);font-size:13.5px;margin-top:8px}
-.foot-cta .discord-btn{margin-top:22px}
-footer{text-align:center;color:var(--dim);font-size:12px;padding:40px 24px 48px}
-
-@media (max-width:720px){
-  .hero h1{font-size:32px}
-  .grid{grid-template-columns:1fr}
-  .frame-body{grid-template-columns:1fr}
-  .frame-side{display:none}
-}
+  border-radius:12px;padding:12px 14px;font-size:13px;margin-top:22px;text-align:left;line-height:1.5}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style>
 </head>
 <body>
+<div class="card">
+  <img class="mark" src="__LOGO__" alt="">
+  <h1>Matzys <span>Overseer</span></h1>
 
-<nav class="nav">
-  <div class="nav-brand"><img src="__LOGO__" alt=""><span>Matzys Overseer</span></div>
-  {% if configured %}<a class="nav-cta" href="/login/discord">Sign in</a>{% endif %}
-</nav>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
-<section class="hero">
-  <span class="eyebrow">Built for the Kyrsgarde community</span>
-  <h1>Run your Discord server.<br><span>Overseen, not micromanaged.</span></h1>
-  <p class="sub">Vouch tracking, host announcements, ticket handling, live leaderboards and an
-    AI wiki assistant — all in one bot with a dashboard your whole server can actually use.</p>
-
-  <div class="hero-actions">
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    {% if configured %}
-    <a class="discord-btn" href="/login/discord">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.24.5c1.6.38 2.9 1 4.1 1.9a13.9 13.9 0 0 0-4.9-1.5 17.4 17.4 0 0 0-4.7 0c-.5.06-1.2.2-2.1.4-.9.2-1.6.5-2.1.7 1.2-.9 2.5-1.5 4-1.9L9.2 3a19.8 19.8 0 0 0-4.9 1.4C2.7 6.9 1.8 9.8 1.6 13a15 15 0 0 0 4.5 2.3c.4-.5.7-1 1-1.6-.6-.2-1.1-.5-1.5-.8l.4-.3a11.9 11.9 0 0 0 10.2 0l.4.3c-.5.3-1 .6-1.6.8.3.6.6 1.1 1 1.6a15 15 0 0 0 4.5-2.3c-.2-3.6-1.3-6.5-3.2-8.6ZM8.6 12.7c-.9 0-1.6-.9-1.6-1.9s.7-1.9 1.6-1.9 1.7.8 1.6 1.9c0 1-.7 1.9-1.6 1.9Zm6 0c-.9 0-1.6-.9-1.6-1.9s.7-1.9 1.6-1.9 1.7.8 1.6 1.9c0 1-.7 1.9-1.6 1.9Z"/></svg>
-      Get Started with Discord
-    </a>
-    <span class="hero-note">You'll need to already be a member of the Kyrsgarde server to sign in.</span>
-    {% else %}
-    <button class="discord-btn" disabled>Discord login not configured</button>
-    <div class="note">Set <code>DISCORD_CLIENT_ID</code>, <code>DISCORD_CLIENT_SECRET</code> and
-      <code>DISCORD_REDIRECT_URI</code> in your Railway variables, then reload this page.</div>
-    {% endif %}
-  </div>
-</section>
-
-<div class="preview-wrap">
-  <div class="frame">
-    <div class="frame-bar"><i></i><i></i><i></i><span>overseer.kyrsgarde/leaderboards</span></div>
-    <div class="frame-body">
-      <div class="frame-side">
-        <div class="frame-item"><svg viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3z"/></svg>Announcements</div>
-        <div class="frame-item on"><svg viewBox="0 0 24 24"><path d="M5 21V11M12 21V4M19 21v-6"/></svg>Leaderboards</div>
-        <div class="frame-item"><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v18M3 12h18"/></svg>Live now</div>
-        <div class="frame-item"><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg>Event schedule</div>
-        <div class="frame-item"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Server pulse</div>
-        <div class="frame-item"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/></svg>Members</div>
-      </div>
-      <div class="frame-main">
-        <h3>Host leaderboard</h3>
-        <div class="lb-row"><span class="lb-rank">1</span><span class="lb-name">Seraphine</span><span class="lb-bar"><i style="width:100%"></i></span><span class="lb-pts">312 pts</span></div>
-        <div class="lb-row"><span class="lb-rank">2</span><span class="lb-name">Duskwick</span><span class="lb-bar"><i style="width:78%"></i></span><span class="lb-pts">244 pts</span></div>
-        <div class="lb-row"><span class="lb-rank">3</span><span class="lb-name">Ashgrove</span><span class="lb-bar"><i style="width:61%"></i></span><span class="lb-pts">190 pts</span></div>
-        <div class="lb-row"><span class="lb-rank">4</span><span class="lb-name">Wrenfeld</span><span class="lb-bar"><i style="width:44%"></i></span><span class="lb-pts">138 pts</span></div>
-        <div class="lb-row"><span class="lb-rank">5</span><span class="lb-name">Halloway</span><span class="lb-bar"><i style="width:31%"></i></span><span class="lb-pts">96 pts</span></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<section class="features">
-  <h2>Everything the server needs, none of the busywork</h2>
-  <p class="lead">One bot for hosting, vouching, tickets and questions — plus a dashboard so it's not all locked in Discord.</p>
-  <div class="grid">
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8"/></svg></div>
-      <h4>Vouch tracking</h4>
-      <p>Every vouch is logged and attributed automatically, with rank roles that update as members climb.</p>
-    </div>
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="M5 21V11M12 21V4M19 21v-6"/></svg></div>
-      <h4>Live leaderboards</h4>
-      <p>Host, Security, Support and Voucher standings, refreshed in real time and browsable from the dashboard.</p>
-    </div>
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v18M3 12h18"/></svg></div>
-      <h4>Host announcements</h4>
-      <p>/host pings the right roles the moment a run goes live, and reping/end/takeover keep it accurate.</p>
-    </div>
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div>
-      <h4>Ticket panel</h4>
-      <p>Host, security and support requests open as real tickets instead of getting lost in a channel.</p>
-    </div>
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg></div>
-      <h4>Event schedule</h4>
-      <p>Recurring events post reminders on their own schedule, so nobody has to keep track by hand.</p>
-    </div>
-    <div class="feat">
-      <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
-      <h4>Ask the wiki</h4>
-      <p>/ask answers game questions straight from the wiki, with sources, right inside Discord.</p>
-    </div>
-  </div>
-</section>
-
-<div class="foot-cta">
-  <h3>Sign in with Discord to see your standing</h3>
-  <p>Check your vouches, your rank progress and what's live right now.</p>
   {% if configured %}
   <a class="discord-btn" href="/login/discord">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3l-.24.5c1.6.38 2.9 1 4.1 1.9a13.9 13.9 0 0 0-4.9-1.5 17.4 17.4 0 0 0-4.7 0c-.5.06-1.2.2-2.1.4-.9.2-1.6.5-2.1.7 1.2-.9 2.5-1.5 4-1.9L9.2 3a19.8 19.8 0 0 0-4.9 1.4C2.7 6.9 1.8 9.8 1.6 13a15 15 0 0 0 4.5 2.3c.4-.5.7-1 1-1.6-.6-.2-1.1-.5-1.5-.8l.4-.3a11.9 11.9 0 0 0 10.2 0l.4.3c-.5.3-1 .6-1.6.8.3.6.6 1.1 1 1.6a15 15 0 0 0 4.5-2.3c-.2-3.6-1.3-6.5-3.2-8.6ZM8.6 12.7c-.9 0-1.6-.9-1.6-1.9s.7-1.9 1.6-1.9 1.7.8 1.6 1.9c0 1-.7 1.9-1.6 1.9Zm6 0c-.9 0-1.6-.9-1.6-1.9s.7-1.9 1.6-1.9 1.7.8 1.6 1.9c0 1-.7 1.9-1.6 1.9Z"/></svg>
     Continue with Discord
   </a>
   {% else %}
-  <button class="discord-btn" disabled style="margin-top:22px">Discord login not configured</button>
+  <button class="discord-btn" disabled>Discord login not configured</button>
+  <div class="note">Set <code>DISCORD_CLIENT_ID</code>, <code>DISCORD_CLIENT_SECRET</code> and
+    <code>DISCORD_REDIRECT_URI</code> in your Railway variables, then reload this page.</div>
   {% endif %}
 </div>
-
-<footer>Matzys Overseer &middot; Kyrsgarde</footer>
-
 </body>
 </html>""".replace("__LOGO__", LOGO_SRC)
 
