@@ -618,7 +618,9 @@ async def log_audit(text):
     if channel is None:
         return
     try:
-        await channel.send(text)
+        embed = discord.Embed(description=text, color=discord.Color.dark_grey())
+        embed.timestamp = datetime.now(timezone.utc)
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
     except discord.HTTPException:
         pass
 
@@ -693,7 +695,7 @@ async def update_role_for_user(guild, user_id, category, notify=True):
                 await member.remove_roles(
                     *stale, reason=f"Missing the required role for {CATEGORY_NAMES.get(category, category)} ranks")
                 await log_audit(
-                    f"🔒 Removed {', '.join(r.name for r in stale)} from {member.mention} "
+                    f"Removed {', '.join(r.name for r in stale)} from {member.mention} "
                     f"(missing {gate_label})"
                 )
             except discord.Forbidden:
@@ -726,11 +728,11 @@ async def update_role_for_user(guild, user_id, category, notify=True):
                 sent = await send_rank_up_dm(member, old_rank, achieved_role_name)
                 if not sent:
                     await log_audit(
-                        f"📬 {member.mention} reached **{achieved_role_name}** but has DMs closed."
+                        f"{member.mention} reached **{achieved_role_name}** but has DMs closed."
                     )
     except discord.Forbidden:
         await log_audit(
-            f"⚠️ Couldn't update rank role for <@{user_id}> - check the bot's role is above "
+            f"Couldn't update rank role for <@{user_id}> - check the bot's role is above "
             f"the `{achieved_role_name}` role and has Manage Roles permission."
         )
     except discord.HTTPException:
@@ -756,7 +758,7 @@ async def resync_all_roles():
             if refreshed and {r.name for r in refreshed.roles} != before:
                 updated += 1
             await asyncio.sleep(0.35)  # stay well clear of the rate limit
-    await log_audit(f"🔄 Role resync from the dashboard - {updated} member(s) updated of {checked} checked.")
+    await log_audit(f"Role resync from the dashboard - {updated} member(s) updated of {checked} checked.")
     return {"checked": checked, "updated": updated}
 
 
@@ -871,7 +873,7 @@ async def update_top_voucher_roles(announce=True):
         if added:
             parts.append(", ".join(
                 f"{m.mention} ({counts.get(str(m.id), 0)} Host vouches)" for m in added))
-        line = f"🏅 **{TOP_VOUCHER_ROLE}** update ({window})"
+        line = f"**{TOP_VOUCHER_ROLE}** update ({window})"
         if parts:
             line += f"\nNow held by: {parts[0]}"
         if removed:
@@ -2116,7 +2118,7 @@ async def on_message(message):
             points = get_event_points(category, event_name, data)
             targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
             await log_audit(
-                f"✅ **{CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
+                f"**{CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
                 f"By: <@{message.author.id}> → {targets_str}"
             )
             await refresh_live_leaderboards()
@@ -2187,7 +2189,7 @@ async def on_message_edit(before, after):
         points = get_event_points(category, event_name, data)
         targets_str = " ".join(f"<@{t}>" for t in recorded_ids)
         await log_audit(
-            f"✏️ **Edit vouch - {CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
+            f"**Edit vouch - {CATEGORY_NAMES[category]} - {event_name}** (+{points} pts each)\n"
             f"By: <@{after.author.id}> → {targets_str}"
         )
         await refresh_live_leaderboards()
@@ -2593,7 +2595,7 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
     await update_role_for_user(ctx.guild, member.id, category)
 
     await log_audit(
-        f"🛠️ **Backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"**Backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
         f"(+{points * count} pts) by <@{ctx.author.id}>"
     )
 
@@ -2709,7 +2711,7 @@ async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str
     await update_role_for_user(ctx.guild, member.id, category)
 
     await log_audit(
-        f"↩️ **Reverted backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
+        f"**Reverted backfill** - {count}x {event_name} ({CATEGORY_NAMES[category]}) for <@{member.id}> "
         f"(-{points} pts) by <@{ctx.author.id}>"
     )
 
@@ -2800,7 +2802,7 @@ async def syncvouches(ctx):
                 await update_role_for_user(ctx.guild, int(uid), cat, notify=False)
 
     await log_audit(
-        f"🔄 **Sync** - scanned {scanned} messages, recorded {recorded_total} vouches "
+        f"**Sync** - scanned {scanned} messages, recorded {recorded_total} vouches "
         f"across {len(new_data)} users, run by <@{ctx.author.id}>"
     )
 
@@ -3217,7 +3219,7 @@ async def slash_addvouch(interaction: discord.Interaction,
     save_data(data)
 
     await log_audit(
-        f"✅ **{CATEGORY_NAMES[cat]} - {event}** (+{points * count} pts) added by "
+        f"**{CATEGORY_NAMES[cat]} - {event}** (+{points * count} pts) added by "
         f"{interaction.user.mention} → {member.mention}"
     )
     await refresh_live_leaderboards()
