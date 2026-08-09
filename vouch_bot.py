@@ -171,6 +171,12 @@ LIVE_LEADERBOARD_CHANNEL_ID = 1530286316628217906
 # Channel where every vouch / backfill / sync gets logged
 AUDIT_LOG_CHANNEL_ID = 1530317395669815438
 
+# These two channels always get mentioned at the start of a /host announcement's
+# Notes line, so hosts don't have to type them by hand every time. Matched by
+# channel name (not ID) so this keeps working if the channel is ever recreated.
+HOST_NOTES_APPLY_CHANNEL_NAME = "apply-for-event"
+HOST_NOTES_RULES_CHANNEL_NAME = "event-rules"
+
 # ── Scheduled world-event pings ──
 EVENT_PING_CHANNEL_ID = 1529142467658649640
 EVENT_PING_TZ = ZoneInfo("Africa/Tripoli")  # Libya (Sabha) - UTC+2, no DST
@@ -1818,11 +1824,21 @@ async def announce_event_ended(guild, host_uid, last_host):
     return True
 
 
-def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes, test=False):
+def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes,
+                        guild=None, test=False):
     title = "TEST - Host Announcement" if test else "Host Announcement"
     co_hosts = co_hosts or []
     vouch_targets = " ".join([host.mention] + [c.mention for c in co_hosts])
     co_host_line = ", ".join(c.mention for c in co_hosts) if co_hosts else "-"
+
+    notes_prefix = ""
+    if guild is not None:
+        apply_channel = discord.utils.get(guild.text_channels, name=HOST_NOTES_APPLY_CHANNEL_NAME)
+        rules_channel = discord.utils.get(guild.text_channels, name=HOST_NOTES_RULES_CHANNEL_NAME)
+        mentions = [c.mention for c in (apply_channel, rules_channel) if c]
+        if mentions:
+            notes_prefix = " ".join(mentions) + " "
+
     return (
         f"**{title}**\n"
         f"**Event Host:** {host.mention}\n"
@@ -1831,7 +1847,7 @@ def build_host_message(host, co_hosts, region, security_region, event, event_dis
         f"**Security Region:** {security_region}\n"
         f"**Event Type:** {event_display}\n"
         f"**Stage:** {stage}\n"
-        f"**Notes:** {notes}\n"
+        f"**Notes:** {notes_prefix}{notes}\n"
         f"**vouches:** vouch {vouch_targets} {event.lower()}"
     )
 
@@ -3287,7 +3303,7 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
     co_host2="Another co-host (optional)",
     co_host3="Another co-host (optional)",
     stage="Which stage channel this event is in - starts it and grants you Stage Perms",
-    notes="Anything hosts should know - channel mentions work",
+    notes="Anything hosts should know (apply-for-event and event-rules are added automatically)",
 )
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
                        security_region=HOST_SECURITY_REGION_CHOICES)
@@ -3367,7 +3383,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         ping_parts.append(event_role.mention)
 
     message = build_host_message(
-        interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes)
+        interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes,
+        guild=guild)
     sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
@@ -3794,7 +3811,7 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
 
     message = build_host_message(
         interaction.user, [interaction.user], region, security_region, event, event_display,
-        "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", test=True)
+        "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", guild=guild, test=True)
     await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
     await interaction.followup.send(
         f"Test posted in {channel.mention} (nobody was pinged).\n"
