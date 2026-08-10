@@ -1717,6 +1717,18 @@ def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id
     save_data(data)
 
 
+def no_active_event_message(last_host, action):
+    """Explains why there's nothing to act on for /end, /reping, /cohost - distinguishing
+    'never hosted', 'already ended', and 'someone took over' instead of lumping them all
+    into a generic 'you haven't run /host yet', which is misleading after a takeover."""
+    if last_host and last_host.get("ended") and last_host.get("taken_over_by"):
+        return (f"<@{last_host['taken_over_by']}> took over hosting that event, "
+                f"so there's nothing for you to {action}.")
+    if last_host and last_host.get("ended"):
+        return f"That event's already been marked as ended, so there's nothing for you to {action}."
+    return f"You haven't run /host yet, so there's nothing to {action}."
+
+
 def co_host_ids_from(last_host):
     """Reads the co-host id list from a last_host record, falling back to the old
     single co_host_id key for records saved before multiple co-hosts were supported."""
@@ -3442,9 +3454,8 @@ async def slash_reping(interaction: discord.Interaction):
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
-    if not last_host or not last_host.get("message_id"):
-        await interaction.followup.send(
-            "You haven't run /host yet, so there's nothing to re-ping.", ephemeral=True)
+    if not last_host or not last_host.get("message_id") or last_host.get("ended"):
+        await interaction.followup.send(no_active_event_message(last_host, "re-ping"), ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
@@ -3496,14 +3507,8 @@ async def slash_end(interaction: discord.Interaction):
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
-    if not last_host or not last_host.get("message_id"):
-        await interaction.followup.send(
-            "You haven't run /host yet, so there's nothing to end.", ephemeral=True)
-        return
-
-    if last_host.get("ended"):
-        await interaction.followup.send(
-            "That event's already been marked as ended.", ephemeral=True)
+    if not last_host or not last_host.get("message_id") or last_host.get("ended"):
+        await interaction.followup.send(no_active_event_message(last_host, "end"), ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
@@ -3596,9 +3601,8 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
-    if not last_host or not last_host.get("message_id"):
-        await interaction.followup.send(
-            "You haven't run /host yet, so there's nothing to update.", ephemeral=True)
+    if not last_host or not last_host.get("message_id") or last_host.get("ended"):
+        await interaction.followup.send(no_active_event_message(last_host, "update"), ephemeral=True)
         return
 
     channel_id = last_host.get("channel_id")
@@ -3720,10 +3724,16 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         await interaction.followup.send(f"Couldn't edit the message: {e}", ephemeral=True)
         return
 
-    # Move the tracking from the outgoing host to the incoming one
+    # Move the tracking from the outgoing host to the incoming one. Keep the outgoing
+    # host's record (marked ended + who took over) instead of wiping it, so their
+    # /end, /reping, /cohost give an accurate "X took over" message instead of the
+    # misleading "you haven't run /host yet".
     data = load_data()
     old_record = data.setdefault(str(current_host.id), {})
-    old_record["last_host"] = None
+    if old_record.get("last_host"):
+        old_record["last_host"]["ended"] = True
+        old_record["last_host"]["stage_channel_id"] = None
+        old_record["last_host"]["taken_over_by"] = str(interaction.user.id)
     new_record = data.setdefault(str(interaction.user.id), {})
     new_record["last_host_event"] = event
     new_record["last_host"] = {
