@@ -538,6 +538,27 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
     return recorded_ids, cooldown_ids, self_dropped
 
 
+def already_credited_for_message(data, message_id):
+    """Target ids that already got vouch credit for this exact message, so an edit
+    can't re-earn points for someone it already covered (e.g. editing a vouch message
+    hours later to add a second target would otherwise re-vouch the first one too,
+    once their cooldown from the original vouch has expired)."""
+    return set(data.get("_vouch_message_targets", {}).get(str(message_id), []))
+
+
+def remember_message_vouch_targets(data, message_id, recorded_ids):
+    if not recorded_ids:
+        return
+    store = data.setdefault("_vouch_message_targets", {})
+    key = str(message_id)
+    existing = set(store.get(key, []))
+    existing.update(str(t) for t in recorded_ids)
+    store[key] = list(existing)
+    if len(store) > 2000:  # bound growth - drop the oldest tracked messages
+        for old_key in list(store.keys())[:len(store) - 2000]:
+            del store[old_key]
+
+
 # ─────────────────────────────────────────────────────────────
 # LIVE LEADERBOARDS
 # ─────────────────────────────────────────────────────────────
@@ -611,6 +632,11 @@ async def _refresh_live_leaderboards_inner():
             changed = True
 
     if changed:
+        # Re-read right before saving - `data` was captured before this loop's several
+        # awaited Discord calls, so anything else (a vouch, a /host, etc.) could have
+        # saved its own changes in the meantime. Saving the stale snapshot would
+        # silently wipe that out; only _live_messages is ours to write here.
+        data = load_data()
         data["_live_messages"] = meta
         save_data(data)
 
@@ -2131,6 +2157,7 @@ async def on_message(message):
             )
 
     if handled:
+        remember_message_vouch_targets(data, message.id, recorded_ids)
         save_data(data)
 
         if self_dropped and not recorded_ids and not cooldown_ids:
@@ -2174,12 +2201,14 @@ async def on_message_edit(before, after):
     recorded_ids, cooldown_ids, self_dropped = [], [], 0
     event_name = None
     handled = False
+    already_credited = already_credited_for_message(data, after.id)
 
     if category == "pve":
         match = PVE_VOUCH_PATTERN.match(after.content)
         if match:
             handled = True
-            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(1))]
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(1))
+                          if uid not in already_credited]
             event_name = parse_pve_event(match.group(2))
             if event_name is None:
                 await after.add_reaction("❌")
@@ -2194,7 +2223,8 @@ async def on_message_edit(before, after):
             handled = True
             phrase = normalize(match.group(1))
             category, event_name = PHRASE_ALIASES[phrase]
-            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))
+                          if uid not in already_credited]
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
                 data, target_ids, after.author.id, category, event_name,
                 author_name=after.author.display_name
@@ -2203,6 +2233,7 @@ async def on_message_edit(before, after):
     if not handled:
         return
 
+    remember_message_vouch_targets(data, after.id, recorded_ids)
     save_data(data)
 
     if self_dropped and not recorded_ids and not cooldown_ids:
@@ -2606,8 +2637,8 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
         await ctx.send("⚠️ Count must be at least 1.")
         return
 
-    points = get_event_points(category, event_name, data)
     data = load_data()
+    points = get_event_points(category, event_name, data)
     record = get_user_record(data, member.id, category)
     record["total_points"] += points * count
     record["total_vouches"] += count
@@ -3735,6 +3766,9 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         old_record["last_host"]["stage_channel_id"] = None
         old_record["last_host"]["taken_over_by"] = str(interaction.user.id)
     new_record = data.setdefault(str(interaction.user.id), {})
+    runs = new_record.get("host_runs", [])
+    runs.append(datetime.now(timezone.utc).isoformat())
+    new_record["host_runs"] = runs[-100:]
     new_record["last_host_event"] = event
     new_record["last_host"] = {
         "event": event,
