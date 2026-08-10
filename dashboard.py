@@ -144,7 +144,10 @@ def ensure_user_cat(data, uid, category):
     data.setdefault(uid, {})
     if category not in data[uid]:
         data[uid][category] = {"total_points": 0, "total_vouches": 0, "events": {}, "cooldowns": {}, "log": []}
-    for e in CATEGORY_EVENTS[category]:
+    # Seed from the live economy config (defaults + any admin overrides), not the
+    # hardcoded fallback list, so a custom event added via the Economy tab doesn't
+    # KeyError the first time someone's vouched for it.
+    for e in get_economy(data)["events"].get(category, {}):
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
 
@@ -525,12 +528,6 @@ def oauth_callback():
     except (KeyError, ValueError):
         return fail("Discord returned an unexpected response. Try again.")
 
-    admin_guilds = [g for g in guilds if is_admin_guild(g)]
-    if REQUIRED_GUILD_ID:
-        admin_guilds = [g for g in admin_guilds if str(g["id"]) == REQUIRED_GUILD_ID]
-    if ALLOWED_USER_IDS and str(user["id"]) not in ALLOWED_USER_IDS:
-        admin_guilds = []  # allowlist gates admin access only, not member access
-
     # Members just need to share a server with the bot.
     bot_guild_ids = {str(g.id) for g in getattr(_bridge["bot"], "guilds", [])}
     if REQUIRED_GUILD_ID:
@@ -539,6 +536,17 @@ def oauth_callback():
         in_server = any(str(g["id"]) in bot_guild_ids for g in guilds)
     else:
         in_server = True  # bot not ready yet, do not lock people out
+
+    admin_guilds = [g for g in guilds if is_admin_guild(g)]
+    if REQUIRED_GUILD_ID:
+        admin_guilds = [g for g in admin_guilds if str(g["id"]) == REQUIRED_GUILD_ID]
+    elif bot_guild_ids:
+        # "Empty GUILD_ID = any server you admin" only ever meant any server the
+        # BOT is also in - without this, admin-ing any unrelated Discord server
+        # (e.g. a throwaway personal one) was enough to get admin here.
+        admin_guilds = [g for g in admin_guilds if str(g["id"]) in bot_guild_ids]
+    if ALLOWED_USER_IDS and str(user["id"]) not in ALLOWED_USER_IDS:
+        admin_guilds = []  # allowlist gates admin access only, not member access
 
     if not admin_guilds and not in_server:
         return fail("You are not in the bot's server, so there is nothing here for you yet.")
@@ -1220,7 +1228,7 @@ def api_add_vouch():
     record = ensure_user_cat(data, uid, category)
     record["total_points"] += points * count
     record["total_vouches"] += count
-    record["events"][event_name] += count
+    record["events"][event_name] = record["events"].get(event_name, 0) + count
     actor = session.get("user", {})
     record["log"].append({
         "id": uuid.uuid4().hex[:8],
