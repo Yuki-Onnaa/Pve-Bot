@@ -3656,6 +3656,108 @@ async def slash_cohost_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
+@bot.tree.command(name="changeevent", description="Change what event your currently hosted stage is focused on")
+@app_commands.describe(event="New event type")
+@app_commands.choices(event=HOST_EVENT_CHOICES)
+async def slash_changeevent(interaction: discord.Interaction, event: app_commands.Choice[str]):
+    await interaction.response.defer(ephemeral=True)
+    guild = interaction.guild
+    if guild is None:
+        await interaction.followup.send("This only works inside the server.", ephemeral=True)
+        return
+
+    if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
+        return
+
+    new_event = event.value
+
+    last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
+    if not last_host or not last_host.get("message_id") or last_host.get("ended"):
+        await interaction.followup.send(no_active_event_message(last_host, "change the event for"), ephemeral=True)
+        return
+
+    old_event = last_host.get("event", "")
+    if old_event == new_event:
+        await interaction.followup.send(f"You're already hosting **{new_event}**.", ephemeral=True)
+        return
+
+    channel_id = last_host.get("channel_id")
+    channel = bot.get_channel(int(channel_id)) if channel_id else None
+    if channel is None:
+        await interaction.followup.send("Couldn't find the events channel.", ephemeral=True)
+        return
+
+    try:
+        original = await channel.fetch_message(int(last_host["message_id"]))
+    except (discord.NotFound, discord.HTTPException, ValueError):
+        await interaction.followup.send(
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+        return
+
+    # Keep the live Stage's topic in sync with last_host["event"] - /end, /takeover,
+    # and the natural-stage-end handler all match a live stage to its host by
+    # (stage_channel_id, topic). If the topic doesn't move with the event, this
+    # host's own /end would see a mismatch and think someone else's unrelated
+    # event is live there instead of ending their own.
+    stage_channel_id = last_host.get("stage_channel_id")
+    stage_channel = guild.get_channel(int(stage_channel_id)) if stage_channel_id else None
+    if not (isinstance(stage_channel, discord.StageChannel) and stage_channel.instance
+            and stage_channel.instance.topic == old_event):
+        await interaction.followup.send(
+            "Your event's Stage isn't live anymore, so there's nothing to change.", ephemeral=True)
+        return
+
+    try:
+        await stage_channel.instance.edit(topic=new_event)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Couldn't update the Stage topic: {e}", ephemeral=True)
+        return
+
+    event_role = event_role_for(guild, new_event)
+    event_display = event_role.mention if event_role else f"**{new_event}**"
+    co_host_ids = co_host_ids_from(last_host)
+    vouch_targets = " ".join([interaction.user.mention] + [f"<@{cid}>" for cid in co_host_ids])
+    content = re.sub(r"\*\*Event Type:\*\*.*", f"**Event Type:** {event_display}", original.content)
+    content = re.sub(
+        r"\*\*vouches:\*\*.*",
+        f"**vouches:** vouch {vouch_targets} {new_event.lower()}",
+        content,
+    )
+    try:
+        await original.edit(content=content)
+    except discord.HTTPException as e:
+        await interaction.followup.send(f"Couldn't edit the message: {e}", ephemeral=True)
+        return
+
+    with data_txn() as data:
+        record = data.setdefault(str(interaction.user.id), {})
+        if record.get("last_host"):
+            record["last_host"]["event"] = new_event
+        record["last_host_event"] = new_event
+
+    try:
+        await original.reply(
+            f"Event changed to {event_display}",
+            allowed_mentions=discord.AllowedMentions(everyone=False, users=False, roles=True, replied_user=False),
+        )
+    except discord.HTTPException:
+        pass
+
+    await interaction.followup.send(f"Changed your event to **{new_event}**.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} changed their hosted event from **{old_event}** to **{new_event}**")
+
+
+@slash_changeevent.error
+async def slash_changeevent_error(interaction: discord.Interaction, error):
+    msg = "Something went wrong running that command."
+    print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.tree.command(name="takeover", description="Take over hosting from another host - no need to /end and re-/host")
 @app_commands.describe(current_host="Who's currently hosting the event you're taking over")
 async def slash_takeover(interaction: discord.Interaction, current_host: discord.Member):
