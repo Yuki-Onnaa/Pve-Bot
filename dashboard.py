@@ -16,12 +16,11 @@ import urllib.request
 import discord
 from flask import Flask, Response, session, redirect, request, jsonify, render_template_string
 
+from data_store import DATA_FILE, load_data, save_data, data_txn
+
 # ─────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────
-
-DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
-_file_lock = threading.Lock()
 
 # ── Discord OAuth2 ──
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "")
@@ -118,19 +117,6 @@ EVENT_SCHEDULE_TZ = timezone(timedelta(hours=2))
 # DATA HELPERS
 # ─────────────────────────────────────────────────────────────
 
-def load_data():
-    with _file_lock:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
-        return {}
-
-def save_data(data):
-    with _file_lock:
-        os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
-        with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-
 def user_records(data):
     for uid, rec in data.items():
         if uid.isdigit():
@@ -188,26 +174,24 @@ def flush_visits():
         _visit_buffer.clear()
         _last_flush[0] = time.time()
 
-    data = load_data()
-    analytics = data.setdefault("_analytics", {})
-    days = analytics.setdefault("days", {})
-    last_seen = analytics.setdefault("last_seen", {})
-    now_iso = datetime.now(timezone.utc).isoformat()
+    with data_txn() as data:
+        analytics = data.setdefault("_analytics", {})
+        days = analytics.setdefault("days", {})
+        last_seen = analytics.setdefault("last_seen", {})
+        now_iso = datetime.now(timezone.utc).isoformat()
 
-    for day, users in pending.items():
-        stored_day = days.setdefault(day, {})
-        for uid, entry in users.items():
-            slot = stored_day.setdefault(uid, {"views": 0, "pages": {}})
-            slot["views"] += entry["views"]
-            for page, count in entry["pages"].items():
-                slot["pages"][page] = slot["pages"].get(page, 0) + count
-            last_seen[uid] = now_iso
+        for day, users in pending.items():
+            stored_day = days.setdefault(day, {})
+            for uid, entry in users.items():
+                slot = stored_day.setdefault(uid, {"views": 0, "pages": {}})
+                slot["views"] += entry["views"]
+                for page, count in entry["pages"].items():
+                    slot["pages"][page] = slot["pages"].get(page, 0) + count
+                last_seen[uid] = now_iso
 
-    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
-    for day in [d for d in days if d < cutoff]:
-        del days[day]
-
-    save_data(data)
+        cutoff = (datetime.now(timezone.utc).date() - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
+        for day in [d for d in days if d < cutoff]:
+            del days[day]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -429,8 +413,40 @@ def discord_get(path, token):
     with urllib.request.urlopen(req, timeout=15) as res:
         return json.loads(res.read().decode())
 
+def live_admin_guild_ids(user_id, guild_ids):
+    """Re-checks Administrator/owner status against the bot's live guild cache -
+    free and in-memory (no Discord API call), kept current in real time by the
+    gateway - instead of trusting a session that could be weeks old. A session
+    outlives a Discord permission change; this makes sure a demoted admin loses
+    dashboard access the moment the bot's cache reflects it, not 31 days later
+    when their cookie finally expires."""
+    bot = _bridge.get("bot")
+    if bot is None:
+        return list(guild_ids)  # bot not connected yet - do not lock people out
+
+    still_valid = []
+    any_resolved = False
+    for gid in guild_ids:
+        guild = bot.get_guild(int(gid))
+        if guild is None:
+            continue
+        any_resolved = True
+        member = guild.get_member(int(user_id))
+        if member is None:
+            continue
+        if member.id == guild.owner_id or member.guild_permissions.administrator:
+            still_valid.append(gid)
+
+    if not any_resolved:
+        return list(guild_ids)  # bot hasn't cached any of these guilds (yet) - do not lock out
+    return still_valid
+
+
 def is_admin():
-    return bool(session.get("user")) and session.get("role") == "admin" and bool(session.get("admin_guilds"))
+    if not (session.get("user") and session.get("role") == "admin" and session.get("admin_guilds")):
+        return False
+    guild_ids = [g["id"] for g in session["admin_guilds"]]
+    return bool(live_admin_guild_ids(session["user"]["id"], guild_ids))
 
 
 def admin_required(f):
@@ -562,8 +578,6 @@ def oauth_callback():
         {"id": str(g["id"]), "name": g["name"], "icon": guild_icon_url(g)}
         for g in sorted(admin_guilds, key=lambda g: g["name"].lower())
     ]
-    if session["admin_guilds"]:
-        session["guild_id"] = session["admin_guilds"][0]["id"]
     session.permanent = True
     return redirect("/" if session["role"] == "admin" else "/profile")
 
@@ -614,13 +628,12 @@ def api_profile():
 def api_profile_notification_prefs():
     body = request.json or {}
     uid = str(session["user"]["id"])
-    data = load_data()
-    record = data.setdefault(uid, {})
-    if "streak_dm_opt_out" in body:
-        record["streak_dm_opt_out"] = bool(body["streak_dm_opt_out"])
-    if "rank_up_dm_opt_out" in body:
-        record["rank_up_dm_opt_out"] = bool(body["rank_up_dm_opt_out"])
-    save_data(data)
+    with data_txn() as data:
+        record = data.setdefault(uid, {})
+        if "streak_dm_opt_out" in body:
+            record["streak_dm_opt_out"] = bool(body["streak_dm_opt_out"])
+        if "rank_up_dm_opt_out" in body:
+            record["rank_up_dm_opt_out"] = bool(body["rank_up_dm_opt_out"])
     return jsonify({
         "ok": True,
         "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")),
@@ -1003,18 +1016,10 @@ def api_profile_history_csv():
 @app.route("/api/me")
 @admin_required
 def api_me():
+    # Only one guild's data ever backs this dashboard (one shared DATA_FILE, no
+    # per-guild scoping anywhere) - this is display info, not a switcher.
     guilds = session.get("admin_guilds", [])
-    current = next((g for g in guilds if g["id"] == session.get("guild_id")), guilds[0])
-    return jsonify({"user": session["user"], "guilds": guilds, "guild": current})
-
-@app.route("/api/guild", methods=["POST"])
-@admin_required
-def api_select_guild():
-    gid = str((request.json or {}).get("guild_id", ""))
-    if not any(g["id"] == gid for g in session.get("admin_guilds", [])):
-        return jsonify({"error": "You don't administrate that server"}), 403
-    session["guild_id"] = gid
-    return jsonify({"ok": True})
+    return jsonify({"user": session["user"], "guild": guilds[0] if guilds else None})
 
 # ─────────────────────────────────────────────────────────────
 # ROUTES
@@ -1219,29 +1224,29 @@ def api_add_vouch():
     if category not in ALL_CATEGORIES:
         return jsonify({"error": "Invalid category"}), 400
 
-    data = load_data()
-    economy = get_economy(data)
-    if event_name not in economy["events"].get(category, {}):
-        return jsonify({"error": f"Invalid event for {category}"}), 400
+    with data_txn() as data:
+        economy = get_economy(data)
+        if event_name not in economy["events"].get(category, {}):
+            return jsonify({"error": f"Invalid event for {category}"}), 400
 
-    points = economy["events"][category][event_name]
-    record = ensure_user_cat(data, uid, category)
-    record["total_points"] += points * count
-    record["total_vouches"] += count
-    record["events"][event_name] = record["events"].get(event_name, 0) + count
-    actor = session.get("user", {})
-    record["log"].append({
-        "id": uuid.uuid4().hex[:8],
-        "by": actor.get("id", "dashboard"),
-        "by_name": actor.get("username", "Dashboard"),
-        "event": event_name,
-        "points": points * count,
-        "count": count,
-        "backfilled": True,
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
-    save_data(data)
-    return jsonify({"ok": True, "new_total": record["total_points"]})
+        points = economy["events"][category][event_name]
+        record = ensure_user_cat(data, uid, category)
+        record["total_points"] += points * count
+        record["total_vouches"] += count
+        record["events"][event_name] = record["events"].get(event_name, 0) + count
+        actor = session.get("user", {})
+        record["log"].append({
+            "id": uuid.uuid4().hex[:8],
+            "by": actor.get("id", "dashboard"),
+            "by_name": actor.get("username", "Dashboard"),
+            "event": event_name,
+            "points": points * count,
+            "count": count,
+            "backfilled": True,
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+        new_total = record["total_points"]
+    return jsonify({"ok": True, "new_total": new_total})
 
 @app.route("/api/vouches/revert", methods=["POST"])
 @admin_required
@@ -1254,32 +1259,32 @@ def api_revert_vouch():
     if not uid.isdigit() or category not in CATEGORY_EVENTS:
         return jsonify({"error": "Invalid uid or category"}), 400
 
-    data = load_data()
-    record = data.get(uid, {}).get(category)
-    if not record:
-        return jsonify({"error": "No record found for this user/category"}), 404
+    with data_txn() as data:
+        record = data.get(uid, {}).get(category)
+        if not record:
+            return jsonify({"error": "No record found for this user/category"}), 404
 
-    entry = None
-    entry_index = None
-    for i, e in enumerate(record["log"]):
-        ref = e.get("id") or f"idx{i}"
-        if ref == log_id:
-            entry = e
-            entry_index = i
-            break
+        entry = None
+        entry_index = None
+        for i, e in enumerate(record["log"]):
+            ref = e.get("id") or f"idx{i}"
+            if ref == log_id:
+                entry = e
+                entry_index = i
+                break
 
-    if entry is None:
-        return jsonify({"error": "Log entry not found"}), 404
+        if entry is None:
+            return jsonify({"error": "Log entry not found"}), 404
 
-    points = entry.get("points", 0)
-    count = entry.get("count", 1)
-    event_name = entry.get("event", "")
-    record["total_points"] = max(0, record["total_points"] - points)
-    record["total_vouches"] = max(0, record["total_vouches"] - count)
-    record["events"][event_name] = max(0, record["events"].get(event_name, 0) - count)
-    del record["log"][entry_index]
-    save_data(data)
-    return jsonify({"ok": True, "new_total": record["total_points"]})
+        points = entry.get("points", 0)
+        count = entry.get("count", 1)
+        event_name = entry.get("event", "")
+        record["total_points"] = max(0, record["total_points"] - points)
+        record["total_vouches"] = max(0, record["total_vouches"] - count)
+        record["events"][event_name] = max(0, record["events"].get(event_name, 0) - count)
+        del record["log"][entry_index]
+        new_total = record["total_points"]
+    return jsonify({"ok": True, "new_total": new_total})
 
 @app.route("/api/vouches/delete_user", methods=["POST"])
 @admin_required
@@ -1289,15 +1294,14 @@ def api_delete_user():
     category = body.get("category", None)
     if not uid.isdigit():
         return jsonify({"error": "Invalid user ID"}), 400
-    data = load_data()
-    if uid not in data:
-        return jsonify({"error": "User not found"}), 404
-    if category:
-        if category in data[uid]:
-            del data[uid][category]
-    else:
-        del data[uid]
-    save_data(data)
+    with data_txn() as data:
+        if uid not in data:
+            return jsonify({"error": "User not found"}), 404
+        if category:
+            if category in data[uid]:
+                del data[uid][category]
+        else:
+            del data[uid]
     return jsonify({"ok": True})
 
 # ── API: Memories ──
@@ -1315,28 +1319,26 @@ def api_memories_add():
     text = (body.get("text") or "").strip()
     if not text:
         return jsonify({"error": "Text required"}), 400
-    data = load_data()
-    memories = data.get("_memories", [])
-    memories.append({
-        "id": uuid.uuid4().hex[:8],
-        "text": text,
-        "added_by": session.get("user", {}).get("username", "dashboard"),
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
-    data["_memories"] = memories[-50:]
-    save_data(data)
+    with data_txn() as data:
+        memories = data.get("_memories", [])
+        memories.append({
+            "id": uuid.uuid4().hex[:8],
+            "text": text,
+            "added_by": session.get("user", {}).get("username", "dashboard"),
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+        data["_memories"] = memories[-50:]
     return jsonify({"ok": True})
 
 @app.route("/api/memories/<memory_id>", methods=["DELETE"])
 @admin_required
 def api_memories_delete(memory_id):
-    data = load_data()
-    memories = data.get("_memories", [])
-    new_m = [m for m in memories if m["id"] != memory_id]
-    if len(new_m) == len(memories):
-        return jsonify({"error": "Not found"}), 404
-    data["_memories"] = new_m
-    save_data(data)
+    with data_txn() as data:
+        memories = data.get("_memories", [])
+        new_m = [m for m in memories if m["id"] != memory_id]
+        if len(new_m) == len(memories):
+            return jsonify({"error": "Not found"}), 404
+        data["_memories"] = new_m
     return jsonify({"ok": True})
 
 # ── API: Ticket mods (roles granted ticket access, on top of Manage Server) ──
@@ -1354,25 +1356,23 @@ def api_ticket_mods_add():
     name = (body.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Role name is required."}), 400
-    data = load_data()
-    roles = data.get("_ticket_mod_roles", [])
-    if any(r["name"].lower() == name.lower() for r in roles):
-        return jsonify({"error": "That role is already a ticket mod."}), 400
-    roles.append({"id": uuid.uuid4().hex[:8], "name": name})
-    data["_ticket_mod_roles"] = roles
-    save_data(data)
+    with data_txn() as data:
+        roles = data.get("_ticket_mod_roles", [])
+        if any(r["name"].lower() == name.lower() for r in roles):
+            return jsonify({"error": "That role is already a ticket mod."}), 400
+        roles.append({"id": uuid.uuid4().hex[:8], "name": name})
+        data["_ticket_mod_roles"] = roles
     return jsonify({"ok": True})
 
 @app.route("/api/ticket_mods/<mod_id>", methods=["DELETE"])
 @admin_required
 def api_ticket_mods_delete(mod_id):
-    data = load_data()
-    roles = data.get("_ticket_mod_roles", [])
-    new_roles = [r for r in roles if r["id"] != mod_id]
-    if len(new_roles) == len(roles):
-        return jsonify({"error": "Not found"}), 404
-    data["_ticket_mod_roles"] = new_roles
-    save_data(data)
+    with data_txn() as data:
+        roles = data.get("_ticket_mod_roles", [])
+        new_roles = [r for r in roles if r["id"] != mod_id]
+        if len(new_roles) == len(roles):
+            return jsonify({"error": "Not found"}), 404
+        data["_ticket_mod_roles"] = new_roles
     return jsonify({"ok": True})
 
 # ── API: Bot updates (posted to the updates channel, editable after the fact) ──
@@ -1431,6 +1431,11 @@ def api_updates_post():
         "posted_at": posted_at,
         "edited_at": None,
     }
+    # Re-read right before saving - `data` was captured before the (up to 30s)
+    # blocking call to post on Discord above, so anything else could have saved
+    # its own changes in the meantime. Can't hold the shared lock across that
+    # call either, since it would stall every other reader/writer, bot included.
+    data = load_data()
     updates = data.get("_bot_updates", [])
     updates.append(record)
     data["_bot_updates"] = updates[-200:]
@@ -1463,6 +1468,15 @@ def api_updates_edit(update_id):
     except Exception as exc:
         return jsonify({"error": f"Could not edit the Discord message: {exc}"}), 500
 
+    # Re-read and re-locate the record right before saving - `data`/`record` were
+    # captured before the blocking Discord edit call above, so we can't just
+    # write the stale snapshot back without risking clobbering another write
+    # that landed in the meantime.
+    data = load_data()
+    updates = data.get("_bot_updates", [])
+    record = next((u for u in updates if u["id"] == update_id), None)
+    if record is None:
+        return jsonify({"error": "Not found"}), 404
     record["content"] = content
     record["edited_at"] = datetime.now(timezone.utc).isoformat()
     data["_bot_updates"] = updates
@@ -1487,28 +1501,27 @@ def api_settings_get():
 @admin_required
 def api_settings_update():
     body = request.json or {}
-    data = load_data()
-    settings = data.setdefault("_settings", {})
-    cfg = data.setdefault("_config", {})
+    with data_txn() as data:
+        settings = data.setdefault("_settings", {})
+        cfg = data.setdefault("_config", {})
 
-    if "chat_enabled" in body:
-        settings["chat_enabled"] = bool(body["chat_enabled"])
-    if "persona" in body and body["persona"] in PERSONAS:
-        settings["persona"] = body["persona"]
+        if "chat_enabled" in body:
+            settings["chat_enabled"] = bool(body["chat_enabled"])
+        if "persona" in body and body["persona"] in PERSONAS:
+            settings["persona"] = body["persona"]
 
-    channel_keys = [
-        "pve_channel_id", "security_channel_id", "support_channel_id",
-        "live_leaderboard_channel_id", "audit_log_channel_id",
-        "event_ping_channel_id", "chime_in_channel_id", "updates_channel_id",
-    ]
-    for key in channel_keys:
-        if key in body:
-            try:
-                cfg[key] = int(body[key])
-            except (ValueError, TypeError):
-                pass
+        channel_keys = [
+            "pve_channel_id", "security_channel_id", "support_channel_id",
+            "live_leaderboard_channel_id", "audit_log_channel_id",
+            "event_ping_channel_id", "chime_in_channel_id", "updates_channel_id",
+        ]
+        for key in channel_keys:
+            if key in body:
+                try:
+                    cfg[key] = int(body[key])
+                except (ValueError, TypeError):
+                    pass
 
-    save_data(data)
     return jsonify({"ok": True})
 
 # ── API: Audit Log ──
@@ -1709,78 +1722,76 @@ def api_economy_save():
     if category not in ALL_CATEGORIES:
         return jsonify({"error": "Unknown category."}), 400
 
-    data = load_data()
-    economy = data.setdefault("_economy", {})
+    with data_txn() as data:
+        economy = data.setdefault("_economy", {})
 
-    if section == "events":
-        rows = body.get("events") or []
-        cleaned = {}
-        cooldowns_cleaned = {}
-        for row in rows:
-            name = str(row.get("name", "")).strip()
-            if not name:
-                continue
-            if len(name) > 60:
-                return jsonify({"error": f"'{name[:20]}...' is too long (60 characters max)."}), 400
-            if name in cleaned:
-                return jsonify({"error": f"'{name}' is listed twice."}), 400
-            try:
-                points = round(float(row.get("points", 0)), 2)
-            except (ValueError, TypeError):
-                return jsonify({"error": f"'{name}' needs a number for points."}), 400
-            if points < 0 or points > 1000:
-                return jsonify({"error": f"'{name}' must be between 0 and 1000 points."}), 400
-            cleaned[name] = int(points) if points == int(points) else points
+        if section == "events":
+            rows = body.get("events") or []
+            cleaned = {}
+            cooldowns_cleaned = {}
+            for row in rows:
+                name = str(row.get("name", "")).strip()
+                if not name:
+                    continue
+                if len(name) > 60:
+                    return jsonify({"error": f"'{name[:20]}...' is too long (60 characters max)."}), 400
+                if name in cleaned:
+                    return jsonify({"error": f"'{name}' is listed twice."}), 400
+                try:
+                    points = round(float(row.get("points", 0)), 2)
+                except (ValueError, TypeError):
+                    return jsonify({"error": f"'{name}' needs a number for points."}), 400
+                if points < 0 or points > 1000:
+                    return jsonify({"error": f"'{name}' must be between 0 and 1000 points."}), 400
+                cleaned[name] = int(points) if points == int(points) else points
 
-            try:
-                cooldown_minutes = float(row.get("cooldown", 0) or 0)
-            except (ValueError, TypeError):
-                return jsonify({"error": f"'{name}' needs a number for cooldown."}), 400
-            if cooldown_minutes < 0 or cooldown_minutes > 1440:
-                return jsonify({"error": f"'{name}' cooldown must be between 0 and 1440 minutes."}), 400
-            cooldowns_cleaned[name] = int(round(cooldown_minutes * 60))
-        if not cleaned:
-            return jsonify({"error": "Keep at least one event in this category."}), 400
+                try:
+                    cooldown_minutes = float(row.get("cooldown", 0) or 0)
+                except (ValueError, TypeError):
+                    return jsonify({"error": f"'{name}' needs a number for cooldown."}), 400
+                if cooldown_minutes < 0 or cooldown_minutes > 1440:
+                    return jsonify({"error": f"'{name}' cooldown must be between 0 and 1440 minutes."}), 400
+                cooldowns_cleaned[name] = int(round(cooldown_minutes * 60))
+            if not cleaned:
+                return jsonify({"error": "Keep at least one event in this category."}), 400
 
-        removed = [e for e in get_economy(data)["events"].get(category, {}) if e not in cleaned]
-        economy.setdefault("events", {})[category] = cleaned
-        economy.setdefault("cooldowns", {})[category] = cooldowns_cleaned
-        save_data(data)
-        return jsonify({"ok": True, "removed": removed, "count": len(cleaned)})
+            removed = [e for e in get_economy(data)["events"].get(category, {}) if e not in cleaned]
+            economy.setdefault("events", {})[category] = cleaned
+            economy.setdefault("cooldowns", {})[category] = cooldowns_cleaned
+            return jsonify({"ok": True, "removed": removed, "count": len(cleaned)})
 
-    if section == "ranks":
-        rows = body.get("ranks") or []
-        cleaned = []
-        seen_names = set()
-        for row in rows:
-            name = str(row.get("name", "")).strip()
-            if not name:
-                continue
-            if len(name) > 90:
-                return jsonify({"error": f"'{name[:20]}...' is too long for a role name."}), 400
-            if name.lower() in seen_names:
-                return jsonify({"error": f"'{name}' is listed twice."}), 400
-            seen_names.add(name.lower())
-            try:
-                at = round(float(row.get("at", 0)), 2)
-            except (ValueError, TypeError):
-                return jsonify({"error": f"'{name}' needs a number to unlock at."}), 400
-            if at < 0:
-                return jsonify({"error": f"'{name}' cannot unlock below zero."}), 400
-            cleaned.append([int(at) if at == int(at) else at, name])
+        if section == "ranks":
+            rows = body.get("ranks") or []
+            cleaned = []
+            seen_names = set()
+            for row in rows:
+                name = str(row.get("name", "")).strip()
+                if not name:
+                    continue
+                if len(name) > 90:
+                    return jsonify({"error": f"'{name[:20]}...' is too long for a role name."}), 400
+                if name.lower() in seen_names:
+                    return jsonify({"error": f"'{name}' is listed twice."}), 400
+                seen_names.add(name.lower())
+                try:
+                    at = round(float(row.get("at", 0)), 2)
+                except (ValueError, TypeError):
+                    return jsonify({"error": f"'{name}' needs a number to unlock at."}), 400
+                if at < 0:
+                    return jsonify({"error": f"'{name}' cannot unlock below zero."}), 400
+                cleaned.append([int(at) if at == int(at) else at, name])
 
-        cleaned.sort(key=lambda r: r[0])
-        for i in range(1, len(cleaned)):
-            if cleaned[i][0] == cleaned[i - 1][0]:
-                return jsonify({
-                    "error": f"'{cleaned[i][1]}' and '{cleaned[i-1][1]}' both unlock at {cleaned[i][0]}."
-                }), 400
+            cleaned.sort(key=lambda r: r[0])
+            for i in range(1, len(cleaned)):
+                if cleaned[i][0] == cleaned[i - 1][0]:
+                    return jsonify({
+                        "error": f"'{cleaned[i][1]}' and '{cleaned[i-1][1]}' both unlock at {cleaned[i][0]}."
+                    }), 400
 
-        economy.setdefault("ranks", {})[category] = cleaned
-        save_data(data)
-        return jsonify({"ok": True, "count": len(cleaned), "ranks_changed": True})
+            economy.setdefault("ranks", {})[category] = cleaned
+            return jsonify({"ok": True, "count": len(cleaned), "ranks_changed": True})
 
-    return jsonify({"error": "Nothing to save."}), 400
+        return jsonify({"error": "Nothing to save."}), 400
 
 
 @app.route("/api/economy/reset", methods=["POST"])
@@ -1791,17 +1802,12 @@ def api_economy_reset():
     category = body.get("category")
     if category not in ALL_CATEGORIES or section not in ("events", "ranks"):
         return jsonify({"error": "Unknown category or section."}), 400
-    data = load_data()
-    economy = data.get("_economy", {})
-    changed = False
-    if category in economy.get(section, {}):
-        del economy[section][category]
-        changed = True
-    if section == "events" and category in economy.get("cooldowns", {}):
-        del economy["cooldowns"][category]
-        changed = True
-    if changed:
-        save_data(data)
+    with data_txn() as data:
+        economy = data.get("_economy", {})
+        if category in economy.get(section, {}):
+            del economy[section][category]
+        if section == "events" and category in economy.get("cooldowns", {}):
+            del economy["cooldowns"][category]
     return jsonify({"ok": True})
 
 
@@ -1832,44 +1838,42 @@ def api_commands_save():
     if len(response_text) > 1900:
         return jsonify({"error": "Response is too long (1900 characters max)."}), 400
 
-    data = load_data()
-    commands_list = data.get("_commands", [])
-    entry = {
-        "name": name,
-        "response": response_text,
-        "embed": bool(body.get("embed", False)),
-        "title": (body.get("title") or "").strip()[:200],
-        "color": (body.get("color") or "#c98fa8").strip()[:7],
-        "enabled": bool(body.get("enabled", True)),
-        "uses": 0,
-        "created_by": session.get("user", {}).get("username", "dashboard"),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    for i, c in enumerate(commands_list):
-        if c["name"] == name:
-            entry["uses"] = c.get("uses", 0)
-            entry["created_at"] = c.get("created_at", entry["created_at"])
-            commands_list[i] = entry
-            break
-    else:
-        if len(commands_list) >= 100:
-            return jsonify({"error": "You've hit the 100 custom command limit."}), 400
-        commands_list.append(entry)
+    with data_txn() as data:
+        commands_list = data.get("_commands", [])
+        entry = {
+            "name": name,
+            "response": response_text,
+            "embed": bool(body.get("embed", False)),
+            "title": (body.get("title") or "").strip()[:200],
+            "color": (body.get("color") or "#c98fa8").strip()[:7],
+            "enabled": bool(body.get("enabled", True)),
+            "uses": 0,
+            "created_by": session.get("user", {}).get("username", "dashboard"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for i, c in enumerate(commands_list):
+            if c["name"] == name:
+                entry["uses"] = c.get("uses", 0)
+                entry["created_at"] = c.get("created_at", entry["created_at"])
+                commands_list[i] = entry
+                break
+        else:
+            if len(commands_list) >= 100:
+                return jsonify({"error": "You've hit the 100 custom command limit."}), 400
+            commands_list.append(entry)
 
-    data["_commands"] = sorted(commands_list, key=lambda c: c["name"])
-    save_data(data)
+        data["_commands"] = sorted(commands_list, key=lambda c: c["name"])
     return jsonify({"ok": True, "command": entry})
 
 @app.route("/api/commands/<name>", methods=["DELETE"])
 @admin_required
 def api_commands_delete(name):
-    data = load_data()
-    commands_list = data.get("_commands", [])
-    remaining = [c for c in commands_list if c["name"] != name.lower()]
-    if len(remaining) == len(commands_list):
-        return jsonify({"error": "No command by that name."}), 404
-    data["_commands"] = remaining
-    save_data(data)
+    with data_txn() as data:
+        commands_list = data.get("_commands", [])
+        remaining = [c for c in commands_list if c["name"] != name.lower()]
+        if len(remaining) == len(commands_list):
+            return jsonify({"error": "No command by that name."}), 404
+        data["_commands"] = remaining
     return jsonify({"ok": True})
 
 # ── API: Event Schedule ──
@@ -1925,13 +1929,12 @@ def api_schedule():
 @admin_required
 def api_events_update():
     body = request.json or {}
-    data = load_data()
     validated = {}
     for event, times in body.items():
         if isinstance(times, list):
             validated[event] = [t for t in times if isinstance(t, str) and len(t) == 5]
-    data["_event_schedule"] = validated
-    save_data(data)
+    with data_txn() as data:
+        data["_event_schedule"] = validated
     return jsonify({"ok": True})
 
 # ─────────────────────────────────────────────────────────────
@@ -2851,21 +2854,17 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
   border:1px solid var(--border)}
 .spacer{flex:1}
 
-/* Guild picker pill */
-.picker{position:relative}
+/* Current-server badge */
 .pill{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);
-  border-radius:999px;padding:6px 14px 6px 6px;cursor:pointer;color:var(--text);font-family:inherit;
-  font-size:14px;font-weight:500;max-width:min(52vw,320px);transition:border-color .15s}
-.pill:hover{border-color:var(--border-2)}
+  border-radius:999px;padding:6px 14px 6px 6px;color:var(--text);font-family:inherit;
+  font-size:14px;font-weight:500;max-width:min(52vw,320px)}
 .pill img,.pill .fallback{width:30px;height:30px;border-radius:50%;flex-shrink:0;object-fit:cover}
 .pill .fallback{background:var(--card-2);display:flex;align-items:center;justify-content:center;
   font-size:12px;font-weight:600;color:var(--muted)}
 .pill .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pill .chev{width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:2.4;flex-shrink:0}
 .menu{position:absolute;top:calc(100% + 8px);background:var(--card);border:1px solid var(--border);
   border-radius:14px;padding:6px;min-width:240px;box-shadow:0 18px 40px rgba(0,0,0,.5);display:none;z-index:70}
 .menu.open{display:block}
-.picker .menu{left:50%;transform:translateX(-50%)}
 .menu-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;
   font-size:14px;color:var(--text);background:none;border:none;width:100%;text-align:left;font-family:inherit;
   text-decoration:none}
@@ -3116,16 +3115,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
   </button>
   <img class="brand" src="__LOGO__" alt="">
   <div class="spacer"></div>
-  <div class="picker">
-    <button class="pill" id="guild-pill" onclick="toggleMenu('guild-menu')">
-      <span class="fallback" id="guild-icon">&nbsp;</span>
-      <span class="name" id="guild-name">Loading…</span>
-      <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
-    <div class="menu" id="guild-menu">
-      <div class="menu-label">Your servers</div>
-      <div id="guild-list"></div>
-    </div>
+  <div class="pill" id="guild-pill">
+    <span class="fallback" id="guild-icon">&nbsp;</span>
+    <span class="name" id="guild-name">Loading…</span>
   </div>
   <div class="spacer"></div>
   <div class="user-menu-wrap">
@@ -3597,13 +3589,6 @@ async function loadMe(){
   document.getElementById('user-avatar').src = me.user.avatar;
   document.getElementById('user-handle').textContent = me.user.handle ? '@'+me.user.handle : 'Signed in';
   renderGuild(me.guild);
-  document.getElementById('guild-list').innerHTML = me.guilds.map(g=>
-    '<button class="menu-item" onclick="selectGuild(\\''+g.id+'\\')">'+guildIcon(g)+'<span>'+esc(g.name)+'</span></button>'
-  ).join('');
-}
-function guildIcon(g){
-  return g.icon ? '<img alt="" src="'+g.icon+'">'
-                : '<span class="fallback">'+esc((g.name||'?').slice(0,1).toUpperCase())+'</span>';
 }
 function renderGuild(g){
   if(!g) return;
@@ -3613,10 +3598,6 @@ function renderGuild(g){
     const img = new Image(); img.src = g.icon; img.alt = '';
     holder.replaceWith(img); img.id = 'guild-icon';
   } else { holder.textContent = (g.name||'?').slice(0,1).toUpperCase(); }
-}
-async function selectGuild(id){
-  const r = await api('/api/guild',{method:'POST',body:JSON.stringify({guild_id:id})});
-  if(r.ok) location.reload();
 }
 
 // ── Navigation ──

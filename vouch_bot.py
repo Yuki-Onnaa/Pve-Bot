@@ -13,6 +13,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from data_store import DATA_FILE, load_data, save_data, data_txn
+
 # ─────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────
@@ -90,11 +92,10 @@ def get_active_persona():
 
 
 def set_active_persona(name):
-    data = load_data()
-    settings = data.get("_settings", {})
-    settings["persona"] = name
-    data["_settings"] = settings
-    save_data(data)
+    with data_txn() as data:
+        settings = data.get("_settings", {})
+        settings["persona"] = name
+        data["_settings"] = settings
 
 
 def get_memories():
@@ -103,26 +104,24 @@ def get_memories():
 
 
 def add_memory(text, added_by):
-    data = load_data()
-    memories = data.get("_memories", [])
-    memories.append({
-        "id": uuid.uuid4().hex[:8],
-        "text": text,
-        "added_by": added_by,
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
-    memories = memories[-50:]  # cap so the system prompt doesn't balloon forever
-    data["_memories"] = memories
-    save_data(data)
+    with data_txn() as data:
+        memories = data.get("_memories", [])
+        memories.append({
+            "id": uuid.uuid4().hex[:8],
+            "text": text,
+            "added_by": added_by,
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+        memories = memories[-50:]  # cap so the system prompt doesn't balloon forever
+        data["_memories"] = memories
 
 
 def remove_memory(memory_id):
-    data = load_data()
-    memories = data.get("_memories", [])
-    new_memories = [m for m in memories if m["id"] != memory_id]
-    removed = len(new_memories) != len(memories)
-    data["_memories"] = new_memories
-    save_data(data)
+    with data_txn() as data:
+        memories = data.get("_memories", [])
+        new_memories = [m for m in memories if m["id"] != memory_id]
+        removed = len(new_memories) != len(memories)
+        data["_memories"] = new_memories
     return removed
 
 
@@ -151,10 +150,6 @@ UNFILTERED_EXTRA = (
     "This applies ONLY to swearing and tone - you still never use slurs, hate speech, or "
     "anything targeting or harassing other people, and all your other rules still apply."
 )
-
-# Where vouch data is stored. On Railway, mount a Volume and point this at it
-# (e.g. "/data/vouches.json") so data survives redeploys.
-DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
 
 # Each vouch category watches its own channel
 PVE_CHANNEL_ID = 1529113596657799178
@@ -339,23 +334,6 @@ PHRASE_VOUCH_PATTERN = re.compile(
 
 PVE_VOUCH_PATTERN = re.compile(r"^\s*vouch\s+((?:<@!?\d+>\s*)+)(.+)$", re.IGNORECASE)
 MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
-
-# ─────────────────────────────────────────────────────────────
-# STORAGE
-# ─────────────────────────────────────────────────────────────
-
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data):
-    os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
 
 # ─────────────────────────────────────────────────────────────
 # ECONOMY
@@ -1017,12 +995,11 @@ def get_custom_commands():
 
 
 def _bump_command_uses(name):
-    data = load_data()
-    for c in data.get("_commands", []):
-        if c["name"] == name:
-            c["uses"] = c.get("uses", 0) + 1
-            save_data(data)
-            return
+    with data_txn() as data:
+        for c in data.get("_commands", []):
+            if c["name"] == name:
+                c["uses"] = c.get("uses", 0) + 1
+                return
 
 
 def _fill_placeholders(text, message):
@@ -1387,11 +1364,10 @@ def is_chat_enabled():
 
 
 def set_chat_enabled(enabled):
-    data = load_data()
-    settings = data.get("_settings", {})
-    settings["chat_enabled"] = enabled
-    data["_settings"] = settings
-    save_data(data)
+    with data_txn() as data:
+        settings = data.get("_settings", {})
+        settings["chat_enabled"] = enabled
+        data["_settings"] = settings
 
 
 def get_vouch_summary_text(user_id, display_name):
@@ -1493,23 +1469,21 @@ def get_tickets(data=None):
 
 
 def save_ticket(channel_id, user_id, ticket_type):
-    data = load_data()
-    tickets = data.get("_tickets", {})
-    tickets[str(channel_id)] = {
-        "user_id": user_id,
-        "type": ticket_type,
-        "opened_at": datetime.now(timezone.utc).isoformat(),
-    }
-    data["_tickets"] = tickets
-    save_data(data)
+    with data_txn() as data:
+        tickets = data.get("_tickets", {})
+        tickets[str(channel_id)] = {
+            "user_id": user_id,
+            "type": ticket_type,
+            "opened_at": datetime.now(timezone.utc).isoformat(),
+        }
+        data["_tickets"] = tickets
 
 
 def pop_ticket(channel_id):
-    data = load_data()
-    tickets = data.get("_tickets", {})
-    ticket = tickets.pop(str(channel_id), None)
-    data["_tickets"] = tickets
-    save_data(data)
+    with data_txn() as data:
+        tickets = data.get("_tickets", {})
+        ticket = tickets.pop(str(channel_id), None)
+        data["_tickets"] = tickets
     return ticket
 
 
@@ -1727,20 +1701,19 @@ def security_role_for_region(guild, region):
 def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_ids=None, stage_channel_id=None):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
     event hosted plus the posted message/stage, so /reping and /end know what to act on."""
-    data = load_data()
-    record = data.setdefault(str(user_id), {})
-    runs = record.get("host_runs", [])
-    runs.append(datetime.now(timezone.utc).isoformat())
-    record["host_runs"] = runs[-100:]
-    record["last_host_event"] = event
-    record["last_host"] = {
-        "event": event,
-        "message_id": str(message_id) if message_id else None,
-        "channel_id": str(channel_id) if channel_id else None,
-        "co_host_ids": [str(c) for c in co_host_ids] if co_host_ids else [],
-        "stage_channel_id": str(stage_channel_id) if stage_channel_id else None,
-    }
-    save_data(data)
+    with data_txn() as data:
+        record = data.setdefault(str(user_id), {})
+        runs = record.get("host_runs", [])
+        runs.append(datetime.now(timezone.utc).isoformat())
+        record["host_runs"] = runs[-100:]
+        record["last_host_event"] = event
+        record["last_host"] = {
+            "event": event,
+            "message_id": str(message_id) if message_id else None,
+            "channel_id": str(channel_id) if channel_id else None,
+            "co_host_ids": [str(c) for c in co_host_ids] if co_host_ids else [],
+            "stage_channel_id": str(stage_channel_id) if stage_channel_id else None,
+        }
 
 
 def no_active_event_message(last_host, action):
@@ -1807,12 +1780,11 @@ def clear_stage_tracking(host_uid):
     after they're done, so if anyone else later hosts the same event type on the
     same stage, find_host_for_stage / /host's ghost-check / /end's safety check can
     all misattribute that new, unrelated live stage to the old, finished host."""
-    data = load_data()
-    record = data.get(str(host_uid))
-    if record and record.get("last_host"):
-        record["last_host"]["stage_channel_id"] = None
-        record["last_host"]["ended"] = True
-        save_data(data)
+    with data_txn() as data:
+        record = data.get(str(host_uid))
+        if record and record.get("last_host"):
+            record["last_host"]["stage_channel_id"] = None
+            record["last_host"]["ended"] = True
 
 
 def reset_stale_live_tracking():
@@ -1821,18 +1793,17 @@ def reset_stale_live_tracking():
     this feature existed shows up as live. Only /host sessions started after
     this runs will ever appear there. Runs once, gated by a flag in the data
     so it's a no-op on every restart after the first."""
-    data = load_data()
-    if data.get("_live_tracking_reset"):
-        return
-    for uid, record in data.items():
-        if not uid.isdigit():
-            continue
-        last_host = record.get("last_host")
-        if last_host and last_host.get("stage_channel_id") and not last_host.get("ended"):
-            last_host["stage_channel_id"] = None
-            last_host["ended"] = True
-    data["_live_tracking_reset"] = True
-    save_data(data)
+    with data_txn() as data:
+        if data.get("_live_tracking_reset"):
+            return
+        for uid, record in data.items():
+            if not uid.isdigit():
+                continue
+            last_host = record.get("last_host")
+            if last_host and last_host.get("stage_channel_id") and not last_host.get("ended"):
+                last_host["stage_channel_id"] = None
+                last_host["ended"] = True
+        data["_live_tracking_reset"] = True
 
 
 async def announce_event_ended(guild, host_uid, last_host):
@@ -2123,10 +2094,10 @@ async def on_message(message):
         await process_message_commands(message)
         return
 
-    data = load_data()
     recorded_ids, cooldown_ids, self_dropped = [], [], 0
     handled = False
     event_name = None
+    target_ids = []
 
     if category == "pve":
         match = PVE_VOUCH_PATTERN.match(message.content)
@@ -2139,10 +2110,6 @@ async def on_message(message):
             if event_name is None:
                 await message.add_reaction("❌")
                 return
-            recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, message.author.id, "pve", event_name,
-                author_name=message.author.display_name
-            )
     else:
         match = PHRASE_VOUCH_PATTERN.match(message.content)
         if match:
@@ -2151,14 +2118,16 @@ async def on_message(message):
             mentions_block = match.group(2)
             category, event_name = PHRASE_ALIASES[phrase]
             target_ids = [int(uid) for uid in MENTION_PATTERN.findall(mentions_block)]
+
+    if handled:
+        # Parsing/validation above is pure (no awaits), so it's fine outside the
+        # lock. The actual record+save has to happen atomically together though.
+        with data_txn() as data:
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
                 data, target_ids, message.author.id, category, event_name,
                 author_name=message.author.display_name
             )
-
-    if handled:
-        remember_message_vouch_targets(data, message.id, recorded_ids)
-        save_data(data)
+            remember_message_vouch_targets(data, message.id, recorded_ids)
 
         if self_dropped and not recorded_ids and not cooldown_ids:
             await message.add_reaction("🚫")
@@ -2197,11 +2166,11 @@ async def on_message_edit(before, after):
     if before.content == after.content:
         return
 
-    data = load_data()
+    already_credited = already_credited_for_message(load_data(), after.id)
     recorded_ids, cooldown_ids, self_dropped = [], [], 0
     event_name = None
     handled = False
-    already_credited = already_credited_for_message(data, after.id)
+    target_ids = []
 
     if category == "pve":
         match = PVE_VOUCH_PATTERN.match(after.content)
@@ -2213,10 +2182,6 @@ async def on_message_edit(before, after):
             if event_name is None:
                 await after.add_reaction("❌")
                 return
-            recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, after.author.id, "pve", event_name,
-                author_name=after.author.display_name
-            )
     else:
         match = PHRASE_VOUCH_PATTERN.match(after.content)
         if match:
@@ -2225,16 +2190,16 @@ async def on_message_edit(before, after):
             category, event_name = PHRASE_ALIASES[phrase]
             target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))
                           if uid not in already_credited]
-            recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, after.author.id, category, event_name,
-                author_name=after.author.display_name
-            )
 
     if not handled:
         return
 
-    remember_message_vouch_targets(data, after.id, recorded_ids)
-    save_data(data)
+    with data_txn() as data:
+        recorded_ids, cooldown_ids, self_dropped = record_vouch(
+            data, target_ids, after.author.id, category, event_name,
+            author_name=after.author.display_name
+        )
+        remember_message_vouch_targets(data, after.id, recorded_ids)
 
     if self_dropped and not recorded_ids and not cooldown_ids:
         await after.add_reaction("🚫")
@@ -2637,19 +2602,18 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
         await ctx.send("⚠️ Count must be at least 1.")
         return
 
-    data = load_data()
-    points = get_event_points(category, event_name, data)
-    record = get_user_record(data, member.id, category)
-    record["total_points"] += points * count
-    record["total_vouches"] += count
-    record["events"][event_name] += count
-    record["log"].append({
-        "id": uuid.uuid4().hex[:8],
-        "by": ctx.author.id, "event": event_name, "points": points * count,
-        "count": count, "backfilled": True,
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
-    save_data(data)
+    with data_txn() as data:
+        points = get_event_points(category, event_name, data)
+        record = get_user_record(data, member.id, category)
+        record["total_points"] += points * count
+        record["total_vouches"] += count
+        record["events"][event_name] += count
+        record["log"].append({
+            "id": uuid.uuid4().hex[:8],
+            "by": ctx.author.id, "event": event_name, "points": points * count,
+            "count": count, "backfilled": True,
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
     await refresh_live_leaderboards()
     await update_role_for_user(ctx.guild, member.id, category)
 
@@ -2845,8 +2809,12 @@ async def syncvouches(ctx):
                 recorded_total += len(recorded_ids)
 
     # Carry over everything that is not vouch data: settings, channel config,
-    # custom commands, edited points and ranks, memories, analytics.
-    for key, value in old_data.items():
+    # custom commands, edited points and ranks, memories, analytics. Re-read
+    # fresh rather than using the pre-scan snapshot - the channel scan above can
+    # take a while, and anything saved elsewhere in the meantime (a settings
+    # change, a memory add) would otherwise be silently lost when this saves.
+    fresh_data = load_data()
+    for key, value in fresh_data.items():
         if not key.isdigit():
             new_data[key] = value
 
@@ -3259,23 +3227,22 @@ async def slash_addvouch(interaction: discord.Interaction,
     count = max(1, min(50, count))
     await interaction.response.defer()
 
-    data = load_data()
-    record = get_user_record(data, member.id, cat)
-    points = get_event_points(cat, event, data)
-    record["total_points"] += points * count
-    record["total_vouches"] += count
-    record["events"][event] = record["events"].get(event, 0) + count
-    record["log"].append({
-        "id": uuid.uuid4().hex[:8],
-        "by": interaction.user.id,
-        "by_name": interaction.user.display_name,
-        "event": event,
-        "points": points * count,
-        "count": count,
-        "backfilled": True,
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
-    save_data(data)
+    with data_txn() as data:
+        record = get_user_record(data, member.id, cat)
+        points = get_event_points(cat, event, data)
+        record["total_points"] += points * count
+        record["total_vouches"] += count
+        record["events"][event] = record["events"].get(event, 0) + count
+        record["log"].append({
+            "id": uuid.uuid4().hex[:8],
+            "by": interaction.user.id,
+            "by_name": interaction.user.display_name,
+            "event": event,
+            "points": points * count,
+            "count": count,
+            "backfilled": True,
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
 
     await log_audit(
         f"**{CATEGORY_NAMES[cat]} - {event}** (+{points * count} pts) added by "
@@ -3664,12 +3631,11 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
         await interaction.followup.send(f"Couldn't edit the message: {e}", ephemeral=True)
         return
 
-    data = load_data()
-    record = data.setdefault(str(interaction.user.id), {})
-    if record.get("last_host"):
-        record["last_host"]["co_host_ids"] = [str(c.id) for c in co_hosts]
-        record["last_host"].pop("co_host_id", None)
-    save_data(data)
+    with data_txn() as data:
+        record = data.setdefault(str(interaction.user.id), {})
+        if record.get("last_host"):
+            record["last_host"]["co_host_ids"] = [str(c.id) for c in co_hosts]
+            record["last_host"].pop("co_host_id", None)
 
     if co_hosts:
         names = ", ".join(c.mention for c in co_hosts)
@@ -3759,25 +3725,24 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
     # host's record (marked ended + who took over) instead of wiping it, so their
     # /end, /reping, /cohost give an accurate "X took over" message instead of the
     # misleading "you haven't run /host yet".
-    data = load_data()
-    old_record = data.setdefault(str(current_host.id), {})
-    if old_record.get("last_host"):
-        old_record["last_host"]["ended"] = True
-        old_record["last_host"]["stage_channel_id"] = None
-        old_record["last_host"]["taken_over_by"] = str(interaction.user.id)
-    new_record = data.setdefault(str(interaction.user.id), {})
-    runs = new_record.get("host_runs", [])
-    runs.append(datetime.now(timezone.utc).isoformat())
-    new_record["host_runs"] = runs[-100:]
-    new_record["last_host_event"] = event
-    new_record["last_host"] = {
-        "event": event,
-        "message_id": last_host.get("message_id"),
-        "channel_id": last_host.get("channel_id"),
-        "co_host_ids": co_host_ids,
-        "stage_channel_id": last_host.get("stage_channel_id"),
-    }
-    save_data(data)
+    with data_txn() as data:
+        old_record = data.setdefault(str(current_host.id), {})
+        if old_record.get("last_host"):
+            old_record["last_host"]["ended"] = True
+            old_record["last_host"]["stage_channel_id"] = None
+            old_record["last_host"]["taken_over_by"] = str(interaction.user.id)
+        new_record = data.setdefault(str(interaction.user.id), {})
+        runs = new_record.get("host_runs", [])
+        runs.append(datetime.now(timezone.utc).isoformat())
+        new_record["host_runs"] = runs[-100:]
+        new_record["last_host_event"] = event
+        new_record["last_host"] = {
+            "event": event,
+            "message_id": last_host.get("message_id"),
+            "channel_id": last_host.get("channel_id"),
+            "co_host_ids": co_host_ids,
+            "stage_channel_id": last_host.get("stage_channel_id"),
+        }
 
     await revoke_stage_perms(guild, current_host, reason=f"Handed off hosting to {interaction.user}")
     granted = await grant_stage_perms(guild, interaction.user, reason=f"Took over hosting from {current_host}")
