@@ -302,6 +302,7 @@ ROLE_THRESHOLDS = {
         (200, "Hero Of Events"),
     ],
     "security": [
+        (0, "Rookie"),
         (5, "Sergeant"),
         (15, "Veteran"),
         (30, "Vanguard"),
