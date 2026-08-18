@@ -3784,10 +3784,9 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes,
         guild=guild)
     sent_message = await channel.send(
-        content=f"{' '.join(ping_parts)}\n{message}",
+        content=f"{' '.join(ping_parts)}\n{message}\n-----",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
-    await channel.send("-----")
     stage_topic = build_stage_topic(event, region)
     record_host_run(
         interaction.user.id, event,
