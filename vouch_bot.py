@@ -1943,6 +1943,373 @@ async def on_member_update(before, after):
                 print(f"[Roles] Gate role update failed for {after.id} ({category}): {e}")
 
 
+# ─────────────────────────────────────────────────────────────
+# ANTI-NUKE / BACKUP & RESTORE
+# Snapshots every channel's and role's settings (hourly, and on demand), and
+# reacts to a burst of channel/role deletions by immediately stripping the
+# actor's dangerous roles and recreating whatever they deleted from the last
+# snapshot. Manual /restore, /backupnow and /antinuke are gated to the server
+# owner or the Bot Manager role - NOT the bot's normal admin check, since the
+# threat model here is specifically someone who already has that.
+#
+# Two things this can't do anything about, by Discord's own design: it can
+# only strip roles positioned below the bot's own top role, and it can never
+# act on the server owner. And a "restore" recreates channels/roles with the
+# same name/settings - it can't resurrect the exact original IDs, so pinned
+# messages, webhooks and old message history in a deleted channel are gone
+# for good even after a restore.
+# ─────────────────────────────────────────────────────────────
+
+BOT_MANAGER_ROLE_NAME = os.environ.get("BOT_MANAGER_ROLE_NAME", "Bot Manager")
+ANTINUKE_WINDOW_SECONDS = int(os.environ.get("ANTINUKE_WINDOW_SECONDS", "12"))
+ANTINUKE_THRESHOLD = int(os.environ.get("ANTINUKE_THRESHOLD", "3"))
+ANTINUKE_DANGEROUS_PERMS = (
+    "administrator", "manage_channels", "manage_roles", "manage_guild",
+    "ban_members", "kick_members",
+)
+
+_destructive_action_log = {}  # user_id -> [datetime, ...], in-memory only
+
+
+def is_owner_or_bot_manager(member, guild):
+    if member.id == guild.owner_id:
+        return True
+    return any(r.name == BOT_MANAGER_ROLE_NAME for r in member.roles)
+
+
+def antinuke_check():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)
+    return app_commands.check(predicate)
+
+
+def is_antinuke_enabled():
+    return load_data().get("_settings", {}).get("antinuke_enabled", True)
+
+
+def set_antinuke_enabled(enabled):
+    with data_txn() as data:
+        settings = data.get("_settings", {})
+        settings["antinuke_enabled"] = enabled
+        data["_settings"] = settings
+
+
+def snapshot_guild(guild):
+    channels = []
+    for ch in guild.channels:
+        if isinstance(ch, discord.CategoryChannel):
+            kind = "category"
+        elif isinstance(ch, discord.TextChannel):
+            kind = "text"
+        elif isinstance(ch, discord.VoiceChannel):
+            kind = "voice"
+        elif isinstance(ch, discord.StageChannel):
+            kind = "stage"
+        else:
+            continue  # forums/threads/etc. aren't covered by this backup
+
+        overwrites = []
+        for target, ow in ch.overwrites.items():
+            allow, deny = ow.pair()
+            overwrites.append({
+                "target_id": str(target.id),
+                "target_type": "role" if isinstance(target, discord.Role) else "member",
+                "allow": allow.value, "deny": deny.value,
+            })
+        channels.append({
+            "id": str(ch.id), "kind": kind, "name": ch.name,
+            "category_id": str(ch.category_id) if ch.category_id else None,
+            "position": ch.position,
+            "topic": getattr(ch, "topic", None),
+            "nsfw": getattr(ch, "nsfw", False),
+            "slowmode_delay": getattr(ch, "slowmode_delay", 0),
+            "bitrate": getattr(ch, "bitrate", None),
+            "user_limit": getattr(ch, "user_limit", None),
+            "overwrites": overwrites,
+        })
+
+    roles = []
+    for role in guild.roles:
+        if role.is_default():
+            continue
+        roles.append({
+            "id": str(role.id), "name": role.name, "color": role.color.value,
+            "permissions": role.permissions.value, "position": role.position,
+            "hoist": role.hoist, "mentionable": role.mentionable,
+        })
+
+    return {
+        "taken_at": datetime.now(timezone.utc).isoformat(),
+        "guild_id": str(guild.id),
+        "channels": channels,
+        "roles": roles,
+    }
+
+
+async def take_backup_snapshot(guild):
+    snap = snapshot_guild(guild)
+    with data_txn() as data:
+        data["_backup_snapshot"] = snap
+    return snap
+
+
+def build_overwrites(guild, snap_overwrites, role_id_map):
+    result = {}
+    for ow in snap_overwrites:
+        if ow["target_type"] == "role":
+            target = role_id_map.get(ow["target_id"]) or guild.get_role(int(ow["target_id"]))
+        else:
+            target = guild.get_member(int(ow["target_id"]))
+        if target is None:
+            continue
+        allow = discord.Permissions(ow["allow"])
+        deny = discord.Permissions(ow["deny"])
+        result[target] = discord.PermissionOverwrite.from_pair(allow, deny)
+    return result
+
+
+async def restore_missing(guild, snapshot):
+    """Recreates any role or channel from the snapshot that no longer exists
+    (matched by name), leaving anything still present untouched. Returns
+    (channels_created, roles_created)."""
+    role_id_map = {}
+    created_roles = 0
+    for r in sorted(snapshot["roles"], key=lambda r: r["position"]):
+        live = discord.utils.get(guild.roles, name=r["name"])
+        if live:
+            role_id_map[r["id"]] = live
+            continue
+        try:
+            new_role = await guild.create_role(
+                name=r["name"], colour=discord.Colour(r["color"]),
+                permissions=discord.Permissions(r["permissions"]),
+                hoist=r["hoist"], mentionable=r["mentionable"],
+                reason="Anti-nuke restore - recreated a missing role",
+            )
+            role_id_map[r["id"]] = new_role
+            created_roles += 1
+        except discord.HTTPException:
+            pass
+
+    created_channels = 0
+    snap_channels = snapshot["channels"]
+
+    category_id_map = {}
+    for c in [c for c in snap_channels if c["kind"] == "category"]:
+        live = discord.utils.get(guild.categories, name=c["name"])
+        if live:
+            category_id_map[c["id"]] = live
+            continue
+        try:
+            overwrites = build_overwrites(guild, c["overwrites"], role_id_map)
+            new_cat = await guild.create_category(c["name"], overwrites=overwrites, reason="Anti-nuke restore")
+            category_id_map[c["id"]] = new_cat
+            created_channels += 1
+        except discord.HTTPException:
+            pass
+
+    for c in [c for c in snap_channels if c["kind"] != "category"]:
+        if c["kind"] == "text" and discord.utils.get(guild.text_channels, name=c["name"]):
+            continue
+        if c["kind"] == "voice" and discord.utils.get(guild.voice_channels, name=c["name"]):
+            continue
+        if c["kind"] == "stage" and discord.utils.get(guild.stage_channels, name=c["name"]):
+            continue
+
+        parent = category_id_map.get(c["category_id"]) if c["category_id"] else None
+        overwrites = build_overwrites(guild, c["overwrites"], role_id_map)
+        try:
+            if c["kind"] == "text":
+                await guild.create_text_channel(
+                    c["name"], category=parent, overwrites=overwrites,
+                    topic=c.get("topic"), nsfw=c.get("nsfw", False),
+                    slowmode_delay=c.get("slowmode_delay", 0),
+                    reason="Anti-nuke restore - recreated a missing channel",
+                )
+            elif c["kind"] == "voice":
+                await guild.create_voice_channel(
+                    c["name"], category=parent, overwrites=overwrites,
+                    bitrate=c.get("bitrate") or 64000, user_limit=c.get("user_limit") or 0,
+                    reason="Anti-nuke restore - recreated a missing channel",
+                )
+            elif c["kind"] == "stage":
+                await guild.create_stage_channel(
+                    c["name"], category=parent, overwrites=overwrites,
+                    reason="Anti-nuke restore - recreated a missing channel",
+                )
+            created_channels += 1
+        except discord.HTTPException:
+            pass
+
+    return created_channels, created_roles
+
+
+async def find_audit_actor(guild, action, target_id, within_seconds=5):
+    """Who performed a just-happened destructive action, by cross-referencing
+    the audit log (delete events don't carry the actor directly)."""
+    try:
+        async for entry in guild.audit_logs(action=action, limit=5):
+            age = (datetime.now(timezone.utc) - entry.created_at).total_seconds()
+            if age > within_seconds:
+                break
+            if entry.target is not None and getattr(entry.target, "id", None) == target_id:
+                return entry.user
+    except discord.Forbidden:
+        print("[AntiNuke] Missing View Audit Log permission - can't attribute deletions.")
+    return None
+
+
+async def handle_suspected_nuke(guild, user):
+    member = guild.get_member(user.id)
+    stripped = []
+    if member is not None and guild.me is not None:
+        dangerous = [
+            r for r in member.roles
+            if not r.is_default() and any(getattr(r.permissions, p) for p in ANTINUKE_DANGEROUS_PERMS)
+        ]
+        removable = [r for r in dangerous if r < guild.me.top_role]
+        if removable:
+            try:
+                await member.remove_roles(*removable, reason="Anti-nuke: mass deletion pattern detected")
+                stripped = [r.name for r in removable]
+            except discord.HTTPException:
+                pass
+
+    snapshot = load_data().get("_backup_snapshot")
+    restored_channels = restored_roles = 0
+    if snapshot:
+        restored_channels, restored_roles = await restore_missing(guild, snapshot)
+
+    warning = (
+        f"🚨 **Anti-nuke triggered** for {user.mention} (`{user.id}`)\n"
+        f"{ANTINUKE_THRESHOLD}+ channel/role deletions within {ANTINUKE_WINDOW_SECONDS}s.\n"
+        + (f"Stripped: {', '.join(stripped)}\n" if stripped else "Couldn't strip any roles (none removable, or they left).\n")
+        + f"Auto-restored {restored_channels} channel(s) and {restored_roles} role(s) from the last backup."
+    )
+    await log_audit(warning)
+
+    notified = set()
+    if guild.owner:
+        notified.add(guild.owner.id)
+        try:
+            await guild.owner.send(warning)
+        except discord.HTTPException:
+            pass
+    for m in guild.members:
+        if m.id in notified or m.bot:
+            continue
+        if any(r.name == BOT_MANAGER_ROLE_NAME for r in m.roles):
+            notified.add(m.id)
+            try:
+                await m.send(warning)
+            except discord.HTTPException:
+                pass
+
+
+async def record_destructive_action(guild, user):
+    if user is None or user.bot:
+        return
+    now = datetime.now(timezone.utc)
+    history = _destructive_action_log.setdefault(user.id, [])
+    history.append(now)
+    cutoff = now - timedelta(seconds=ANTINUKE_WINDOW_SECONDS)
+    history[:] = [t for t in history if t > cutoff]
+    if len(history) >= ANTINUKE_THRESHOLD:
+        history.clear()  # avoid re-triggering on every action in the same burst
+        await handle_suspected_nuke(guild, user)
+
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    if not is_antinuke_enabled():
+        return
+    guild = channel.guild
+    actor = await find_audit_actor(guild, discord.AuditLogAction.channel_delete, channel.id)
+    if actor:
+        await record_destructive_action(guild, actor)
+
+
+@bot.event
+async def on_guild_role_delete(role):
+    if not is_antinuke_enabled():
+        return
+    guild = role.guild
+    actor = await find_audit_actor(guild, discord.AuditLogAction.role_delete, role.id)
+    if actor:
+        await record_destructive_action(guild, actor)
+
+
+@tasks.loop(hours=1)
+async def backup_snapshot_loop():
+    for guild in bot.guilds:
+        try:
+            await take_backup_snapshot(guild)
+        except discord.HTTPException as e:
+            print(f"[Backup] Snapshot failed for {guild.id}: {e}")
+
+
+@backup_snapshot_loop.before_loop
+async def before_backup_snapshot_loop():
+    await bot.wait_until_ready()
+
+
+@bot.tree.command(name="restore", description="Recreate any channels/roles missing since the last backup (owner / Bot Manager only)")
+@antinuke_check()
+async def slash_restore(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    snapshot = load_data().get("_backup_snapshot")
+    if not snapshot:
+        await interaction.followup.send(
+            "No backup exists yet - one is taken automatically every hour, or run /backupnow first.", ephemeral=True)
+        return
+    channels, roles = await restore_missing(interaction.guild, snapshot)
+    await interaction.followup.send(
+        f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}.",
+        ephemeral=True)
+    await log_audit(f"{interaction.user.mention} ran /restore - recreated {channels} channel(s), {roles} role(s).")
+
+
+@bot.tree.command(name="backupnow", description="Take an immediate snapshot of channels and roles (owner / Bot Manager only)")
+@antinuke_check()
+async def slash_backupnow(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    snap = await take_backup_snapshot(interaction.guild)
+    await interaction.followup.send(
+        f"Backup taken: {len(snap['channels'])} channel(s), {len(snap['roles'])} role(s).", ephemeral=True)
+
+
+@bot.tree.command(name="antinuke", description="Check or toggle anti-nuke auto-response (owner / Bot Manager only)")
+@app_commands.describe(enabled="Turn auto-response on or off (omit to just check status)")
+@antinuke_check()
+async def slash_antinuke(interaction: discord.Interaction, enabled: bool = None):
+    await interaction.response.defer(ephemeral=True)
+    if enabled is None:
+        snap = load_data().get("_backup_snapshot")
+        status = "enabled" if is_antinuke_enabled() else "disabled"
+        last = snap["taken_at"] if snap else "never"
+        await interaction.followup.send(f"Anti-nuke is **{status}**. Last backup: {last}.", ephemeral=True)
+        return
+    set_antinuke_enabled(enabled)
+    await interaction.followup.send(
+        f"Anti-nuke auto-response is now **{'enabled' if enabled else 'disabled'}**.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} {'enabled' if enabled else 'disabled'} anti-nuke auto-response.")
+
+
+@slash_restore.error
+@slash_backupnow.error
+@slash_antinuke.error
+async def slash_antinuke_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        msg = f"Only the server owner or someone with the **{BOT_MANAGER_ROLE_NAME}** role can use this."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 @bot.event
 async def on_stage_instance_delete(stage_instance):
     """Logs every stage that ends, not just ones ended through /end - Discord's native
@@ -2001,6 +2368,10 @@ async def on_ready():
     if not warn_expiring_streaks.is_running():
         warn_expiring_streaks.start()
         print("[Streak] Host streak warnings checking hourly")
+
+    if not backup_snapshot_loop.is_running():
+        backup_snapshot_loop.start()
+        print("[Backup] Channel/role snapshots running hourly")
 
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
