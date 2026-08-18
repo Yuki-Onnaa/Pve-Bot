@@ -1845,7 +1845,7 @@ def api_commands_save():
             "response": response_text,
             "embed": bool(body.get("embed", False)),
             "title": (body.get("title") or "").strip()[:200],
-            "color": (body.get("color") or "#c98fa8").strip()[:7],
+            "color": (body.get("color") or "#7fc2b8").strip()[:7],
             "enabled": bool(body.get("enabled", True)),
             "uses": 0,
             "created_by": session.get("user", {}).get("username", "dashboard"),
@@ -1946,37 +1946,110 @@ LOGIN_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in - Matzys Overseer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0c0a10;--panel:#151119;--panel-2:#1c1622;--border:#2a2432;
-  --text:#f5f1f6;--muted:#a89bb0;--accent:#c98fa8;--red:#c77a80;
-  --serif:ui-serif,"Iowan Old Style",Palatino,"Palatino Linotype",Georgia,serif;
-  --sans:-apple-system,"Segoe UI",system-ui,sans-serif;
+  --bg:#0c1210;--panel:#0d1614;--panel-2:#152220;--border:#233530;
+  --text:#eef4f2;--muted:#8fa39d;--accent:#7fc2b8;--red:#c77a80;
+  --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
+  --sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
 }
 body{background:var(--bg);color:var(--text);font-family:var(--sans);
-  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;overflow-x:hidden}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:18px;
-  padding:40px 32px;width:100%;max-width:420px;text-align:center}
-.mark{width:72px;height:72px;margin:0 auto 22px;border-radius:16px;display:block;object-fit:cover;
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;overflow-x:hidden;position:relative}
+
+/* Fog-lit drowned fortress backdrop - flat silhouette layers, no gradient glow */
+.scene{position:fixed;inset:0;z-index:0;overflow:hidden}
+.scene .sky{position:absolute;inset:0;background:linear-gradient(180deg,
+    #0a1614 0%,#122420 32%,#204840 58%,#173630 76%,#0c1815 100%)}
+.scene .grain{position:absolute;inset:0;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+.scene svg{position:absolute;inset:0;width:100%;height:100%}
+
+.card{position:relative;z-index:2;background:var(--panel);border:1px solid var(--border);border-radius:4px;
+  padding:40px 32px;width:100%;max-width:420px;text-align:center;box-shadow:0 30px 70px -20px rgba(0,0,0,.7)}
+.mark{width:72px;height:72px;margin:0 auto 22px;border-radius:4px;display:block;object-fit:cover;
   border:1px solid var(--border)}
-h1{font-family:var(--serif);font-size:26px;font-weight:500;letter-spacing:.1px}
+h1{font-family:var(--serif);font-size:26px;font-weight:600;letter-spacing:.2px}
 h1 span{color:var(--accent)}
 p.sub{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.5}
 .discord-btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;margin-top:30px;
-  background:#5865f2;color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:600;
-  font-family:var(--sans);cursor:pointer;text-decoration:none;transition:background .15s}
-.discord-btn:hover{background:#4752c4}
-.discord-btn:disabled{background:var(--panel-2);color:var(--muted);cursor:not-allowed}
+  background:#4a52c9;color:#fff;border:1.5px solid var(--accent);border-radius:4px;padding:14px;font-size:15px;font-weight:600;
+  font-family:var(--sans);cursor:pointer;text-decoration:none;box-shadow:3px 3px 0 #05100d}
+.discord-btn:hover{background:#3d44a8}
+.discord-btn:disabled{background:var(--panel-2);color:var(--muted);border-color:var(--border);box-shadow:none;cursor:not-allowed}
 .discord-btn svg{width:22px;height:22px;fill:currentColor}
 .note{margin-top:18px;font-size:12px;color:var(--muted);line-height:1.6}
 .note code{font-family:ui-monospace,"SF Mono",Consolas,monospace;color:var(--text);font-size:11px}
 .error{background:rgba(199,122,128,0.12);border:1px solid rgba(199,122,128,0.3);color:var(--red);
-  border-radius:12px;padding:12px 14px;font-size:13px;margin-top:22px;text-align:left;line-height:1.5}
+  border-radius:4px;padding:12px 14px;font-size:13px;margin-top:22px;text-align:left;line-height:1.5}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style>
 </head>
 <body>
+<div class="scene" aria-hidden="true">
+  <div class="sky"></div>
+  <svg viewBox="0 0 1280 840" preserveAspectRatio="xMidYMid slice">
+    <g fill="#284c44" opacity=".65">
+      <rect x="330" y="420" width="46" height="150"/><rect x="380" y="390" width="34" height="180"/>
+      <rect x="900" y="400" width="40" height="170"/><rect x="945" y="430" width="30" height="140"/>
+      <polygon points="1010,570 1010,410 1050,380 1090,410 1090,570"/>
+    </g>
+    <g fill="#123028" opacity=".92">
+      <rect x="260" y="470" width="760" height="150"/>
+      <rect x="260" y="450" width="24" height="24"/><rect x="308" y="450" width="24" height="24"/>
+      <rect x="356" y="450" width="24" height="24"/><rect x="404" y="450" width="24" height="24"/>
+      <rect x="452" y="450" width="24" height="24"/><rect x="500" y="450" width="24" height="24"/>
+      <rect x="548" y="450" width="24" height="24"/><rect x="596" y="450" width="24" height="24"/>
+      <rect x="644" y="450" width="24" height="24"/><rect x="692" y="450" width="24" height="24"/>
+      <rect x="740" y="450" width="24" height="24"/><rect x="788" y="450" width="24" height="24"/>
+      <rect x="836" y="450" width="24" height="24"/><rect x="884" y="450" width="24" height="24"/>
+      <rect x="932" y="450" width="24" height="24"/><rect x="980" y="450" width="24" height="24"/>
+      <polygon points="450,470 450,340 640,270 830,340 830,470"/>
+    </g>
+    <g>
+      <rect x="605" y="200" width="70" height="290" fill="#0a1c18"/>
+      <polygon points="600,200 680,200 690,170 640,150 590,170" fill="#0a1c18"/>
+      <rect x="612" y="130" width="56" height="42" fill="#0d211c"/>
+      <polygon points="600,130 680,130 664,96 616,96" fill="#0d211c"/>
+      <rect x="636" y="70" width="8" height="30" fill="#0d211c"/>
+      <polygon points="570,220 590,220 590,300 570,340" fill="#081a16"/>
+      <polygon points="710,220 690,220 690,300 710,340" fill="#081a16"/>
+    </g>
+    <g fill="#061511"><path d="M0,560 C220,520 1060,520 1280,565 L1280,840 L0,840 Z"/></g>
+    <g fill="#04100c">
+      <rect x="40" y="545" width="14" height="90"/><rect x="120" y="538" width="14" height="90"/>
+      <rect x="205" y="532" width="14" height="90"/><rect x="295" y="527" width="14" height="90"/>
+      <rect x="390" y="524" width="14" height="90"/><rect x="490" y="522" width="14" height="95"/>
+      <rect x="600" y="522" width="14" height="95"/><rect x="700" y="523" width="14" height="90"/>
+      <rect x="800" y="525" width="14" height="90"/><rect x="900" y="529" width="14" height="90"/>
+      <rect x="1000" y="534" width="14" height="90"/><rect x="1100" y="541" width="14" height="90"/>
+      <rect x="1190" y="549" width="14" height="90"/>
+    </g>
+    <g fill="#04100c">
+      <rect x="20" y="533" width="30" height="24"/><rect x="90" y="524" width="30" height="24"/>
+      <rect x="165" y="518" width="30" height="24"/><rect x="250" y="512" width="30" height="24"/>
+      <rect x="340" y="509" width="30" height="24"/><rect x="440" y="507" width="30" height="24"/>
+      <rect x="545" y="507" width="30" height="24"/><rect x="650" y="507" width="30" height="24"/>
+      <rect x="755" y="508" width="30" height="24"/><rect x="855" y="511" width="30" height="24"/>
+      <rect x="955" y="515" width="30" height="24"/><rect x="1055" y="521" width="30" height="24"/>
+      <rect x="1155" y="529" width="30" height="24"/><rect x="1240" y="537" width="30" height="24"/>
+    </g>
+    <g fill="#030d0a">
+      <polygon points="120,700 160,660 200,700"/><polygon points="210,712 250,668 290,712"/>
+      <polygon points="760,706 800,664 840,706"/><polygon points="900,714 935,672 970,714"/>
+      <polygon points="1010,704 1050,660 1090,704"/>
+    </g>
+    <g filter="url(#loginGlow)">
+      <circle cx="470" cy="150" r="9" fill="#eafff9"/><circle cx="493" cy="135" r="6" fill="#eafff9"/>
+      <circle cx="900" cy="120" r="10" fill="#eafff9"/><circle cx="925" cy="105" r="7" fill="#eafff9"/>
+      <circle cx="770" cy="220" r="5" fill="#d6fff5" opacity=".7"/><circle cx="350" cy="240" r="4" fill="#d6fff5" opacity=".65"/>
+    </g>
+    <defs><filter id="loginGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3.2"/></filter></defs>
+  </svg>
+  <div class="grain"></div>
+</div>
+
 <div class="card">
   <img class="mark" src="__LOGO__" alt="">
   <h1>Matzys <span>Overseer</span></h1>
@@ -2008,17 +2081,18 @@ PUBLIC_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Matzys Overseer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 :root{
-  --bg:#0c0a10;--header:#151119;--card:#151119;--card-2:#1c1622;--border:#2a2432;--border-2:#3a3244;
-  --accent:#c98fa8;--accent-dim:#5c4152;--moon:#c98fa8;--steel:#b9a3e0;--sage:#8fae93;--red:#c77a80;--amber:#d1a86a;
-  --text:#f5f1f6;--muted:#a89bb0;--dim:#6b5f78;
-  --serif:ui-serif,"Iowan Old Style",Palatino,"Palatino Linotype",Georgia,serif;
-  --sans:-apple-system,"Segoe UI",system-ui,sans-serif;
+  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;--border:#233530;--border-2:#324b44;
+  --accent:#7fc2b8;--accent-dim:#1f3d37;--moon:#7fc2b8;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
+  --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
+  --sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,"SF Mono",Consolas,monospace;
-  --radius:16px;
+  --radius:4px;
 }
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100dvh;-webkit-font-smoothing:antialiased}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
@@ -2040,7 +2114,7 @@ button{font:inherit;cursor:pointer}
   color:var(--muted);font-size:13.5px;font-weight:500;transition:all .15s;margin-bottom:1px;
   text-decoration:none;background:none;border:none;width:100%;text-align:left;font-family:inherit}
 .sb-item:hover{color:var(--text);background:var(--card-2)}
-.sb-item.active{color:var(--accent);background:rgba(201,143,168,.12)}
+.sb-item.active{color:var(--accent);background:rgba(127,194,184,.12)}
 .sb-item svg{width:16px;height:16px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:1.8}
 .sb-item .live-dot{width:6px;height:6px;border-radius:50%;background:var(--sage);margin-left:auto;flex-shrink:0;display:none}
 .sb-item .live-dot.on{display:block}
@@ -2079,7 +2153,7 @@ button{font:inherit;cursor:pointer}
 
 .hero{position:relative;padding-bottom:6px}
 .hero::before{content:'';position:absolute;top:-20px;right:-6%;width:300px;height:300px;border-radius:50%;
-  background:radial-gradient(circle,rgba(201,143,168,.14),rgba(201,143,168,.02) 55%,transparent 72%);pointer-events:none;z-index:-1}
+  background:radial-gradient(circle,rgba(127,194,184,.14),rgba(127,194,184,.02) 55%,transparent 72%);pointer-events:none;z-index:-1}
 .hero h1{font-family:var(--serif);font-size:clamp(24px,3.6vw,32px);font-weight:500}
 .hero p{margin-top:8px;font-size:14px;color:var(--muted)}
 
@@ -2112,7 +2186,7 @@ th{text-align:left;padding:9px 12px;color:var(--dim);font-weight:500;font-size:1
 td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:var(--card-2)}
-tr.me td{background:rgba(201,143,168,.07)}
+tr.me td{background:rgba(127,194,184,.07)}
 .mono{font-family:var(--mono);color:var(--muted)}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
 .pos{font-family:var(--mono);color:var(--dim);width:26px}
@@ -2133,14 +2207,14 @@ tr.me td{background:rgba(201,143,168,.07)}
 .row-link .pts span{font-size:10.5px;color:var(--dim)}
 
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;padding:3px 9px;border-radius:99px;font-weight:500}
-.pill.host{background:rgba(201,143,168,.14);color:var(--accent)}
-.pill.security{background:rgba(185,163,224,.14);color:var(--steel)}
-.pill.support{background:rgba(143,174,147,.14);color:var(--sage)}
+.pill.host{background:rgba(127,194,184,.14);color:var(--accent)}
+.pill.security{background:rgba(156,143,224,.14);color:var(--steel)}
+.pill.support{background:rgba(95,207,159,.14);color:var(--sage)}
 
 .stage-card{background:linear-gradient(155deg,var(--card-2),var(--card));border:1px solid var(--border-2);
   border-radius:18px;padding:26px;margin-bottom:16px;position:relative;overflow:hidden}
 .stage-card::after{content:'';position:absolute;top:-40%;right:-15%;width:220px;height:220px;border-radius:50%;
-  background:radial-gradient(circle,rgba(201,143,168,.16),transparent 70%)}
+  background:radial-gradient(circle,rgba(127,194,184,.16),transparent 70%)}
 .stage-badge{display:inline-flex;align-items:center;gap:6px;background:var(--sage);color:#0d1710;
   font-size:11px;font-weight:700;padding:4px 10px;border-radius:7px;letter-spacing:.3px;position:relative}
 .stage-badge i{width:6px;height:6px;border-radius:50%;background:#0d1710}
@@ -2393,7 +2467,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
 
 <script>
 const CAT_NAMES = {pve:'Host', security:'Security', support:'Support'};
-const CAT_COLORS = {pve:'#c98fa8', security:'#b9a3e0', support:'#8fae93'};
+const CAT_COLORS = {pve:'#7fc2b8', security:'#9c8fe0', support:'#5fcf9f'};
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 const VIEWING = "{{ viewing_uid|default('', true) }}";
 const VIEWING_NAME = "{{ viewing_name|default('', true) }}";
@@ -2696,7 +2770,7 @@ async function loadProfile(){
   else { delta.textContent = 'same as last week'; delta.className = 'delta flat'; }
 
   document.getElementById('cats').innerHTML = d.categories.map(function(c){
-    const color = CAT_COLORS[c.key] || '#c98fa8';
+    const color = CAT_COLORS[c.key] || '#7fc2b8';
     const rk = c.rank;
     const bar = rk
       ? '<div class="rank-top"><span class="rank-name">' + esc(rk.current || 'No rank yet') + '</span>' +
@@ -2826,16 +2900,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Matzys Overseer - Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0c0a10;--header:#151119;--card:#151119;--card-2:#1c1622;
-  --border:#2a2432;--border-2:#3a3244;
-  --moon:#c98fa8;--moon-dim:#d59fb6;--steel:#b9a3e0;--sage:#8fae93;--red:#c77a80;--amber:#d1a86a;
-  --text:#f5f1f6;--muted:#a89bb0;--dim:#6b5f78;
-  --mono:ui-monospace,"SF Mono",Consolas,monospace;--sans:-apple-system,"Segoe UI",system-ui,sans-serif;
-  --serif:ui-serif,"Iowan Old Style",Palatino,"Palatino Linotype",Georgia,serif;
-  --radius:16px;
+  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
+  --border:#233530;--border-2:#324b44;
+  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
+  --mono:ui-monospace,"SF Mono",Consolas,monospace;--sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
+  --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
+  --radius:4px;
 }
 html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100dvh;
@@ -2893,7 +2968,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .nav-item{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:11px;cursor:pointer;
   color:var(--muted);font-size:14px;font-weight:500;transition:all .15s}
 .nav-item:hover{color:var(--text);background:var(--card)}
-.nav-item.active{color:var(--moon);background:rgba(201,143,168,.12)}
+.nav-item.active{color:var(--moon);background:rgba(127,194,184,.12)}
 .nav-item .ic{width:19px;height:19px;flex-shrink:0}
 .menu-item .mi{width:17px;height:17px;flex-shrink:0}
 .drawer-foot{padding:14px 18px 0;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
@@ -2910,7 +2985,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 /* ── Hero ── */
 .hero{position:relative;padding:26px 0 34px}
 .hero::before{content:'';position:absolute;top:-40px;right:-10%;width:340px;height:340px;
-  border-radius:50%;background:radial-gradient(circle,rgba(201,143,168,.16),rgba(201,143,168,.02) 55%,transparent 72%);
+  border-radius:50%;background:radial-gradient(circle,rgba(127,194,184,.16),rgba(127,194,184,.02) 55%,transparent 72%);
   pointer-events:none;z-index:-1}
 .hero h1{font-family:var(--serif);font-size:clamp(30px,6.5vw,44px);font-weight:500;letter-spacing:.1px;line-height:1.12}
 .hero h1 span{color:var(--moon)}
@@ -2959,9 +3034,9 @@ td{padding:11px 12px;border-bottom:1px solid var(--border)}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(255,255,255,.02)}
 .mono{font-family:var(--mono);font-size:12px;color:var(--muted)}
-.badge{background:rgba(201,143,168,.15);color:var(--moon);border-radius:7px;padding:4px 10px;font-size:11.5px;
+.badge{background:rgba(127,194,184,.15);color:var(--moon);border-radius:7px;padding:4px 10px;font-size:11.5px;
   font-weight:600;font-family:var(--mono)}
-.badge.green{background:rgba(143,174,147,.14);color:var(--sage)}
+.badge.green{background:rgba(95,207,159,.14);color:var(--sage)}
 .badge.red{background:rgba(199,122,128,.14);color:var(--red)}
 .tabs{display:flex;gap:3px;margin-bottom:18px;background:var(--card);border:1px solid var(--border);
   border-radius:12px;padding:4px;width:fit-content;max-width:100%;overflow-x:auto}
@@ -2971,7 +3046,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .cat-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
 .cat-tab{padding:6px 15px;border-radius:999px;font-size:12.5px;font-weight:500;cursor:pointer;
   border:1px solid var(--border);color:var(--muted);transition:all .15s}
-.cat-tab.active{border-color:var(--moon);color:var(--moon);background:rgba(201,143,168,.1)}
+.cat-tab.active{border-color:var(--moon);color:var(--moon);background:rgba(127,194,184,.1)}
 .form-group{margin-bottom:16px}
 .form-group label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:7px;font-weight:500}
 .form-group input,.form-group select,textarea{width:100%;background:var(--card-2);border:1px solid var(--border);
@@ -3048,7 +3123,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .eco-note{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:14px}
 .alert{border-radius:12px;padding:13px 16px;font-size:13.5px;line-height:1.5}
 .alert-warn{background:rgba(209,168,106,.1);border:1px solid rgba(209,168,106,.24);color:var(--amber)}
-.alert-success{background:rgba(143,174,147,.1);border:1px solid rgba(143,174,147,.24);color:var(--sage)}
+.alert-success{background:rgba(95,207,159,.1);border:1px solid rgba(95,207,159,.24);color:var(--sage)}
 .alert-err{background:rgba(199,122,128,.1);border:1px solid rgba(199,122,128,.24);color:var(--red)}
 .user-detail{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-top:20px}
 
@@ -3456,7 +3531,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
             <span style="font-size:13px;color:var(--muted)">Nicer formatting, coloured bar</span></div>
         </div>
         <div class="form-group"><label>Embed colour</label>
-          <input id="cmd-color" type="color" value="#c98fa8" style="height:44px;padding:4px">
+          <input id="cmd-color" type="color" value="#7fc2b8" style="height:44px;padding:4px">
         </div>
       </div>
       <button class="btn btn-primary" onclick="saveCommand()">Save command</button>
@@ -3993,11 +4068,11 @@ function drawActivityChart(d){
       (dash ? ' stroke-dasharray="4 4"' : '') + '/>';
   };
   holder.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img">' +
-    g + line(d.views, '#c98fa8', false) + line(d.uniques, '#b9a3e0', true) + '</svg>';
+    g + line(d.views, '#7fc2b8', false) + line(d.uniques, '#9c8fe0', true) + '</svg>';
   const pages = d.pages || {};
   document.getElementById('act-legend').innerHTML =
-    '<span><i style="background:#c98fa8"></i>Page views</span>' +
-    '<span><i style="background:#b9a3e0"></i>Unique visitors</span>' +
+    '<span><i style="background:#7fc2b8"></i>Page views</span>' +
+    '<span><i style="background:#9c8fe0"></i>Unique visitors</span>' +
     '<span style="color:var(--dim)">dashboard ' + (pages.dashboard || 0) +
     ' / profile ' + (pages.profile || 0) + '</span>';
 }
@@ -4129,7 +4204,7 @@ async function loadChart(){
 function renderChart(d){
   const W=760,H=240,PL=44,PR=12,PT=14,PB=28;
   const cats=['pve','security','support'];
-  const colors={pve:'#c98fa8',security:'#b9a3e0',support:'#8fae93'};
+  const colors={pve:'#7fc2b8',security:'#9c8fe0',support:'#5fcf9f'};
   const all=cats.flatMap(c=>d.series[c]||[]);
   const max=Math.max(1,...all);
   const n=d.labels.length;
@@ -4196,7 +4271,7 @@ function editCommand(c){
   document.getElementById('cmd-title').value = c.title||'';
   document.getElementById('cmd-response').value = c.response||'';
   document.getElementById('cmd-embed').checked = !!c.embed;
-  document.getElementById('cmd-color').value = c.color||'#c98fa8';
+  document.getElementById('cmd-color').value = c.color||'#7fc2b8';
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function resetCommandForm(){
@@ -4204,7 +4279,7 @@ function resetCommandForm(){
   document.getElementById('cmd-form-title').textContent = 'Create a command';
   ['cmd-name','cmd-title','cmd-response'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('cmd-embed').checked=false;
-  document.getElementById('cmd-color').value='#c98fa8';
+  document.getElementById('cmd-color').value='#7fc2b8';
 }
 async function saveCommand(){
   const body={
