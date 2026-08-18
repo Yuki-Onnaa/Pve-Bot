@@ -1961,6 +1961,12 @@ async def on_member_update(before, after):
 # ─────────────────────────────────────────────────────────────
 
 BOT_MANAGER_ROLE_NAME = os.environ.get("BOT_MANAGER_ROLE_NAME", "Bot Manager")
+# Extra role IDs treated the same as the Bot Manager role above, comma separated,
+# for roles you want trusted without renaming them to match BOT_MANAGER_ROLE_NAME.
+BOT_MANAGER_ROLE_IDS = {
+    int(r) for r in (os.environ.get("BOT_MANAGER_ROLE_IDS", "1481379874366292008").split(","))
+    if r.strip()
+}
 ANTINUKE_WINDOW_SECONDS = int(os.environ.get("ANTINUKE_WINDOW_SECONDS", "12"))
 ANTINUKE_THRESHOLD = int(os.environ.get("ANTINUKE_THRESHOLD", "3"))
 ANTINUKE_DANGEROUS_PERMS = (
@@ -1974,7 +1980,7 @@ _destructive_action_log = {}  # user_id -> [datetime, ...], in-memory only
 def is_owner_or_bot_manager(member, guild):
     if member.id == guild.owner_id:
         return True
-    return any(r.name == BOT_MANAGER_ROLE_NAME for r in member.roles)
+    return any(r.name == BOT_MANAGER_ROLE_NAME or r.id in BOT_MANAGER_ROLE_IDS for r in member.roles)
 
 
 def antinuke_check():
@@ -2198,7 +2204,7 @@ async def handle_suspected_nuke(guild, user):
     for m in guild.members:
         if m.id in notified or m.bot:
             continue
-        if any(r.name == BOT_MANAGER_ROLE_NAME for r in m.roles):
+        if any(r.name == BOT_MANAGER_ROLE_NAME or r.id in BOT_MANAGER_ROLE_IDS for r in m.roles):
             notified.add(m.id)
             try:
                 await m.send(warning)
@@ -2300,7 +2306,7 @@ async def slash_antinuke(interaction: discord.Interaction, enabled: bool = None)
 @slash_antinuke.error
 async def slash_antinuke_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
-        msg = f"Only the server owner or someone with the **{BOT_MANAGER_ROLE_NAME}** role can use this."
+        msg = f"Only the server owner or someone with the **{BOT_MANAGER_ROLE_NAME}** role (or another trusted role) can use this."
     else:
         msg = "Something went wrong running that command."
         print(f"[Slash] Error: {error}")
