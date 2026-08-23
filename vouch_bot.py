@@ -480,8 +480,16 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
     for target_id in valid_targets:
         record = get_user_record(data, target_id, category)
 
+        # Host's per-event cooldown is deliberately global (blocks re-vouching the
+        # same event too soon, regardless of who vouches) - it already has its own
+        # separate per-voucher anti-farm check below. Security/Support cooldowns are
+        # scoped per (voucher, target) instead, so two different hosts vouching the
+        # same person for the same event within the window don't collide with each
+        # other - only the same voucher repeating themselves does.
+        cooldown_key = event_name if category == "pve" else f"{event_name}_{author_id}"
+
         if cooldown > 0:
-            last = record["cooldowns"].get(event_name)
+            last = record["cooldowns"].get(cooldown_key)
             if last:
                 last_dt = datetime.fromisoformat(last)
                 if (when - last_dt).total_seconds() < cooldown:
@@ -500,7 +508,7 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
         record["total_points"] += points
         record["total_vouches"] += 1
         record["events"][event_name] += 1
-        record["cooldowns"][event_name] = when.isoformat()
+        record["cooldowns"][cooldown_key] = when.isoformat()
         if category == "pve":
             record["cooldowns"][any_key] = when.isoformat()
         record["log"].append({
