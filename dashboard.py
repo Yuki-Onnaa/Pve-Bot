@@ -484,6 +484,37 @@ def export_data():
     )
 
 
+@app.route("/api/admin/import-data", methods=["GET", "POST"])
+@admin_required
+def import_data():
+    """Restore the data store from a backup file exported via /api/admin/export-data.
+    Overwrites the entire live data store -- meant for seeding a fresh deployment."""
+    if request.method == "GET":
+        return """<!doctype html><html><head><title>Import data</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:60px auto;padding:0 20px;">
+<h2>Import data backup</h2>
+<p style="color:#b33;font-weight:bold;">This replaces the ENTIRE live data store with the
+uploaded file. Cannot be undone.</p>
+<form method="post" enctype="multipart/form-data">
+  <input type="file" name="file" accept="application/json" required><br><br>
+  <label><input type="checkbox" name="confirm" required> I understand this overwrites all live data</label><br><br>
+  <button type="submit">Import</button>
+</form>
+</body></html>"""
+
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "No file uploaded"}), 400
+    try:
+        data = json.load(f.stream)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return jsonify({"error": "File is not valid JSON"}), 400
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object at the top level"}), 400
+    save_data(data)
+    return jsonify({"ok": True, "top_level_keys": list(data.keys())})
+
+
 @app.route("/login")
 def login():
     if session.get("user") and session.get("admin_guilds"):
