@@ -472,6 +472,18 @@ def member_required(f):
         return f(*args, **kwargs)
     return decorated
 
+@app.route("/api/admin/export-data")
+@admin_required
+def export_data():
+    """Raw dump of the shared data store, for backing up/migrating off a host."""
+    payload = json.dumps(load_data(), indent=2)
+    return Response(
+        payload,
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=vouches-backup.json"},
+    )
+
+
 @app.route("/login")
 def login():
     if session.get("user") and session.get("admin_guilds"):
