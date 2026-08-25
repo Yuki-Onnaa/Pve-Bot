@@ -1420,6 +1420,46 @@ def api_ticket_mods_delete(mod_id):
         data["_ticket_mod_roles"] = new_roles
     return jsonify({"ok": True})
 
+# ── API: Anti-nuke whitelist (people exempt from the anti-nuke detector) ──
+
+@app.route("/api/antinuke_whitelist", methods=["GET"])
+@admin_required
+def api_antinuke_whitelist_get():
+    data = load_data()
+    return jsonify(data.get("_antinuke_whitelist", []))
+
+@app.route("/api/antinuke_whitelist", methods=["POST"])
+@admin_required
+def api_antinuke_whitelist_add():
+    body = request.json or {}
+    user_id = (body.get("id") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not user_id.isdigit():
+        return jsonify({"error": "A valid Discord user ID is required."}), 400
+    with data_txn() as data:
+        entries = data.get("_antinuke_whitelist", [])
+        if any(e["id"] == user_id for e in entries):
+            return jsonify({"error": "That user is already whitelisted."}), 400
+        entries.append({
+            "id": user_id,
+            "name": name or user_id,
+            "added_by": session.get("user", {}).get("username", "dashboard"),
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+        data["_antinuke_whitelist"] = entries
+    return jsonify({"ok": True})
+
+@app.route("/api/antinuke_whitelist/<user_id>", methods=["DELETE"])
+@admin_required
+def api_antinuke_whitelist_delete(user_id):
+    with data_txn() as data:
+        entries = data.get("_antinuke_whitelist", [])
+        new_entries = [e for e in entries if e["id"] != user_id]
+        if len(new_entries) == len(entries):
+            return jsonify({"error": "Not found"}), 404
+        data["_antinuke_whitelist"] = new_entries
+    return jsonify({"ok": True})
+
 # ── API: Bot updates (posted to the updates channel, editable after the fact) ──
 
 DISCORD_MESSAGE_LIMIT = 4096  # embed description limit
@@ -3240,6 +3280,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
     <div class="nav-item" data-sec="updates" onclick="showSection('updates',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg> Updates</div>
     <div class="nav-item" data-sec="ticketmods" onclick="showSection('ticketmods',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 0 0 1.946-.806 3.42 3.42 0 0 1 4.438 0 3.42 3.42 0 0 0 1.946.806 3.42 3.42 0 0 1 3.138 3.138 3.42 3.42 0 0 0 .806 1.946 3.42 3.42 0 0 1 0 4.438 3.42 3.42 0 0 0-.806 1.946 3.42 3.42 0 0 1-3.138 3.138 3.42 3.42 0 0 0-1.946.806 3.42 3.42 0 0 1-4.438 0 3.42 3.42 0 0 0-1.946-.806 3.42 3.42 0 0 1-3.138-3.138 3.42 3.42 0 0 0-.806-1.946 3.42 3.42 0 0 1 0-4.438 3.42 3.42 0 0 0 .806-1.946 3.42 3.42 0 0 1 3.138-3.138z"/></svg> Ticket mods</div>
+    <div class="nav-item" data-sec="whitelist" onclick="showSection('whitelist',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5.5 21a6.5 6.5 0 0 1 13 0M17 8l1.5 1.5L21.5 6"/></svg> Whitelist</div>
     <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
   </nav>
   <div class="drawer-foot">
@@ -3524,6 +3565,27 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
   </section>
 
+  <!-- ANTI-NUKE WHITELIST -->
+  <section id="sec-whitelist" class="section">
+    <div class="section-head"><h2>Anti-nuke whitelist</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Add a trusted user</div>
+      <div class="form-group"><label>Discord user ID</label>
+        <input type="text" id="new-whitelist-id" class="mono" placeholder="e.g. 123456789012345678" maxlength="32">
+      </div>
+      <div class="form-group"><label>Name (optional, for your reference)</label>
+        <input type="text" id="new-whitelist-name" placeholder="e.g. Nico" maxlength="100">
+      </div>
+      <button class="btn btn-primary" onclick="addWhitelist()">Add to whitelist</button>
+      <div id="whitelist-result" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Exempt from anti-nuke</div>
+      <div class="eco-note">Deletions by anyone on this list never count toward the anti-nuke threshold and never trigger role-stripping or restores. Use this for staff who legitimately do bulk channel/role cleanup.</div>
+      <div id="whitelist-list"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
   <!-- SITE ACTIVITY -->
   <section id="sec-activity" class="section">
     <div class="section-head">
@@ -3771,6 +3833,7 @@ function showSection(name, el){
   if(name==='events') loadEvents();
   if(name==='updates') loadUpdates();
   if(name==='ticketmods') loadTicketMods();
+  if(name==='whitelist') loadWhitelist();
   if(name==='settings') loadSettings();
   if(name==='users') loadUsers();
   if(name==='overview'){loadStatus();loadChart();}
@@ -4110,6 +4173,29 @@ async function deleteTicketMod(id){
   if(!confirm('Remove this role from ticket mods?')) return;
   await api('/api/ticket_mods/'+id,{method:'DELETE'});
   loadTicketMods();
+}
+
+// ── Anti-nuke whitelist ──
+async function loadWhitelist(){
+  const data = await api('/api/antinuke_whitelist');
+  const el = document.getElementById('whitelist-list');
+  if(!data.length){el.innerHTML='<div class="empty">Nobody whitelisted yet.</div>';return;}
+  el.innerHTML = data.map(w=>'<div class="memory-item"><div style="flex:1"><div class="text">'+esc(w.name)+
+    '</div><div class="id">'+esc(w.id)+'</div></div>'+
+    '<button class="btn btn-danger btn-sm" onclick="deleteWhitelist(\\''+w.id+'\\')">Remove</button></div>').join('');
+}
+async function addWhitelist(){
+  const id = document.getElementById('new-whitelist-id').value.trim();
+  const name = document.getElementById('new-whitelist-name').value.trim();
+  if(!id) return;
+  const r = await api('/api/antinuke_whitelist',{method:'POST',body:JSON.stringify({id,name})});
+  showAlert(document.getElementById('whitelist-result'), r.ok?'Added to whitelist.':(r.error||'Could not add.'), r.ok?'success':'err');
+  if(r.ok){document.getElementById('new-whitelist-id').value='';document.getElementById('new-whitelist-name').value='';loadWhitelist();}
+}
+async function deleteWhitelist(id){
+  if(!confirm('Remove this user from the anti-nuke whitelist?')) return;
+  await api('/api/antinuke_whitelist/'+id,{method:'DELETE'});
+  loadWhitelist();
 }
 
 // ── Site activity ──
