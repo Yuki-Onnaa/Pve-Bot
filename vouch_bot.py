@@ -3909,6 +3909,25 @@ async def slash_resyncroles(interaction: discord.Interaction):
         f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
 
 
+@bot.tree.command(name="backfillhostbadges",
+                   description="Seed host badge progress from existing /host history (admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_backfillhostbadges(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    updated = 0
+    with data_txn() as data:
+        for uid, record in user_records(data):
+            historical = len(record.get("host_runs", []))
+            if historical > record.get("host_runs_total", 0):
+                record["host_runs_total"] = historical
+                updated += 1
+    await interaction.followup.send(
+        f"Backfilled host badge progress for {updated} member(s) from their existing /host history. "
+        f"Note: this only counts each person's last 100 /host runs (the same cap the streak tracker uses), "
+        f"so anyone who's hosted more than that will show a lower count than reality.",
+        ephemeral=True)
+
+
 @bot.tree.command(name="giverole", description="Give someone the one role you're whitelisted to grant")
 @app_commands.describe(member="Who to give the role to")
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
@@ -3974,6 +3993,7 @@ async def slash_takerole(interaction: discord.Interaction, member: discord.Membe
 @slash_wikitest.error
 @slash_addvouch.error
 @slash_resyncroles.error
+@slash_backfillhostbadges.error
 async def slash_admin_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You need the Administrator permission to use that."
@@ -4577,6 +4597,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         runs = new_record.get("host_runs", [])
         runs.append(datetime.now(timezone.utc).isoformat())
         new_record["host_runs"] = runs[-100:]
+        new_record["host_runs_total"] = new_record.get("host_runs_total", 0) + 1
         new_record["last_host_event"] = event
         new_record["last_host"] = {
             "event": event,
