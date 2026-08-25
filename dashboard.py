@@ -1510,6 +1510,51 @@ def api_antinuke_whitelist_delete(user_id):
         data["_antinuke_whitelist"] = new_entries
     return jsonify({"ok": True})
 
+# ── API: Role grants (each person whitelisted for exactly one role via /giverole) ──
+
+@app.route("/api/role_grants", methods=["GET"])
+@admin_required
+def api_role_grants_get():
+    data = load_data()
+    return jsonify(data.get("_role_grants", []))
+
+@app.route("/api/role_grants", methods=["POST"])
+@admin_required
+def api_role_grants_add():
+    body = request.json or {}
+    user_id = (body.get("granter_id") or "").strip()
+    name = (body.get("granter_name") or "").strip()
+    role_name = (body.get("role_name") or "").strip()
+    if not user_id.isdigit():
+        return jsonify({"error": "A valid Discord user ID is required."}), 400
+    if not role_name:
+        return jsonify({"error": "A role name is required."}), 400
+    with data_txn() as data:
+        entries = data.get("_role_grants", [])
+        if any(e["granter_id"] == user_id for e in entries):
+            return jsonify({"error": "That person already has a role grant - remove it first to change it."}), 400
+        entries.append({
+            "id": uuid.uuid4().hex[:8],
+            "granter_id": user_id,
+            "granter_name": name or user_id,
+            "role_name": role_name,
+            "added_by": session.get("user", {}).get("username", "dashboard"),
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+        data["_role_grants"] = entries
+    return jsonify({"ok": True})
+
+@app.route("/api/role_grants/<grant_id>", methods=["DELETE"])
+@admin_required
+def api_role_grants_delete(grant_id):
+    with data_txn() as data:
+        entries = data.get("_role_grants", [])
+        new_entries = [e for e in entries if e["id"] != grant_id]
+        if len(new_entries) == len(entries):
+            return jsonify({"error": "Not found"}), 404
+        data["_role_grants"] = new_entries
+    return jsonify({"ok": True})
+
 # ── API: Bot updates (posted to the updates channel, editable after the fact) ──
 
 DISCORD_MESSAGE_LIMIT = 4096  # embed description limit
@@ -3344,6 +3389,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="updates" onclick="showSection('updates',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg> Updates</div>
     <div class="nav-item" data-sec="ticketmods" onclick="showSection('ticketmods',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 0 0 1.946-.806 3.42 3.42 0 0 1 4.438 0 3.42 3.42 0 0 0 1.946.806 3.42 3.42 0 0 1 3.138 3.138 3.42 3.42 0 0 0 .806 1.946 3.42 3.42 0 0 1 0 4.438 3.42 3.42 0 0 0-.806 1.946 3.42 3.42 0 0 1-3.138 3.138 3.42 3.42 0 0 0-1.946.806 3.42 3.42 0 0 1-4.438 0 3.42 3.42 0 0 0-1.946-.806 3.42 3.42 0 0 1-3.138-3.138 3.42 3.42 0 0 0-.806-1.946 3.42 3.42 0 0 1 0-4.438 3.42 3.42 0 0 0 .806-1.946 3.42 3.42 0 0 1 3.138-3.138z"/></svg> Ticket mods</div>
     <div class="nav-item" data-sec="whitelist" onclick="showSection('whitelist',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5.5 21a6.5 6.5 0 0 1 13 0M17 8l1.5 1.5L21.5 6"/></svg> Whitelist</div>
+    <div class="nav-item" data-sec="rolegrants" onclick="showSection('rolegrants',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7v6c0 5 4 8.5 9 9 5-.5 9-4 9-9V7z"/><path d="m9 12 2 2 4-4"/></svg> Role Grants</div>
     <div class="nav-item" data-sec="settings" onclick="showSection('settings',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg> Settings</div>
   </nav>
   <div class="drawer-foot">
@@ -3649,6 +3695,30 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
   </section>
 
+  <!-- ROLE GRANTS -->
+  <section id="sec-rolegrants" class="section">
+    <div class="section-head"><h2>Role grants</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Whitelist someone for one role</div>
+      <div class="form-group"><label>Discord user ID</label>
+        <input type="text" id="new-rolegrant-id" class="mono" placeholder="e.g. 123456789012345678" maxlength="32">
+      </div>
+      <div class="form-group"><label>Name (optional, for your reference)</label>
+        <input type="text" id="new-rolegrant-name" placeholder="e.g. Sami" maxlength="100">
+      </div>
+      <div class="form-group"><label>Exact role name they can grant</label>
+        <input type="text" id="new-rolegrant-role" placeholder="e.g. Junior Mod" maxlength="100">
+      </div>
+      <button class="btn btn-primary" onclick="addRoleGrant()">Add role grant</button>
+      <div id="rolegrant-result" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Who can grant what</div>
+      <div class="eco-note">Each person here can use /giverole and /takerole to hand out (or take back) only the one role listed next to their name - never any other role, even ones that would normally sit below it in the server's role hierarchy. To change someone's role, remove their entry and add a new one.</div>
+      <div id="rolegrant-list"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
   <!-- SITE ACTIVITY -->
   <section id="sec-activity" class="section">
     <div class="section-head">
@@ -3897,6 +3967,7 @@ function showSection(name, el){
   if(name==='updates') loadUpdates();
   if(name==='ticketmods') loadTicketMods();
   if(name==='whitelist') loadWhitelist();
+  if(name==='rolegrants') loadRoleGrants();
   if(name==='settings') loadSettings();
   if(name==='users') loadUsers();
   if(name==='overview'){loadStatus();loadChart();}
@@ -4259,6 +4330,38 @@ async function deleteWhitelist(id){
   if(!confirm('Remove this user from the anti-nuke whitelist?')) return;
   await api('/api/antinuke_whitelist/'+id,{method:'DELETE'});
   loadWhitelist();
+}
+
+// ── Role grants ──
+async function loadRoleGrants(){
+  const data = await api('/api/role_grants');
+  const el = document.getElementById('rolegrant-list');
+  if(!data.length){el.innerHTML='<div class="empty">Nobody has a role grant yet.</div>';return;}
+  el.innerHTML = data.map(function(g){
+    return '<div class="memory-item"><div style="flex:1"><div class="text">'+esc(g.granter_name)+
+      ' <span class="mono" style="color:var(--muted)">can grant</span> <b>'+esc(g.role_name)+'</b></div>'+
+      '<div class="id">'+esc(g.granter_id)+'</div></div>'+
+      '<button class="btn btn-danger btn-sm" onclick="deleteRoleGrant(\\''+g.id+'\\')">Remove</button></div>';
+  }).join('');
+}
+async function addRoleGrant(){
+  const granter_id = document.getElementById('new-rolegrant-id').value.trim();
+  const granter_name = document.getElementById('new-rolegrant-name').value.trim();
+  const role_name = document.getElementById('new-rolegrant-role').value.trim();
+  if(!granter_id || !role_name) return;
+  const r = await api('/api/role_grants',{method:'POST',body:JSON.stringify({granter_id,granter_name,role_name})});
+  showAlert(document.getElementById('rolegrant-result'), r.ok?'Role grant added.':(r.error||'Could not add.'), r.ok?'success':'err');
+  if(r.ok){
+    document.getElementById('new-rolegrant-id').value='';
+    document.getElementById('new-rolegrant-name').value='';
+    document.getElementById('new-rolegrant-role').value='';
+    loadRoleGrants();
+  }
+}
+async function deleteRoleGrant(id){
+  if(!confirm('Remove this role grant?')) return;
+  await api('/api/role_grants/'+id,{method:'DELETE'});
+  loadRoleGrants();
 }
 
 // ── Site activity ──

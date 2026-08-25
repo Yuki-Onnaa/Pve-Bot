@@ -1511,6 +1511,19 @@ def get_ticket_mod_role_names(data=None):
     return [r.get("name") for r in data.get("_ticket_mod_roles", []) if r.get("name")]
 
 
+def get_role_grant(user_id, data=None):
+    """The single role name (if any) this user is whitelisted to grant/revoke via
+    /giverole and /takerole, set from the dashboard's Role Grants tab. Each granter
+    is limited to exactly one role, independent of Discord's own role hierarchy -
+    someone whitelisted for 'Junior Mod' can't use these commands to hand out
+    anything else, even a role that would normally sit below it."""
+    data = load_data() if data is None else data
+    for entry in data.get("_role_grants", []):
+        if entry.get("granter_id") == str(user_id):
+            return entry.get("role_name")
+    return None
+
+
 def staff_ticket_roles(guild):
     """Every role that can see/manage tickets - Manage Server holders plus configured ticket mods."""
     mod_names = set(get_ticket_mod_role_names())
@@ -3844,6 +3857,66 @@ async def slash_resyncroles(interaction: discord.Interaction):
     result = await resync_all_roles()
     await interaction.followup.send(
         f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
+
+
+@bot.tree.command(name="giverole", description="Give someone the one role you're whitelisted to grant")
+@app_commands.describe(member="Who to give the role to")
+async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
+    role_name = get_role_grant(interaction.user.id)
+    if not role_name:
+        await interaction.response.send_message(
+            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
+            "Role Grants tab.", ephemeral=True)
+        return
+
+    role = discord.utils.get(interaction.guild.roles, name=role_name)
+    if role is None:
+        await interaction.response.send_message(
+            f"No role named **{role_name}** exists anymore - ask an admin to check the Role Grants tab.",
+            ephemeral=True)
+        return
+    if role in member.roles:
+        await interaction.response.send_message(
+            f"{member.mention} already has **{role_name}**.", ephemeral=True)
+        return
+    if role >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            f"Can't grant **{role_name}** - it sits above my own top role.", ephemeral=True)
+        return
+
+    try:
+        await member.add_roles(role, reason=f"/giverole by {interaction.user}")
+    except discord.Forbidden:
+        await interaction.response.send_message(f"Couldn't grant **{role_name}** - missing permissions.",
+                                                  ephemeral=True)
+        return
+    await interaction.response.send_message(f"Gave {member.mention} **{role_name}**.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} gave **{role_name}** to {member.mention} (/giverole)")
+
+
+@bot.tree.command(name="takerole", description="Remove the one role you're whitelisted to grant")
+@app_commands.describe(member="Who to remove the role from")
+async def slash_takerole(interaction: discord.Interaction, member: discord.Member):
+    role_name = get_role_grant(interaction.user.id)
+    if not role_name:
+        await interaction.response.send_message(
+            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
+            "Role Grants tab.", ephemeral=True)
+        return
+
+    role = discord.utils.get(interaction.guild.roles, name=role_name)
+    if role is None or role not in member.roles:
+        await interaction.response.send_message(f"{member.mention} doesn't have **{role_name}**.", ephemeral=True)
+        return
+
+    try:
+        await member.remove_roles(role, reason=f"/takerole by {interaction.user}")
+    except discord.Forbidden:
+        await interaction.response.send_message(f"Couldn't remove **{role_name}** - missing permissions.",
+                                                  ephemeral=True)
+        return
+    await interaction.response.send_message(f"Removed **{role_name}** from {member.mention}.", ephemeral=True)
+    await log_audit(f"{interaction.user.mention} removed **{role_name}** from {member.mention} (/takerole)")
 
 
 @slash_aimodels.error
