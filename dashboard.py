@@ -100,6 +100,8 @@ DEFAULT_CONFIG = {
     "event_ping_channel_id": 1529142467658649640,
     "chime_in_channel_id": 1478405937080307806,
     "updates_channel_id": 1532474881915097118,
+    "on_leave_button_channel_id": None,
+    "on_leave_log_channel_id": None,
 }
 
 DEFAULT_EVENT_SCHEDULE = {
@@ -1557,6 +1559,7 @@ def api_settings_update():
             "pve_channel_id", "security_channel_id", "support_channel_id",
             "live_leaderboard_channel_id", "audit_log_channel_id",
             "event_ping_channel_id", "chime_in_channel_id", "updates_channel_id",
+            "on_leave_button_channel_id", "on_leave_log_channel_id",
         ]
         for key in channel_keys:
             if key in body:
@@ -1566,6 +1569,23 @@ def api_settings_update():
                     pass
 
     return jsonify({"ok": True})
+
+# ── API: On Leave ──
+
+@app.route("/api/on_leave", methods=["GET"])
+@admin_required
+def api_on_leave():
+    data = load_data()
+    logs = data.get("_on_leave_logs", [])
+
+    last_by_user = {}
+    for entry in logs:
+        last_by_user[entry.get("user_id")] = entry
+    current = [e for e in last_by_user.values() if e.get("action") == "start"]
+    current.sort(key=lambda e: e.get("time", ""), reverse=True)
+
+    history = sorted(logs, key=lambda e: e.get("time", ""), reverse=True)[:200]
+    return jsonify({"current": current, "history": history})
 
 # ── API: Audit Log ──
 
@@ -3215,6 +3235,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="nav-item" data-sec="economy" onclick="showSection('economy',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M18 7h2M4 12h4M13 12h7M4 17h9M18 17h2M14 4.5v5M9 9.5v5M14 14.5v5"/></svg> Points &amp; ranks</div>
     <div class="nav-item" data-sec="commands" onclick="showSection('commands',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l3 3-3 3M13 15h4M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg> Commands</div>
     <div class="nav-item" data-sec="audit" onclick="showSection('audit',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2M9 2h6v4H9zM8 12h8M8 16h5"/></svg> Audit log</div>
+    <div class="nav-item" data-sec="onleave" onclick="showSection('onleave',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2"/></svg> On leave</div>
     <div class="nav-item" data-sec="memories" onclick="showSection('memories',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Memories</div>
     <div class="nav-item" data-sec="events" onclick="showSection('events',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7.5V12l3 2"/></svg> Event schedule</div>
     <div class="nav-item" data-sec="updates" onclick="showSection('updates',this)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg> Updates</div>
@@ -3438,6 +3459,19 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div class="card"><div id="audit-list"><div class="empty">Loading…</div></div></div>
   </section>
 
+  <!-- ON LEAVE -->
+  <section id="sec-onleave" class="section">
+    <div class="section-head"><h2>On leave</h2></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Currently on leave</div>
+      <div id="onleave-current"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">History</div>
+      <div id="onleave-history"><div class="empty">Loading…</div></div>
+    </div>
+  </section>
+
   <!-- MEMORIES -->
   <section id="sec-memories" class="section">
     <div class="section-head"><h2>Memories</h2></div>
@@ -3623,6 +3657,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
         <div class="form-group"><label>Audit log channel ID</label><input id="cfg-audit" class="mono" placeholder="Channel ID"></div>
         <div class="form-group"><label>Event ping channel ID</label><input id="cfg-events" class="mono" placeholder="Channel ID"></div>
         <div class="form-group"><label>General chat channel ID</label><input id="cfg-chime" class="mono" placeholder="Channel ID"></div>
+        <div class="form-group"><label>On-leave button channel ID</label><input id="cfg-leave-btn" class="mono" placeholder="Channel ID"></div>
+        <div class="form-group"><label>On-leave log channel ID</label><input id="cfg-leave-log" class="mono" placeholder="Channel ID"></div>
       </div>
       <div class="card" style="display:flex;flex-direction:column;justify-content:space-between">
         <div>
@@ -3730,6 +3766,7 @@ function showSection(name, el){
   window.scrollTo({top:0,behavior:'smooth'});
   if(name==='leaderboard') loadLeaderboard();
   if(name==='audit') loadAudit();
+  if(name==='onleave') loadOnLeave();
   if(name==='memories') loadMemories();
   if(name==='events') loadEvents();
   if(name==='updates') loadUpdates();
@@ -3948,6 +3985,32 @@ async function loadAudit(){
     (e.backfilled?' <span style="font-size:10px;color:var(--amber)">[backfill]</span>':'')+'</div>'+
     '<div class="meta">to '+esc(e.name||e.uid)+' · by '+esc(e.by||'?')+' · '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
     '</div></div>').join('');
+}
+
+// ── On Leave ──
+function onLeaveActionText(e){
+  if(e.action!=='start') return 'Returned from leave';
+  let t = 'Reason: '+esc(e.reason||'-')+' · Duration: '+esc(e.duration||'-');
+  if(e.note) t += ' · Note: '+esc(e.note);
+  return t;
+}
+async function loadOnLeave(){
+  const data = await api('/api/on_leave');
+  const cur = document.getElementById('onleave-current');
+  const hist = document.getElementById('onleave-history');
+  const current = data.current||[];
+  cur.innerHTML = current.length ? current.map(e=>
+    '<div class="audit-item"><div class="audit-dot" style="background:var(--amber)"></div>'+
+    '<div class="audit-content"><div class="main-text">'+esc(e.username||e.user_id)+'</div>'+
+    '<div class="meta">'+onLeaveActionText(e)+' · since '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
+    '</div></div>').join('') : '<div class="empty">Nobody is on leave right now.</div>';
+  const history = data.history||[];
+  hist.innerHTML = history.length ? history.map(e=>
+    '<div class="audit-item"><div class="audit-dot" style="background:'+(e.action==='start'?'var(--amber)':'var(--sage)')+'"></div>'+
+    '<div class="audit-content"><div class="main-text">'+esc(e.username||e.user_id)+' - '+
+    (e.action==='start'?'went on leave':'returned')+'</div>'+
+    '<div class="meta">'+onLeaveActionText(e)+' · '+(e.time||'').substring(0,16).replace('T',' ')+'</div>'+
+    '</div></div>').join('') : '<div class="empty">No on-leave activity yet.</div>';
 }
 
 // ── Memories ──
@@ -4358,6 +4421,8 @@ async function loadSettings(){
   document.getElementById('cfg-audit').value = c.audit_log_channel_id||'';
   document.getElementById('cfg-events').value = c.event_ping_channel_id||'';
   document.getElementById('cfg-chime').value = c.chime_in_channel_id||'';
+  document.getElementById('cfg-leave-btn').value = c.on_leave_button_channel_id||'';
+  document.getElementById('cfg-leave-log').value = c.on_leave_log_channel_id||'';
 }
 async function toggleChat(){
   const enabled = document.getElementById('chat-toggle').checked;
@@ -4381,6 +4446,8 @@ async function saveSettings(){
     audit_log_channel_id: document.getElementById('cfg-audit').value,
     event_ping_channel_id: document.getElementById('cfg-events').value,
     chime_in_channel_id: document.getElementById('cfg-chime').value,
+    on_leave_button_channel_id: document.getElementById('cfg-leave-btn').value,
+    on_leave_log_channel_id: document.getElementById('cfg-leave-log').value,
     persona: document.getElementById('persona-select').value,
     chat_enabled: document.getElementById('chat-toggle').checked,
   };

@@ -1649,6 +1649,156 @@ class HostTicketCloseView(discord.ui.View):
 
 
 # ─────────────────────────────────────────────────────────────
+# ON-LEAVE
+# One button toggles the on-leave role: taking it fills a short form,
+# returning it just removes the role. Both channels (where the button
+# lives, where leave/return logs post) are set from the dashboard's
+# Settings page, not env vars, so staff can change them without a redeploy.
+# ─────────────────────────────────────────────────────────────
+
+ON_LEAVE_ROLE_NAME = os.environ.get("ON_LEAVE_ROLE_NAME", "on-leave")
+
+
+def get_leave_config():
+    data = load_data()
+    cfg = data.get("_config", {})
+    return cfg.get("on_leave_button_channel_id"), cfg.get("on_leave_log_channel_id")
+
+
+def record_leave_log(entry):
+    with data_txn() as data:
+        logs = data.setdefault("_on_leave_logs", [])
+        logs.append(entry)
+        data["_on_leave_logs"] = logs[-1000:]
+
+
+async def post_leave_log(guild, member, action, reason=None, duration=None, note=None):
+    record_leave_log({
+        "user_id": str(member.id),
+        "username": str(member),
+        "action": action,
+        "reason": reason,
+        "duration": duration,
+        "note": note,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
+
+    _, log_channel_id = get_leave_config()
+    channel = bot.get_channel(int(log_channel_id)) if log_channel_id else None
+    if channel is None:
+        return
+    if action == "start":
+        embed = discord.Embed(title="🌿 On Leave", color=discord.Color.orange(),
+                               description=f"{member.mention} is now on leave.")
+        embed.add_field(name="Reason", value=reason or "-", inline=False)
+        embed.add_field(name="Duration", value=duration or "-", inline=False)
+        if note:
+            embed.add_field(name="Note", value=note, inline=False)
+    else:
+        embed = discord.Embed(title="🌿 Back from Leave", color=discord.Color.green(),
+                               description=f"{member.mention} is back from leave.")
+    embed.timestamp = datetime.now(timezone.utc)
+    embed.set_footer(text=str(member.id))
+    try:
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    except discord.HTTPException:
+        pass
+
+
+class OnLeaveModal(discord.ui.Modal, title="Going On Leave"):
+    reason = discord.ui.TextInput(label="Reason", placeholder="Exams", max_length=200)
+    duration = discord.ui.TextInput(label="Duration", placeholder="2-3 Weeks", max_length=100)
+    note = discord.ui.TextInput(label="Note (optional)", required=False,
+                                 style=discord.TextStyle.paragraph, max_length=500)
+
+    def __init__(self, role):
+        super().__init__()
+        self.role = role
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await interaction.user.add_roles(self.role, reason="Went on leave")
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"Couldn't give you **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.",
+                ephemeral=True)
+            return
+        await post_leave_log(
+            interaction.guild, interaction.user, "start",
+            reason=str(self.reason), duration=str(self.duration),
+            note=str(self.note) or None)
+        await interaction.response.send_message(
+            "You're marked as on leave. Click the button again when you're back.", ephemeral=True)
+
+
+class OnLeaveButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="On Leave", emoji="🌿", style=discord.ButtonStyle.blurple,
+                        custom_id="on_leave_toggle_button")
+    async def toggle_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
+            await interaction.response.send_message(
+                "You need the Host role (or higher) to use this.", ephemeral=True)
+            return
+
+        guild = interaction.guild
+        role = discord.utils.get(guild.roles, name=ON_LEAVE_ROLE_NAME)
+        if role is None:
+            await interaction.response.send_message(
+                f"No role named **{ON_LEAVE_ROLE_NAME}** exists - ask an admin to create it.", ephemeral=True)
+            return
+
+        if role in interaction.user.roles:
+            try:
+                await interaction.user.remove_roles(role, reason="Returned from leave")
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    f"Couldn't remove **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.",
+                    ephemeral=True)
+                return
+            await post_leave_log(guild, interaction.user, "end")
+            await interaction.response.send_message("Welcome back! On-leave removed.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(OnLeaveModal(role))
+
+
+async def ensure_leave_panel_posted():
+    """Self-heals the panel message into the configured channel on startup."""
+    button_channel_id, _ = get_leave_config()
+    if not button_channel_id:
+        return
+    channel = bot.get_channel(int(button_channel_id))
+    if channel is None:
+        return
+
+    data = load_data()
+    existing_id = data.get("_on_leave_panel_message_id")
+    if existing_id:
+        try:
+            await channel.fetch_message(int(existing_id))
+            return
+        except discord.NotFound:
+            pass
+        except discord.HTTPException:
+            return
+
+    embed = discord.Embed(
+        title="🌿 On Leave",
+        description="Click below to mark yourself on leave, or to remove it when you're back.",
+        color=discord.Color.blurple(),
+    )
+    try:
+        msg = await channel.send(embed=embed, view=OnLeaveButtonView())
+    except discord.HTTPException:
+        return
+    with data_txn() as data:
+        data["_on_leave_panel_message_id"] = str(msg.id)
+
+
+# ─────────────────────────────────────────────────────────────
 # HOST EVENT ANNOUNCEMENTS (/host)
 # ─────────────────────────────────────────────────────────────
 
@@ -2389,6 +2539,8 @@ async def on_ready():
 
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
+    bot.add_view(OnLeaveButtonView())
+    await ensure_leave_panel_posted()
 
     # Guild-scoped commands sync instantly; global commands can take up to an hour
     # and would show up as duplicates alongside a guild-scoped copy of the same
@@ -3694,6 +3846,34 @@ async def slash_ticketpanel(interaction: discord.Interaction):
 
 @slash_ticketpanel.error
 async def slash_ticketpanel_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the Manage Server permission to use that."
+    else:
+        msg = "Something went wrong running that command."
+        print(f"[Slash] Error: {error}")
+    if interaction.response.is_done():
+        await interaction.followup.send(msg, ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.tree.command(name="leavepanel", description="Post the on-leave button in this channel (Manage Server only)")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def slash_leavepanel(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    embed = discord.Embed(
+        title="🌿 On Leave",
+        description="Click below to mark yourself on leave, or to remove it when you're back.",
+        color=discord.Color.blurple(),
+    )
+    msg = await interaction.channel.send(embed=embed, view=OnLeaveButtonView())
+    with data_txn() as data:
+        data["_on_leave_panel_message_id"] = str(msg.id)
+    await interaction.followup.send("Panel posted.", ephemeral=True)
+
+
+@slash_leavepanel.error
+async def slash_leavepanel_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You need the Manage Server permission to use that."
     else:
