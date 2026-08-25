@@ -2220,8 +2220,15 @@ async def handle_suspected_nuke(guild, user):
                 pass
 
 
+def get_antinuke_whitelist_ids(data=None):
+    data = load_data() if data is None else data
+    return {str(e.get("id")) for e in data.get("_antinuke_whitelist", []) if e.get("id")}
+
+
 async def record_destructive_action(guild, user):
     if user is None or user.bot:
+        return
+    if str(user.id) in get_antinuke_whitelist_ids():
         return
     now = datetime.now(timezone.utc)
     history = _destructive_action_log.setdefault(user.id, [])
