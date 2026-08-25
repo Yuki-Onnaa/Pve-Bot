@@ -2194,6 +2194,7 @@ def snapshot_guild(guild):
         })
 
     roles = []
+    role_members = {}
     for role in guild.roles:
         if role.is_default():
             continue
@@ -2202,12 +2203,14 @@ def snapshot_guild(guild):
             "permissions": role.permissions.value, "position": role.position,
             "hoist": role.hoist, "mentionable": role.mentionable,
         })
+        role_members[str(role.id)] = [str(m.id) for m in role.members]
 
     return {
         "taken_at": datetime.now(timezone.utc).isoformat(),
         "guild_id": str(guild.id),
         "channels": channels,
         "roles": roles,
+        "role_members": role_members,
     }
 
 
@@ -2235,10 +2238,13 @@ def build_overwrites(guild, snap_overwrites, role_id_map):
 
 async def restore_missing(guild, snapshot):
     """Recreates any role or channel from the snapshot that no longer exists
-    (matched by name), leaving anything still present untouched. Returns
-    (channels_created, roles_created)."""
+    (matched by name), leaving anything still present untouched. Also hands
+    a recreated role back to everyone who had it in the snapshot. Returns
+    (channels_created, roles_created, members_restored)."""
     role_id_map = {}
     created_roles = 0
+    restored_members = 0
+    snap_role_members = snapshot.get("role_members", {})
     for r in sorted(snapshot["roles"], key=lambda r: r["position"]):
         live = discord.utils.get(guild.roles, name=r["name"])
         if live:
@@ -2254,7 +2260,17 @@ async def restore_missing(guild, snapshot):
             role_id_map[r["id"]] = new_role
             created_roles += 1
         except discord.HTTPException:
-            pass
+            continue
+
+        for member_id in snap_role_members.get(r["id"], []):
+            member = guild.get_member(int(member_id))
+            if member is None:
+                continue
+            try:
+                await member.add_roles(new_role, reason="Anti-nuke restore - had this role before it was deleted")
+                restored_members += 1
+            except discord.HTTPException:
+                pass
 
     created_channels = 0
     snap_channels = snapshot["channels"]
@@ -2306,7 +2322,7 @@ async def restore_missing(guild, snapshot):
         except discord.HTTPException:
             pass
 
-    return created_channels, created_roles
+    return created_channels, created_roles, restored_members
 
 
 async def find_audit_actor(guild, action, target_id, within_seconds=5):
@@ -2341,15 +2357,16 @@ async def handle_suspected_nuke(guild, user):
                 pass
 
     snapshot = load_data().get("_backup_snapshot")
-    restored_channels = restored_roles = 0
+    restored_channels = restored_roles = restored_members = 0
     if snapshot:
-        restored_channels, restored_roles = await restore_missing(guild, snapshot)
+        restored_channels, restored_roles, restored_members = await restore_missing(guild, snapshot)
 
     warning = (
         f"🚨 **Anti-nuke triggered** for {user.mention} (`{user.id}`)\n"
         f"{ANTINUKE_THRESHOLD}+ channel/role deletions within {ANTINUKE_WINDOW_SECONDS}s.\n"
         + (f"Stripped: {', '.join(stripped)}\n" if stripped else "Couldn't strip any roles (none removable, or they left).\n")
-        + f"Auto-restored {restored_channels} channel(s) and {restored_roles} role(s) from the last backup."
+        + f"Auto-restored {restored_channels} channel(s) and {restored_roles} role(s) from the last backup"
+        + (f", and gave {restored_members} member(s) their role(s) back." if restored_members else ".")
     )
     await log_audit(warning)
 
@@ -2434,11 +2451,14 @@ async def slash_restore(interaction: discord.Interaction):
         await interaction.followup.send(
             "No backup exists yet - one is taken automatically every hour, or run /backupnow first.", ephemeral=True)
         return
-    channels, roles = await restore_missing(interaction.guild, snapshot)
+    channels, roles, members = await restore_missing(interaction.guild, snapshot)
     await interaction.followup.send(
-        f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}.",
+        f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}"
+        + (f", and gave {members} member(s) their role(s) back." if members else "."),
         ephemeral=True)
-    await log_audit(f"{interaction.user.mention} ran /restore - recreated {channels} channel(s), {roles} role(s).")
+    await log_audit(
+        f"{interaction.user.mention} ran /restore - recreated {channels} channel(s), {roles} role(s), "
+        f"restored {members} member role assignment(s).")
 
 
 @bot.tree.command(name="backupnow", description="Take an immediate snapshot of channels and roles (owner / Bot Manager only)")
