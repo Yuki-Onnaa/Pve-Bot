@@ -1873,6 +1873,7 @@ def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_id
         runs = record.get("host_runs", [])
         runs.append(datetime.now(timezone.utc).isoformat())
         record["host_runs"] = runs[-100:]
+        record["host_runs_total"] = record.get("host_runs_total", 0) + 1
         record["last_host_event"] = event
         record["last_host"] = {
             "event": event,

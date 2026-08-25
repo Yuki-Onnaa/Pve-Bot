@@ -91,6 +91,27 @@ RESERVED_COMMANDS = {
     "syncvouches", "scanhistory", "commands", "help",
 }
 
+HOST_BADGE_TIERS = [
+    {"threshold": 1, "name": "First Host", "icon": "🌱"},
+    {"threshold": 5, "name": "Getting Started", "icon": "🔥"},
+    {"threshold": 15, "name": "Regular Host", "icon": "⭐"},
+    {"threshold": 40, "name": "Veteran Host", "icon": "🛡️"},
+    {"threshold": 100, "name": "Elite Host", "icon": "💎"},
+    {"threshold": 250, "name": "Legendary Host", "icon": "👑"},
+]
+
+
+def host_badges(record):
+    total = record.get("host_runs_total", 0)
+    earned = [t for t in HOST_BADGE_TIERS if total >= t["threshold"]]
+    next_tier = next((t for t in HOST_BADGE_TIERS if total < t["threshold"]), None)
+    return {
+        "total_hosted": total,
+        "earned": earned,
+        "next": ({**next_tier, "remaining": next_tier["threshold"] - total} if next_tier else None),
+    }
+
+
 DEFAULT_CONFIG = {
     "pve_channel_id": 1529113596657799178,
     "security_channel_id": 1527834552150659103,
@@ -828,6 +849,7 @@ def build_profile(uid, own=True):
         "has_data": bool(record),
         "chart": {"labels": labels, "series": series},
         "streak": host_streak_stats(record),
+        "badges": host_badges(record),
         "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")) if own else None,
         "rank_up_dm_opt_out": bool(record.get("rank_up_dm_opt_out")) if own else None,
         "last_vouch": last_vouch,
@@ -2357,6 +2379,15 @@ tr.me td{background:rgba(127,194,184,.07)}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
 .chip{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;color:var(--muted)}
 .chip b{color:var(--text);font-family:var(--mono)}
+.badge-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}
+.badge-item{display:flex;flex-direction:column;align-items:center;gap:6px;width:84px;text-align:center}
+.badge-icon{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:24px;background:var(--card-2);border:1px solid var(--border)}
+.badge-item.earned .badge-icon{background:var(--accent-dim);border-color:var(--accent)}
+.badge-item.locked .badge-icon{opacity:.35;filter:grayscale(1)}
+.badge-name{font-size:11px;color:var(--muted);line-height:1.3}
+.badge-item.earned .badge-name{color:var(--text)}
+.badge-next{font-size:12px;color:var(--muted);margin-top:12px}
 .rivals{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .rival{background:var(--card-2);border:1px solid var(--border);border-radius:9px;padding:7px 11px;
   font-size:12px;color:var(--muted);text-decoration:none;display:inline-block}
@@ -2530,6 +2561,11 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <div class="stat"><div class="val" id="s-vouches">-</div><div class="lbl">Total vouches</div></div>
       </div>
       <div class="card" id="streak-card"></div>
+      <div class="card" id="badges-card" style="display:none">
+        <div class="cat-head"><span class="cat-name">Host badges</span></div>
+        <div id="badges-list" class="badge-row"></div>
+        <div id="badges-summary" class="badge-next"></div>
+      </div>
       <div class="card"><div class="bests" id="bests"></div></div>
       <div id="cats"></div>
       <h2 style="font-family:var(--serif);font-size:18px;font-weight:500;margin:22px 0 12px" id="activity-heading">Your activity</h2>
@@ -2801,6 +2837,23 @@ function gotoProfile(uid, ev){
   loadProfile();
   return false;
 }
+function renderBadges(b){
+  const card = document.getElementById('badges-card');
+  const list = document.getElementById('badges-list');
+  if(!b || !b.total_hosted){ card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  let html = b.earned.map(function(t){
+    return '<div class="badge-item earned"><div class="badge-icon">' + t.icon + '</div>' +
+      '<div class="badge-name">' + esc(t.name) + '</div></div>';
+  }).join('');
+  if(b.next){
+    html += '<div class="badge-item locked"><div class="badge-icon">' + b.next.icon + '</div>' +
+      '<div class="badge-name">' + esc(b.next.name) + '</div></div>';
+  }
+  list.innerHTML = html;
+  document.getElementById('badges-summary').textContent = b.total_hosted + ' event' + (b.total_hosted===1?'':'s') + ' hosted' +
+    (b.next ? ' · ' + b.next.remaining + ' more to unlock ' + b.next.name : ' · all badges unlocked');
+}
 function renderStreak(s, dmOptedOut){
   const el = document.getElementById('streak-card');
   if(!s){ el.style.display = 'none'; return; }
@@ -2888,6 +2941,7 @@ async function loadProfile(){
   }).join('');
 
   renderStreak(d.streak, d.streak_dm_opt_out);
+  renderBadges(d.badges);
   if(!viewing){
     document.getElementById('pref-streak').checked = !d.streak_dm_opt_out;
     document.getElementById('pref-rankup').checked = !d.rank_up_dm_opt_out;
