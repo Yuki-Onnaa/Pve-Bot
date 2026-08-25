@@ -3644,7 +3644,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <div class="card">
       <div class="card-title">Exempt from anti-nuke</div>
-      <div class="eco-note">Deletions by anyone on this list never count toward the anti-nuke threshold and never trigger role-stripping or restores. Use this for staff who legitimately do bulk channel/role cleanup.</div>
+      <div class="eco-note">Deletions by anyone on this list never count toward the anti-nuke threshold.</div>
       <div id="whitelist-list"><div class="empty">Loading…</div></div>
     </div>
   </section>

@@ -1688,14 +1688,14 @@ async def post_leave_log(guild, member, action, reason=None, duration=None, note
     if channel is None:
         return
     if action == "start":
-        embed = discord.Embed(title="🌿 On Leave", color=discord.Color.orange(),
+        embed = discord.Embed(title="On Leave", color=discord.Color.orange(),
                                description=f"{member.mention} is now on leave.")
         embed.add_field(name="Reason", value=reason or "-", inline=False)
         embed.add_field(name="Duration", value=duration or "-", inline=False)
         if note:
             embed.add_field(name="Note", value=note, inline=False)
     else:
-        embed = discord.Embed(title="🌿 Back from Leave", color=discord.Color.green(),
+        embed = discord.Embed(title="Back from Leave", color=discord.Color.green(),
                                description=f"{member.mention} is back from leave.")
     embed.timestamp = datetime.now(timezone.utc)
     embed.set_footer(text=str(member.id))
@@ -1735,7 +1735,7 @@ class OnLeaveButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="On Leave", emoji="🌿", style=discord.ButtonStyle.blurple,
+    @discord.ui.button(label="On Leave", style=discord.ButtonStyle.blurple,
                         custom_id="on_leave_toggle_button")
     async def toggle_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
@@ -1786,7 +1786,7 @@ async def ensure_leave_panel_posted():
             return
 
     embed = discord.Embed(
-        title="🌿 On Leave",
+        title="On Leave",
         description="Click below to mark yourself on leave, or to remove it when you're back.",
         color=discord.Color.blurple(),
     )
@@ -3890,7 +3890,7 @@ async def slash_ticketpanel_error(interaction: discord.Interaction, error):
 async def slash_leavepanel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(
-        title="🌿 On Leave",
+        title="On Leave",
         description="Click below to mark yourself on leave, or to remove it when you're back.",
         color=discord.Color.blurple(),
     )
