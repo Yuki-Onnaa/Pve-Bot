@@ -92,12 +92,12 @@ RESERVED_COMMANDS = {
 }
 
 HOST_BADGE_TIERS = [
-    {"threshold": 1, "name": "First Host", "icon": "🌱"},
-    {"threshold": 5, "name": "Getting Started", "icon": "🔥"},
-    {"threshold": 15, "name": "Regular Host", "icon": "⭐"},
-    {"threshold": 40, "name": "Veteran Host", "icon": "🛡️"},
-    {"threshold": 100, "name": "Elite Host", "icon": "💎"},
-    {"threshold": 250, "name": "Legendary Host", "icon": "👑"},
+    {"threshold": 1, "name": "Torchbearer", "icon": "torch"},
+    {"threshold": 5, "name": "Wayfinder", "icon": "compass"},
+    {"threshold": 15, "name": "Depth Diver", "icon": "anchor"},
+    {"threshold": 40, "name": "Tidebound", "icon": "trident"},
+    {"threshold": 100, "name": "Abyss Warden", "icon": "eye"},
+    {"threshold": 250, "name": "Sovereign of the Depths", "icon": "crown"},
 ]
 
 
@@ -2362,9 +2362,10 @@ tr.me td{background:rgba(127,194,184,.07)}
 .badge-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}
 .badge-item{display:flex;flex-direction:column;align-items:center;gap:6px;width:84px;text-align:center}
 .badge-icon{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:24px;background:var(--card-2);border:1px solid var(--border)}
-.badge-item.earned .badge-icon{background:var(--accent-dim);border-color:var(--accent)}
-.badge-item.locked .badge-icon{opacity:.35;filter:grayscale(1)}
+  background:var(--card-2);border:1px solid var(--border);color:var(--muted)}
+.badge-icon svg{width:26px;height:26px}
+.badge-item.earned .badge-icon{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.badge-item.locked .badge-icon{opacity:.35}
 .badge-name{font-size:11px;color:var(--muted);line-height:1.3}
 .badge-item.earned .badge-name{color:var(--text)}
 .badge-next{font-size:12px;color:var(--muted);margin-top:12px}
@@ -2817,17 +2818,29 @@ function gotoProfile(uid, ev){
   loadProfile();
   return false;
 }
+const BADGE_ICON_PATHS = {
+  torch: '<path d="M12 3c1.6 2 2.6 3.8 2.6 5.6A2.6 2.6 0 0 1 12 11.2a2.6 2.6 0 0 1-2.6-2.6C9.4 6.8 10.4 5 12 3z"/><path d="M12 11.2V21M9 21h6"/>',
+  compass: '<circle cx="12" cy="12" r="9"/><path d="m15.2 8.8-1.7 4.7-4.7 1.7 1.7-4.7z"/>',
+  anchor: '<circle cx="12" cy="5" r="2"/><path d="M12 7v14M7.5 14.5a4.5 4.5 0 0 0 9 0M4.5 12h3M16.5 12h3"/>',
+  trident: '<path d="M12 3v18M8 3v5M16 3v5M6.5 3h3M14.5 3h3"/>',
+  eye: '<path d="M2.5 12S6.5 5.5 12 5.5 21.5 12 21.5 12 17.5 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  crown: '<path d="M4.5 18h15M5.5 18l-1-9 4.8 3.8L12 6l2.7 6.8 4.8-3.8-1 9z"/>',
+};
+function badgeIconSvg(key){
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' + (BADGE_ICON_PATHS[key]||'') + '</svg>';
+}
 function renderBadges(b){
   const card = document.getElementById('badges-card');
   const list = document.getElementById('badges-list');
   if(!b || !b.total_hosted){ card.style.display = 'none'; return; }
   card.style.display = 'block';
   let html = b.earned.map(function(t){
-    return '<div class="badge-item earned"><div class="badge-icon">' + t.icon + '</div>' +
+    return '<div class="badge-item earned"><div class="badge-icon">' + badgeIconSvg(t.icon) + '</div>' +
       '<div class="badge-name">' + esc(t.name) + '</div></div>';
   }).join('');
   if(b.next){
-    html += '<div class="badge-item locked"><div class="badge-icon">' + b.next.icon + '</div>' +
+    html += '<div class="badge-item locked"><div class="badge-icon">' + badgeIconSvg(b.next.icon) + '</div>' +
       '<div class="badge-name">' + esc(b.next.name) + '</div></div>';
   }
   list.innerHTML = html;
