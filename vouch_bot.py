@@ -2159,49 +2159,60 @@ def set_antinuke_enabled(enabled):
         data["_settings"] = settings
 
 
-def snapshot_guild(guild):
-    channels = []
-    for ch in guild.channels:
-        if isinstance(ch, discord.CategoryChannel):
-            kind = "category"
-        elif isinstance(ch, discord.TextChannel):
-            kind = "text"
-        elif isinstance(ch, discord.VoiceChannel):
-            kind = "voice"
-        elif isinstance(ch, discord.StageChannel):
-            kind = "stage"
-        else:
-            continue  # forums/threads/etc. aren't covered by this backup
+def snapshot_channel(ch):
+    """A single channel's snapshot dict, or None if it's a kind this backup doesn't cover."""
+    if isinstance(ch, discord.CategoryChannel):
+        kind = "category"
+    elif isinstance(ch, discord.TextChannel):
+        kind = "text"
+    elif isinstance(ch, discord.VoiceChannel):
+        kind = "voice"
+    elif isinstance(ch, discord.StageChannel):
+        kind = "stage"
+    else:
+        return None  # forums/threads/etc. aren't covered by this backup
 
-        overwrites = []
-        for target, ow in ch.overwrites.items():
-            allow, deny = ow.pair()
-            overwrites.append({
-                "target_id": str(target.id),
-                "target_type": "role" if isinstance(target, discord.Role) else "member",
-                "allow": allow.value, "deny": deny.value,
-            })
-        channels.append({
-            "id": str(ch.id), "kind": kind, "name": ch.name,
-            "category_id": str(ch.category_id) if ch.category_id else None,
-            "position": ch.position,
-            "topic": getattr(ch, "topic", None),
-            "nsfw": getattr(ch, "nsfw", False),
-            "slowmode_delay": getattr(ch, "slowmode_delay", 0),
-            "bitrate": getattr(ch, "bitrate", None),
-            "user_limit": getattr(ch, "user_limit", None),
-            "overwrites": overwrites,
+    overwrites = []
+    for target, ow in ch.overwrites.items():
+        allow, deny = ow.pair()
+        overwrites.append({
+            "target_id": str(target.id),
+            "target_type": "role" if isinstance(target, discord.Role) else "member",
+            "allow": allow.value, "deny": deny.value,
         })
+    return {
+        "id": str(ch.id), "kind": kind, "name": ch.name,
+        "category_id": str(ch.category_id) if ch.category_id else None,
+        "position": ch.position,
+        "topic": getattr(ch, "topic", None),
+        "nsfw": getattr(ch, "nsfw", False),
+        "slowmode_delay": getattr(ch, "slowmode_delay", 0),
+        "bitrate": getattr(ch, "bitrate", None),
+        "user_limit": getattr(ch, "user_limit", None),
+        "overwrites": overwrites,
+    }
+
+
+def snapshot_role(role):
+    """A single role's snapshot dict, or None for the @everyone role."""
+    if role.is_default():
+        return None
+    return {
+        "id": str(role.id), "name": role.name, "color": role.color.value,
+        "permissions": role.permissions.value, "position": role.position,
+        "hoist": role.hoist, "mentionable": role.mentionable,
+    }
+
+
+def snapshot_guild(guild):
+    channels = [c for c in (snapshot_channel(ch) for ch in guild.channels) if c is not None]
 
     roles = []
     for role in guild.roles:
-        if role.is_default():
+        r = snapshot_role(role)
+        if r is None:
             continue
-        roles.append({
-            "id": str(role.id), "name": role.name, "color": role.color.value,
-            "permissions": role.permissions.value, "position": role.position,
-            "hoist": role.hoist, "mentionable": role.mentionable,
-        })
+        roles.append(r)
 
     return {
         "taken_at": datetime.now(timezone.utc).isoformat(),
@@ -2392,6 +2403,39 @@ async def record_destructive_action(guild, user):
 
 
 @bot.event
+async def on_guild_channel_create(channel):
+    """Keeps the stored snapshot current the moment a channel appears, so a channel
+    created and deleted between hourly snapshots is still recoverable via /restore."""
+    ch = snapshot_channel(channel)
+    if ch is None:
+        return
+    with data_txn() as data:
+        snap = data.get("_backup_snapshot")
+        if not snap:
+            return
+        channels = [c for c in snap.get("channels", []) if c["id"] != ch["id"]]
+        channels.append(ch)
+        snap["channels"] = channels
+        data["_backup_snapshot"] = snap
+
+
+@bot.event
+async def on_guild_role_create(role):
+    """Same idea as on_guild_channel_create, for roles."""
+    r = snapshot_role(role)
+    if r is None:
+        return
+    with data_txn() as data:
+        snap = data.get("_backup_snapshot")
+        if not snap:
+            return
+        roles = [x for x in snap.get("roles", []) if x["id"] != r["id"]]
+        roles.append(r)
+        snap["roles"] = roles
+        data["_backup_snapshot"] = snap
+
+
+@bot.event
 async def on_guild_channel_delete(channel):
     if not is_antinuke_enabled():
         return
@@ -2435,9 +2479,15 @@ async def slash_restore(interaction: discord.Interaction):
             "No backup exists yet - one is taken automatically every hour, or run /backupnow first.", ephemeral=True)
         return
     channels, roles = await restore_missing(interaction.guild, snapshot)
-    await interaction.followup.send(
-        f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}.",
-        ephemeral=True)
+    if channels == 0 and roles == 0:
+        msg = (
+            f"Nothing to restore - everything in the backup taken {snapshot['taken_at']} already exists. "
+            f"If what you deleted was created *after* that backup, it was never captured - run /backupnow "
+            f"regularly, or note that channels/roles are now also saved the moment they're created."
+        )
+    else:
+        msg = f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}."
+    await interaction.followup.send(msg, ephemeral=True)
     await log_audit(f"{interaction.user.mention} ran /restore - recreated {channels} channel(s), {roles} role(s).")
 
 
