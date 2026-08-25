@@ -1751,11 +1751,6 @@ class OnLeaveButtonView(discord.ui.View):
     @discord.ui.button(label="On Leave", style=discord.ButtonStyle.blurple,
                         custom_id="on_leave_toggle_button")
     async def toggle_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-            await interaction.response.send_message(
-                "You need the Host role (or higher) to use this.", ephemeral=True)
-            return
-
         guild = interaction.guild
         role = discord.utils.get(guild.roles, name=ON_LEAVE_ROLE_NAME)
         if role is None:
