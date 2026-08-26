@@ -1511,15 +1511,18 @@ def get_ticket_mod_role_names(data=None):
     return [r.get("name") for r in data.get("_ticket_mod_roles", []) if r.get("name")]
 
 
-def get_role_grant(user_id, data=None):
-    """The single role name (if any) this user is whitelisted to grant/revoke via
-    /giverole and /takerole, set from the dashboard's Role Grants tab. Each granter
-    is limited to exactly one role, independent of Discord's own role hierarchy -
-    someone whitelisted for 'Junior Mod' can't use these commands to hand out
-    anything else, even a role that would normally sit below it."""
+def get_role_grant(member, data=None):
+    """The single role name (if any) this member is allowed to grant/revoke via
+    /giverole and /takerole, based on whether they hold one of the granter roles
+    set from the dashboard's Role Grants tab. Each granter role is limited to
+    handing out exactly one target role, independent of Discord's own role
+    hierarchy - anyone with 'Senior Mod' whitelisted for 'Junior Mod' can't use
+    these commands to hand out anything else, even a role that would normally
+    sit below it."""
     data = load_data() if data is None else data
+    member_role_names = {r.name for r in member.roles}
     for entry in data.get("_role_grants", []):
-        if entry.get("granter_id") == str(user_id):
+        if entry.get("granter_role_name") in member_role_names:
             return entry.get("role_name")
     return None
 
@@ -3931,7 +3934,7 @@ async def slash_backfillhostbadges(interaction: discord.Interaction):
 @bot.tree.command(name="giverole", description="Give someone the one role you're whitelisted to grant")
 @app_commands.describe(member="Who to give the role to")
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
-    role_name = get_role_grant(interaction.user.id)
+    role_name = get_role_grant(interaction.user)
     if not role_name:
         await interaction.response.send_message(
             "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
@@ -3966,7 +3969,7 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
 @bot.tree.command(name="takerole", description="Remove the one role you're whitelisted to grant")
 @app_commands.describe(member="Who to remove the role from")
 async def slash_takerole(interaction: discord.Interaction, member: discord.Member):
-    role_name = get_role_grant(interaction.user.id)
+    role_name = get_role_grant(interaction.user)
     if not role_name:
         await interaction.response.send_message(
             "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "

@@ -1510,7 +1510,7 @@ def api_antinuke_whitelist_delete(user_id):
         data["_antinuke_whitelist"] = new_entries
     return jsonify({"ok": True})
 
-# ── API: Role grants (each person whitelisted for exactly one role via /giverole) ──
+# ── API: Role grants (anyone holding a granter role can grant exactly one target role via /giverole) ──
 
 @app.route("/api/role_grants", methods=["GET"])
 @admin_required
@@ -1522,21 +1522,19 @@ def api_role_grants_get():
 @admin_required
 def api_role_grants_add():
     body = request.json or {}
-    user_id = (body.get("granter_id") or "").strip()
-    name = (body.get("granter_name") or "").strip()
+    granter_role_name = (body.get("granter_role_name") or "").strip()
     role_name = (body.get("role_name") or "").strip()
-    if not user_id.isdigit():
-        return jsonify({"error": "A valid Discord user ID is required."}), 400
+    if not granter_role_name:
+        return jsonify({"error": "A granter role name is required."}), 400
     if not role_name:
-        return jsonify({"error": "A role name is required."}), 400
+        return jsonify({"error": "A role name to grant is required."}), 400
     with data_txn() as data:
         entries = data.get("_role_grants", [])
-        if any(e["granter_id"] == user_id for e in entries):
-            return jsonify({"error": "That person already has a role grant - remove it first to change it."}), 400
+        if any(e["granter_role_name"].lower() == granter_role_name.lower() for e in entries):
+            return jsonify({"error": "That role already has a grant - remove it first to change it."}), 400
         entries.append({
             "id": uuid.uuid4().hex[:8],
-            "granter_id": user_id,
-            "granter_name": name or user_id,
+            "granter_role_name": granter_role_name,
             "role_name": role_name,
             "added_by": session.get("user", {}).get("username", "dashboard"),
             "time": datetime.now(timezone.utc).isoformat(),
@@ -3699,12 +3697,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <section id="sec-rolegrants" class="section">
     <div class="section-head"><h2>Role grants</h2></div>
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Whitelist someone for one role</div>
-      <div class="form-group"><label>Discord user ID</label>
-        <input type="text" id="new-rolegrant-id" class="mono" placeholder="e.g. 123456789012345678" maxlength="32">
-      </div>
-      <div class="form-group"><label>Name (optional, for your reference)</label>
-        <input type="text" id="new-rolegrant-name" placeholder="e.g. Sami" maxlength="100">
+      <div class="card-title">Whitelist a role for one grant</div>
+      <div class="form-group"><label>Exact role name that can use /giverole</label>
+        <input type="text" id="new-rolegrant-granter" placeholder="e.g. Senior Mod" maxlength="100">
       </div>
       <div class="form-group"><label>Exact role name they can grant</label>
         <input type="text" id="new-rolegrant-role" placeholder="e.g. Junior Mod" maxlength="100">
@@ -3714,7 +3709,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <div class="card">
       <div class="card-title">Who can grant what</div>
-      <div class="eco-note">Each person here can use /giverole and /takerole to hand out (or take back) only the one role listed next to their name - never any other role, even ones that would normally sit below it in the server's role hierarchy. To change someone's role, remove their entry and add a new one.</div>
+      <div class="eco-note">Anyone holding the role on the left can use /giverole and /takerole to hand out (or take back) only the role on the right - never any other role, even ones that would normally sit below it in the server's role hierarchy. To change a grant, remove it and add a new one.</div>
       <div id="rolegrant-list"><div class="empty">Loading…</div></div>
     </div>
   </section>
@@ -4336,24 +4331,21 @@ async function deleteWhitelist(id){
 async function loadRoleGrants(){
   const data = await api('/api/role_grants');
   const el = document.getElementById('rolegrant-list');
-  if(!data.length){el.innerHTML='<div class="empty">Nobody has a role grant yet.</div>';return;}
+  if(!data.length){el.innerHTML='<div class="empty">No role grants yet.</div>';return;}
   el.innerHTML = data.map(function(g){
-    return '<div class="memory-item"><div style="flex:1"><div class="text">'+esc(g.granter_name)+
-      ' <span class="mono" style="color:var(--muted)">can grant</span> <b>'+esc(g.role_name)+'</b></div>'+
-      '<div class="id">'+esc(g.granter_id)+'</div></div>'+
+    return '<div class="memory-item"><div style="flex:1"><div class="text"><b>'+esc(g.granter_role_name)+
+      '</b> <span class="mono" style="color:var(--muted)">can grant</span> <b>'+esc(g.role_name)+'</b></div></div>'+
       '<button class="btn btn-danger btn-sm" onclick="deleteRoleGrant(\\''+g.id+'\\')">Remove</button></div>';
   }).join('');
 }
 async function addRoleGrant(){
-  const granter_id = document.getElementById('new-rolegrant-id').value.trim();
-  const granter_name = document.getElementById('new-rolegrant-name').value.trim();
+  const granter_role_name = document.getElementById('new-rolegrant-granter').value.trim();
   const role_name = document.getElementById('new-rolegrant-role').value.trim();
-  if(!granter_id || !role_name) return;
-  const r = await api('/api/role_grants',{method:'POST',body:JSON.stringify({granter_id,granter_name,role_name})});
+  if(!granter_role_name || !role_name) return;
+  const r = await api('/api/role_grants',{method:'POST',body:JSON.stringify({granter_role_name,role_name})});
   showAlert(document.getElementById('rolegrant-result'), r.ok?'Role grant added.':(r.error||'Could not add.'), r.ok?'success':'err');
   if(r.ok){
-    document.getElementById('new-rolegrant-id').value='';
-    document.getElementById('new-rolegrant-name').value='';
+    document.getElementById('new-rolegrant-granter').value='';
     document.getElementById('new-rolegrant-role').value='';
     loadRoleGrants();
   }
