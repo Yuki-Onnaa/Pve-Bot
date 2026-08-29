@@ -1508,7 +1508,7 @@ def api_ticket_mods_delete(mod_id):
 # ── API: Anti-nuke whitelist (people exempt from the anti-nuke detector) ──
 
 @app.route("/api/antinuke_whitelist", methods=["GET"])
-@admin_required
+@whitelist_manager_required
 def api_antinuke_whitelist_get():
     data = load_data()
     return jsonify(data.get("_antinuke_whitelist", []))
