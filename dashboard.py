@@ -503,6 +503,41 @@ def admin_required(f):
     return decorated
 
 
+WHITELIST_MANAGER_ROLE_ID = 1481379874366292008
+WHITELIST_MANAGER_USER_ID = "1387930623766827140"
+
+
+def is_whitelist_manager():
+    """Only this specific role or this specific person can add/remove anti-nuke
+    whitelist entries - being a dashboard admin isn't enough on its own."""
+    if not is_admin():
+        return False
+    if session["user"]["id"] == WHITELIST_MANAGER_USER_ID:
+        return True
+    bot = _bridge.get("bot")
+    if bot is None:
+        return False
+    for g in session.get("admin_guilds", []):
+        guild = bot.get_guild(int(g["id"]))
+        if guild is None:
+            continue
+        member = guild.get_member(int(session["user"]["id"]))
+        if member and any(r.id == WHITELIST_MANAGER_ROLE_ID for r in member.roles):
+            return True
+    return False
+
+
+def whitelist_manager_required(f):
+    """Blocks anything that isn't the designated whitelist manager role/person,
+    even for otherwise-valid dashboard admins."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_whitelist_manager():
+            return jsonify({"error": "Only the designated whitelist managers can do that."}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
 def member_required(f):
     """Any signed-in member of the server. Admins pass this too."""
     @wraps(f)
@@ -1479,7 +1514,7 @@ def api_antinuke_whitelist_get():
     return jsonify(data.get("_antinuke_whitelist", []))
 
 @app.route("/api/antinuke_whitelist", methods=["POST"])
-@admin_required
+@whitelist_manager_required
 def api_antinuke_whitelist_add():
     body = request.json or {}
     user_id = (body.get("id") or "").strip()
@@ -1500,7 +1535,7 @@ def api_antinuke_whitelist_add():
     return jsonify({"ok": True})
 
 @app.route("/api/antinuke_whitelist/<user_id>", methods=["DELETE"])
-@admin_required
+@whitelist_manager_required
 def api_antinuke_whitelist_delete(user_id):
     with data_txn() as data:
         entries = data.get("_antinuke_whitelist", [])
