@@ -2417,6 +2417,62 @@ def api_members_escalation_check():
         "count": len(escalations),
     })
 
+@app.route("/api/server-health")
+@admin_required
+def api_server_health():
+    """Get comprehensive server health and security status."""
+    data = load_data()
+
+    total_members = sum(1 for uid, _ in user_records(data) if combined_total(data.get(uid, {})) > 0)
+    active_members = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 3)
+    on_leave_members = len([log for log in data.get("_on_leave_logs", [])[-100:] if log.get("action") == "start"])
+
+    threat_scores = []
+    for uid, rec in user_records(data):
+        if combined_total(rec) > 0:
+            threat_scores.append(calculate_threat_score(data, uid))
+
+    action_log = data.get("_antinuke_action_log", {})
+    total_destructive_actions = sum(len(actions) for actions in action_log.values())
+    recent_actions = sum(len([a for a in actions if a.get("time")]) for actions in action_log.values())
+
+    escalations = 0
+    for uid, rec in user_records(data):
+        is_escalation, _ = detect_permission_escalation_pattern(data, uid)
+        if is_escalation:
+            escalations += 1
+
+    snapshot = data.get("_backup_snapshot")
+    has_snapshot = snapshot is not None
+    snapshot_channels = len(snapshot.get("channels", [])) if snapshot else 0
+    snapshot_roles = len(snapshot.get("roles", [])) if snapshot else 0
+
+    avg_threat = sum(threat_scores) / len(threat_scores) if threat_scores else 0
+    critical_threats = sum(1 for score in threat_scores if score >= 70)
+    high_threats = sum(1 for score in threat_scores if score >= 40)
+
+    return jsonify({
+        "members": {
+            "total": total_members,
+            "active": active_members,
+            "on_leave": on_leave_members,
+            "engagement_rate": round(active_members / max(1, total_members) * 100, 1),
+        },
+        "security": {
+            "avg_threat_score": round(avg_threat, 1),
+            "critical_threats": critical_threats,
+            "high_threats": high_threats,
+            "escalation_attempts": escalations,
+            "total_destructive_actions": total_destructive_actions,
+        },
+        "recovery": {
+            "snapshot_enabled": has_snapshot,
+            "protected_channels": snapshot_channels,
+            "protected_roles": snapshot_roles,
+        },
+        "status": "healthy" if avg_threat < 30 and critical_threats == 0 else "warning" if avg_threat < 50 else "critical",
+    })
+
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
 # ─────────────────────────────────────────────────────────────
