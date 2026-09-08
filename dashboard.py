@@ -2784,6 +2784,166 @@ def api_members_search():
         "count": len(results),
     })
 
+@app.route("/api/engagement-summary")
+@member_required
+def api_engagement_summary():
+    """Get comprehensive engagement summary and trends."""
+    data = load_data()
+
+    category_totals = {}
+    category_members = {}
+
+    for cat in ALL_CATEGORIES:
+        category_totals[cat] = {"vouches": 0, "points": 0, "members": 0}
+        category_members[cat] = []
+
+    for uid, rec in user_records(data):
+        for cat in ALL_CATEGORIES:
+            cat_data = rec.get(cat, {})
+            vouches = cat_data.get("total_vouches", 0)
+            points = cat_data.get("total_points", 0)
+
+            if vouches > 0 or points > 0:
+                category_totals[cat]["vouches"] += vouches
+                category_totals[cat]["points"] += points
+                category_totals[cat]["members"] += 1
+
+    engagement_by_tier = {
+        "active": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 3),
+        "semi_active": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 2),
+        "inactive_recent": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 1),
+        "dormant": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0),
+    }
+
+    return jsonify({
+        "by_category": category_totals,
+        "by_engagement_tier": engagement_by_tier,
+        "total_active_members": sum(engagement_by_tier.values()),
+    })
+
+@app.route("/api/roles/performance")
+@admin_required
+def api_roles_performance():
+    """Analyze role performance and associated risk metrics."""
+    data = load_data()
+    role_stats = {}
+
+    action_log = data.get("_antinuke_action_log", {})
+
+    for uid, actions in action_log.items():
+        for action in actions:
+            target_id = action.get("target_id")
+            if not target_id or action.get("type") not in ["role_delete", "role_assign"]:
+                continue
+
+            if target_id not in role_stats:
+                role_stats[target_id] = {
+                    "deletions": 0,
+                    "assignments": 0,
+                    "related_threats": 0,
+                }
+
+            if action.get("type") == "role_delete":
+                role_stats[target_id]["deletions"] += 1
+            else:
+                role_stats[target_id]["assignments"] += 1
+
+            threat_score = calculate_threat_score(data, uid)
+            if threat_score >= 40:
+                role_stats[target_id]["related_threats"] += 1
+
+    performance = []
+    for role_id, stats in role_stats.items():
+        risk_score = (stats["deletions"] * 2) + (stats["related_threats"] * 1.5)
+        performance.append({
+            "role_id": role_id,
+            "deletions": stats["deletions"],
+            "high_threat_actions": stats["related_threats"],
+            "risk_score": round(risk_score, 1),
+            "risk_level": "critical" if risk_score >= 10 else "high" if risk_score >= 5 else "medium",
+        })
+
+    performance.sort(key=lambda r: r["risk_score"], reverse=True)
+
+    return jsonify({
+        "roles": performance[:50],
+        "total_tracked": len(role_stats),
+        "critical_roles": sum(1 for r in performance if r["risk_level"] == "critical"),
+    })
+
+@app.route("/api/comprehensive-insights")
+@admin_required
+def api_comprehensive_insights():
+    """Comprehensive server insights combining all analytics."""
+    data = load_data()
+
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    all_users = list(user_records(data))
+    active_users = [uid for uid, rec in all_users if combined_total(rec) > 0]
+
+    recent_hosts = 0
+    for uid, rec in all_users:
+        host_runs = rec.get("host_runs", [])
+        for run_time_str in host_runs[-50:]:
+            try:
+                run_time = datetime.fromisoformat(run_time_str)
+                if run_time > month_ago:
+                    recent_hosts += 1
+            except (ValueError, TypeError):
+                pass
+
+    threat_scores = [calculate_threat_score(data, uid) for uid, _ in active_users]
+
+    milestone_distribution = {}
+    for uid, rec in all_users:
+        milestones = calculate_member_milestones(rec)
+        achievements = len(milestones.get("achievements", []))
+        if achievements not in milestone_distribution:
+            milestone_distribution[achievements] = 0
+        milestone_distribution[achievements] += 1
+
+    escalation_attempts = sum(1 for uid, rec in all_users if detect_permission_escalation_pattern(data, uid)[0])
+
+    event_breakdown = {}
+    for cat in ALL_CATEGORIES:
+        perf = get_event_performance(data, cat)
+        if perf:
+            event_breakdown[cat] = perf
+
+    return jsonify({
+        "timestamp": now.isoformat(),
+        "overview": {
+            "total_members": len(active_users),
+            "active_this_month": recent_hosts,
+            "avg_threat_score": round(sum(threat_scores) / max(1, len(threat_scores)), 1),
+        },
+        "security": {
+            "threat_distribution": {
+                "critical": sum(1 for s in threat_scores if s >= 70),
+                "high": sum(1 for s in threat_scores if 40 <= s < 70),
+                "medium": sum(1 for s in threat_scores if 20 <= s < 40),
+                "low": sum(1 for s in threat_scores if s < 20),
+            },
+            "escalation_attempts": escalation_attempts,
+            "average_threat": round(sum(threat_scores) / max(1, len(threat_scores)), 1),
+        },
+        "engagement": {
+            "active": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 3),
+            "semi_active": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 2),
+            "inactive_recent": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 1),
+            "dormant": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0),
+        },
+        "achievements": {
+            "members_with_1_plus": milestone_distribution.get(1, 0),
+            "members_with_2_plus": milestone_distribution.get(2, 0),
+            "members_with_3_plus": milestone_distribution.get(3, 0),
+        },
+        "events": event_breakdown,
+    })
+
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
 # ─────────────────────────────────────────────────────────────
