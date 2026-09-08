@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  pve-bot:
+    build: .
+    container_name: pve-bot
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI}
+      DATA_FILE: /data/vouches.json
+      DASHBOARD_SECRET: ${DASHBOARD_SECRET}
+      GUILD_ID: ${GUILD_ID:-}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Redis for caching/rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: pve-bot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: pve-bot-network

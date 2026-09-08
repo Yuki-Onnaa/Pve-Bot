@@ -1,0 +1,57 @@
+site_name: Pve-Bot Documentation
+site_description: Enterprise Discord Member Management Platform
+site_author: Pve-Bot Team
+repo_url: https://github.com/Yuki-Onnaa/Pve-Bot
+repo_name: Pve-Bot
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: cyan
+      accent: blue
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+plugins:
+  - search
+  - offline
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Overview: overview.md
+    - Deployment: deployment.md
+    - Configuration: configuration.md
+  - Features:
+    - Analytics: features/analytics.md
+    - Threat Detection: features/threat-detection.md
+    - Compliance: features/compliance.md
+    - API: features/api.md
+  - Operations:
+    - Runbook: operations/runbook.md
+    - Maintenance: operations/maintenance.md
+    - Troubleshooting: operations/troubleshooting.md
+  - Development:
+    - Contributing: contributing.md
+    - API Reference: api-reference.md
+    - Architecture: architecture.md
+  - Admin:
+    - Dashboard: admin/dashboard.md
+    - Recommendations: admin/recommendations.md
+
+markdown_extensions:
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.tasklist
+  - admonition
+
+extra:
+  version: 2.0.0
+  status: Production Ready

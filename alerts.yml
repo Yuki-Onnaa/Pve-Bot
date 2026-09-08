@@ -1,0 +1,104 @@
+# Prometheus alert rules for Pve-Bot
+
+groups:
+  - name: pve-bot-alerts
+    interval: 30s
+    rules:
+      # Bot availability
+      - alert: PveBotDown
+        expr: up{job="pve-bot"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: pve-bot
+        annotations:
+          summary: "Pve-Bot is down"
+          description: "Pve-Bot has been unreachable for more than 5 minutes"
+
+      # High API error rate
+      - alert: HighAPIErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "High API error rate"
+          description: "API error rate is above 5% for the last 5 minutes"
+
+      # High threat count
+      - alert: HighThreatCount
+        expr: pve_bot_threat_count > 20
+        for: 10m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "High threat member count"
+          description: "There are {{ $value }} members with threat scores > 50"
+
+      # Memory usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="pve-bot"} / 1024 / 1024 > 500
+        for: 5m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "High memory usage"
+          description: "Pve-Bot is using {{ $value }}MB of memory"
+
+      # Database connectivity
+      - alert: DatabaseConnectivityIssue
+        expr: rate(db_connection_errors_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: pve-bot
+        annotations:
+          summary: "Database connectivity issue"
+          description: "Errors connecting to the database"
+
+      # Disk space
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/data"} / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "Low disk space"
+          description: "Less than 10% disk space available on /data"
+
+      # Response time
+      - alert: SlowResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "Slow API response time"
+          description: "95th percentile response time is {{ $value }}s"
+
+      # Compliance check failure
+      - alert: ComplianceCheckFailure
+        expr: pve_bot_compliance_score < 90
+        for: 30m
+        labels:
+          severity: warning
+          service: pve-bot
+        annotations:
+          summary: "Compliance score dropped"
+          description: "Compliance score is {{ $value }}% (threshold: 90%)"
+
+      # Permission escalation detected
+      - alert: PermissionEscalationDetected
+        expr: increase(pve_bot_escalation_patterns_detected[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: pve-bot
+        annotations:
+          summary: "Permission escalation pattern detected"
+          description: "{{ $value }} escalation pattern(s) detected in the last 5 minutes"
