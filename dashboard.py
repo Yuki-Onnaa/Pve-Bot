@@ -1029,11 +1029,18 @@ def api_members():
             if progress and progress.get("current"):
                 rank = {"name": progress["current"], "category": CATEGORY_NAMES[top_cat]}
 
+        on_leave = False
+        leave_logs = data.get("_on_leave_logs", [])
+        for log in leave_logs[-100:]:
+            if log.get("user_id") == uid and log.get("action") == "start":
+                on_leave = True
+                break
+
         who = resolve_user(uid)
         rows.append({
             "uid": uid, "name": who["name"], "avatar": who["avatar"], "resolved": who["resolved"],
             "total": total, "vouches": vouches, "totals": totals, "rank": rank,
-            "is_me": uid == me, "badge": top_host_badge(rec),
+            "is_me": uid == me, "badge": top_host_badge(rec), "on_leave": on_leave,
         })
 
     rows.sort(key=lambda r: r["total"], reverse=True)
@@ -1544,6 +1551,17 @@ def api_antinuke_whitelist_delete(user_id):
             return jsonify({"error": "Not found"}), 404
         data["_antinuke_whitelist"] = new_entries
     return jsonify({"ok": True})
+
+@app.route("/api/antinuke_action_log", methods=["GET"])
+@admin_required
+def api_antinuke_action_log():
+    """Get recent anti-nuke actions for monitoring and analysis."""
+    data = load_data()
+    action_log = data.get("_antinuke_action_log", {})
+    result = {}
+    for user_id, actions in action_log.items():
+        result[user_id] = sorted(actions, key=lambda a: a.get("time", ""), reverse=True)[:50]
+    return jsonify(result)
 
 # ── API: Role grants (anyone holding a granter role can grant exactly one target role via /giverole) ──
 

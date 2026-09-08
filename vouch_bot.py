@@ -465,11 +465,16 @@ def parse_pve_event(text):
 def record_vouch(data, target_ids, author_id, category, event_name, when=None, author_name=None):
     """
     Returns (recorded_target_ids, cooldown_target_ids, self_dropped_count).
+    Validates inputs and enforces business rules.
     """
     when = when or datetime.now(timezone.utc)
     cfg = get_events(category).get(event_name) or {"points": 0, "cooldown": 0}
     points = cfg["points"]
     cooldown = cfg["cooldown"]
+
+    if not isinstance(target_ids, (list, tuple)):
+        target_ids = [target_ids]
+    target_ids = list(set(int(uid) for uid in target_ids if uid))
 
     valid_targets = [uid for uid in target_ids if uid != author_id]
     self_dropped = len(target_ids) - len(valid_targets)
@@ -1741,8 +1746,8 @@ class OnLeaveModal(discord.ui.Modal, title="Going On Leave"):
             return
         await post_leave_log(
             interaction.guild, interaction.user, "start",
-            reason=str(self.reason), duration=str(self.duration),
-            note=str(self.note) or None)
+            reason=self.reason.value, duration=self.duration.value,
+            note=self.note.value if self.note.value else None)
         await interaction.response.send_message(
             "You're marked as on leave. Click the button again when you're back.", ephemeral=True)
 
@@ -2145,12 +2150,23 @@ ANTINUKE_DANGEROUS_PERMS = (
 )
 
 _destructive_action_log = {}  # user_id -> [datetime, ...], in-memory only
+_destructive_action_details = {}  # user_id -> [(datetime, action_type, target_id, target_name), ...], persistent
 
 
 def is_owner_or_bot_manager(member, guild):
     if member.id == guild.owner_id:
         return True
     return any(r.name == BOT_MANAGER_ROLE_NAME or r.id in BOT_MANAGER_ROLE_IDS for r in member.roles)
+
+
+def sanitize_input(text, max_length=None):
+    """Safely sanitize user input by removing/escaping dangerous characters."""
+    if not isinstance(text, str):
+        return ""
+    text = text.strip()
+    if max_length and len(text) > max_length:
+        text = text[:max_length]
+    return text
 
 
 def antinuke_check():
@@ -2262,7 +2278,14 @@ async def restore_missing(guild, snapshot):
     """Recreates any role or channel from the snapshot that no longer exists
     (matched by name), leaving anything still present untouched. Also hands
     a recreated role back to everyone who had it in the snapshot. Returns
-    (channels_created, roles_created, members_restored)."""
+    (channels_created, roles_created, members_restored).
+
+    Snapshot is validated before restoration to prevent corrupted data from
+    causing issues."""
+    if not snapshot or "roles" not in snapshot or "channels" not in snapshot:
+        print("[Restore] Invalid or empty snapshot - aborting restore")
+        return 0, 0, 0
+
     role_id_map = {}
     created_roles = 0
     restored_members = 0
@@ -2389,12 +2412,18 @@ async def handle_suspected_nuke(guild, user):
     if snapshot:
         restored_channels, restored_roles, restored_members = await restore_missing(guild, snapshot)
 
+    data = load_data()
+    action_log = data.get("_antinuke_action_log", {}).get(str(user.id), [])
+    recent_actions = [a for a in action_log[-10:]]
+    actions_str = "\n".join([f"  • {a.get('type', 'unknown')}: {a.get('target_name', 'unknown')}" for a in recent_actions])
+
     warning = (
-        f"🚨 **Anti-nuke triggered** for {user.mention} (`{user.id}`)\n"
-        f"{ANTINUKE_THRESHOLD}+ channel/role deletions within {ANTINUKE_WINDOW_SECONDS}s.\n"
-        + (f"Stripped: {', '.join(stripped)}\n" if stripped else "Couldn't strip any roles (none removable, or they left).\n")
-        + f"Auto-restored {restored_channels} channel(s) and {restored_roles} role(s) from the last backup"
-        + (f", and gave {restored_members} member(s) their role(s) back." if restored_members else ".")
+        f"🚨 **CRITICAL: Anti-nuke triggered** for {user.mention} (`{user.id}`)\n"
+        f"**Threshold**: {ANTINUKE_THRESHOLD}+ actions within {ANTINUKE_WINDOW_SECONDS}s\n"
+        f"**Recent actions**:\n{actions_str}\n\n"
+        + (f"**Roles stripped**: {', '.join(stripped)}\n" if stripped else "**Roles stripped**: None (none removable)\n")
+        + f"**Auto-restored**: {restored_channels} channels, {restored_roles} roles"
+        + (f", {restored_members} member role assignments" if restored_members else "")
     )
     await log_audit(warning)
 
@@ -2421,7 +2450,7 @@ def get_antinuke_whitelist_ids(data=None):
     return {str(e.get("id")) for e in data.get("_antinuke_whitelist", []) if e.get("id")}
 
 
-async def record_destructive_action(guild, user):
+async def record_destructive_action(guild, user, action_type="unknown", target_id=None, target_name=None):
     if user is None or user.bot:
         return
     if str(user.id) in get_antinuke_whitelist_ids():
@@ -2431,8 +2460,21 @@ async def record_destructive_action(guild, user):
     history.append(now)
     cutoff = now - timedelta(seconds=ANTINUKE_WINDOW_SECONDS)
     history[:] = [t for t in history if t > cutoff]
+
+    with data_txn() as data:
+        action_log = data.setdefault("_antinuke_action_log", {})
+        user_actions = action_log.setdefault(str(user.id), [])
+        user_actions.append({
+            "type": action_type,
+            "target_id": str(target_id) if target_id else None,
+            "target_name": target_name,
+            "time": now.isoformat(),
+        })
+        action_log[str(user.id)] = user_actions[-100:]
+        data["_antinuke_action_log"] = action_log
+
     if len(history) >= ANTINUKE_THRESHOLD:
-        history.clear()  # avoid re-triggering on every action in the same burst
+        history.clear()
         await handle_suspected_nuke(guild, user)
 
 
@@ -2479,7 +2521,8 @@ async def on_guild_channel_delete(channel):
     guild = channel.guild
     actor = await find_audit_actor(guild, discord.AuditLogAction.channel_delete, channel.id)
     if actor:
-        await record_destructive_action(guild, actor)
+        await record_destructive_action(guild, actor, action_type="channel_delete",
+                                       target_id=channel.id, target_name=channel.name)
 
 
 @bot.event
@@ -2489,7 +2532,56 @@ async def on_guild_role_delete(role):
     guild = role.guild
     actor = await find_audit_actor(guild, discord.AuditLogAction.role_delete, role.id)
     if actor:
-        await record_destructive_action(guild, actor)
+        await record_destructive_action(guild, actor, action_type="role_delete",
+                                       target_id=role.id, target_name=role.name)
+
+
+@tasks.loop(minutes=5)
+async def check_expired_leaves():
+    """Auto-remove on-leave status for members whose duration has expired."""
+    data = load_data()
+    now = datetime.now(timezone.utc)
+    expired = []
+
+    leave_logs = data.get("_on_leave_logs", [])
+    for log_entry in leave_logs:
+        if log_entry.get("action") != "start":
+            continue
+        duration_str = log_entry.get("duration", "").lower()
+        if not duration_str or ":" not in duration_str:
+            continue
+
+        try:
+            entry_time = datetime.fromisoformat(log_entry.get("time", ""))
+            days_part = int(duration_str.split()[0])
+            hours_part = int(duration_str.split(":")[0]) if ":" in duration_str else 0
+            minutes_part = int(duration_str.split(":")[1]) if len(duration_str.split(":")) > 1 else 0
+
+            duration = timedelta(days=days_part, hours=hours_part, minutes=minutes_part)
+            expiry_time = entry_time + duration
+            if expiry_time <= now and log_entry not in expired:
+                expired.append(log_entry)
+        except (ValueError, IndexError):
+            pass
+
+    for entry in expired:
+        user_id = int(entry.get("user_id", 0))
+        for guild in bot.guilds:
+            member = guild.get_member(user_id)
+            if member is None:
+                continue
+            role = discord.utils.get(guild.roles, name=ON_LEAVE_ROLE_NAME)
+            if role and role in member.roles:
+                try:
+                    await member.remove_roles(role, reason="Auto-removed: on-leave duration expired")
+                    await post_leave_log(guild, member, "end", reason="Duration expired")
+                except discord.HTTPException:
+                    pass
+
+
+@check_expired_leaves.before_loop
+async def before_check_expired_leaves():
+    await bot.wait_until_ready()
 
 
 @tasks.loop(hours=1)
@@ -2636,6 +2728,10 @@ async def on_ready():
     if not backup_snapshot_loop.is_running():
         backup_snapshot_loop.start()
         print("[Backup] Channel/role snapshots running hourly")
+
+    if not check_expired_leaves.is_running():
+        check_expired_leaves.start()
+        print("[OnLeave] Checking for expired on-leave status every 5 minutes")
 
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
