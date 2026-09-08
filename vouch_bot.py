@@ -2169,6 +2169,60 @@ def sanitize_input(text, max_length=None):
     return text
 
 
+def calculate_member_streak_score(record):
+    """Calculate an activity score based on hosting streak and consistency."""
+    host_runs = record.get("host_runs", [])
+    if not host_runs:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    recent = [datetime.fromisoformat(run) for run in host_runs[-20:]]
+
+    if not recent:
+        return 0
+
+    latest = datetime.fromisoformat(recent[-1])
+    days_since_last = (now - latest).days
+
+    if days_since_last > 30:
+        return 0
+    if days_since_last > 14:
+        return 1
+    if days_since_last > 7:
+        return 2
+    return 3
+
+
+def get_member_activity_stats(data, uid):
+    """Get comprehensive activity stats for a member."""
+    rec = data.get(str(uid), {})
+    if not rec:
+        return None
+
+    total_points = combined_total(rec)
+    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+    host_runs = len(rec.get("host_runs", []))
+    host_total = rec.get("host_runs_total", 0)
+    streak_score = calculate_member_streak_score(rec)
+
+    on_leave = False
+    leave_logs = data.get("_on_leave_logs", [])
+    for log in leave_logs[-50:]:
+        if str(log.get("user_id")) == str(uid) and log.get("action") == "start":
+            on_leave = True
+            break
+
+    return {
+        "uid": uid,
+        "total_points": total_points,
+        "total_vouches": total_vouches,
+        "host_runs": host_runs,
+        "host_total": host_total,
+        "streak_score": streak_score,
+        "on_leave": on_leave,
+    }
+
+
 def antinuke_check():
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)

@@ -179,6 +179,57 @@ def ensure_user_cat(data, uid, category):
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
 
+def calculate_member_streak_score(record):
+    """Calculate an activity score (0-3) based on hosting streak and consistency."""
+    host_runs = record.get("host_runs", [])
+    if not host_runs:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    try:
+        latest = datetime.fromisoformat(host_runs[-1])
+    except (ValueError, IndexError):
+        return 0
+
+    days_since_last = (now - latest).days
+
+    if days_since_last > 30:
+        return 0
+    if days_since_last > 14:
+        return 1
+    if days_since_last > 7:
+        return 2
+    return 3
+
+def get_member_activity_stats(data, uid):
+    """Get comprehensive activity stats for a member including streak score and on-leave status."""
+    rec = data.get(str(uid), {})
+    if not rec:
+        return None
+
+    total_points = combined_total(rec)
+    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+    host_runs = len(rec.get("host_runs", []))
+    host_total = rec.get("host_runs_total", 0)
+    streak_score = calculate_member_streak_score(rec)
+
+    on_leave = False
+    leave_logs = data.get("_on_leave_logs", [])
+    for log in leave_logs[-50:]:
+        if str(log.get("user_id")) == str(uid) and log.get("action") == "start":
+            on_leave = True
+            break
+
+    return {
+        "uid": str(uid),
+        "total_points": total_points,
+        "total_vouches": total_vouches,
+        "host_runs": host_runs,
+        "host_total": host_total,
+        "streak_score": streak_score,
+        "on_leave": on_leave,
+    }
+
 # ─────────────────────────────────────────────────────────────
 # SITE ACTIVITY
 # Page loads are counted in memory and flushed to disk periodically, so a busy
@@ -2185,6 +2236,68 @@ def api_events_update():
     with data_txn() as data:
         data["_event_schedule"] = validated
     return jsonify({"ok": True})
+
+@app.route("/api/member/<uid>/activity")
+@member_required
+def api_member_activity(uid):
+    """Get detailed activity stats for a specific member."""
+    data = load_data()
+    stats = get_member_activity_stats(data, uid)
+    if not stats:
+        return jsonify({"error": "Member not found"}), 404
+    return jsonify(stats)
+
+@app.route("/api/members/activity-leaderboard")
+@member_required
+def api_members_activity_leaderboard():
+    """Get members ranked by activity (streak score, host runs, consistency)."""
+    data = load_data()
+    members = []
+
+    for uid, rec in user_records(data):
+        stats = get_member_activity_stats(data, uid)
+        if stats and stats["total_points"] > 0:
+            members.append(stats)
+
+    members.sort(key=lambda m: (m["streak_score"], m["host_total"], m["host_runs"]), reverse=True)
+
+    for i, member in enumerate(members):
+        member["activity_rank"] = i + 1
+
+    return jsonify({
+        "leaderboard": members[:100],
+        "count": len(members),
+    })
+
+@app.route("/api/members/streaks")
+@member_required
+def api_members_streaks():
+    """Get members grouped by current activity streak level (0-3)."""
+    data = load_data()
+    streaks = {0: [], 1: [], 2: [], 3: []}
+
+    for uid, rec in user_records(data):
+        who = resolve_user(uid)
+        if combined_total(rec) > 0:
+            streak_score = calculate_member_streak_score(rec)
+            streaks[streak_score].append({
+                "uid": uid,
+                "name": who["name"],
+                "avatar": who["avatar"],
+                "streak_score": streak_score,
+                "host_total": rec.get("host_runs_total", 0),
+                "host_runs": len(rec.get("host_runs", [])),
+            })
+
+    for score in streaks:
+        streaks[score].sort(key=lambda m: (m["host_total"], m["host_runs"]), reverse=True)
+
+    return jsonify({
+        "active": streaks[3],
+        "semi_active": streaks[2],
+        "inactive_recent": streaks[1],
+        "dormant": streaks[0],
+    })
 
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
