@@ -2944,6 +2944,115 @@ def api_comprehensive_insights():
         "events": event_breakdown,
     })
 
+@app.route("/api/compliance-audit")
+@admin_required
+def api_compliance_audit():
+    """Audit security and policy compliance across the server."""
+    data = load_data()
+    audit_results = []
+
+    snapshot = data.get("_backup_snapshot")
+    if not snapshot:
+        audit_results.append({
+            "check": "backup_snapshot",
+            "passed": False,
+            "message": "No backup snapshot is active",
+            "severity": "high",
+            "action": "Create a snapshot to enable disaster recovery",
+        })
+    else:
+        audit_results.append({
+            "check": "backup_snapshot",
+            "passed": True,
+            "message": f"Snapshot protecting {len(snapshot.get('channels', []))} channels and {len(snapshot.get('roles', []))} roles",
+            "severity": None,
+        })
+
+    whitelist = set(e.get("id") for e in data.get("_antinuke_whitelist", []) if e.get("id"))
+    if len(whitelist) > 20:
+        audit_results.append({
+            "check": "whitelist_size",
+            "passed": False,
+            "message": f"Whitelist is large ({len(whitelist)} entries) - harder to manage",
+            "severity": "medium",
+            "action": "Review and consolidate whitelist entries",
+        })
+    else:
+        audit_results.append({
+            "check": "whitelist_size",
+            "passed": True,
+            "message": f"Whitelist size is reasonable ({len(whitelist)} entries)",
+            "severity": None,
+        })
+
+    critical_threats = sum(1 for uid, rec in user_records(data) if calculate_threat_score(data, uid) >= 70)
+    if critical_threats > 0:
+        audit_results.append({
+            "check": "threat_levels",
+            "passed": False,
+            "message": f"Found {critical_threats} critical threat users",
+            "severity": "critical",
+            "action": "Review and address high-threat users",
+        })
+    else:
+        audit_results.append({
+            "check": "threat_levels",
+            "passed": True,
+            "message": "No critical threat users detected",
+            "severity": None,
+        })
+
+    on_leave_high_threat = 0
+    on_leave_logs = data.get("_on_leave_logs", [])
+    on_leave_users = [log.get("user_id") for log in on_leave_logs[-50:] if log.get("action") == "start"]
+    for uid in on_leave_users:
+        if calculate_threat_score(data, uid) >= 40:
+            on_leave_high_threat += 1
+
+    if on_leave_high_threat > 0:
+        audit_results.append({
+            "check": "on_leave_compliance",
+            "passed": False,
+            "message": f"{on_leave_high_threat} high-threat users marked as on-leave",
+            "severity": "high",
+            "action": "Verify role restrictions for on-leave users",
+        })
+    else:
+        audit_results.append({
+            "check": "on_leave_compliance",
+            "passed": True,
+            "message": "All on-leave users appear compliant",
+            "severity": None,
+        })
+
+    dormant_high_threat = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0 and calculate_threat_score(data, uid) >= 40)
+    if dormant_high_threat > 5:
+        audit_results.append({
+            "check": "dormant_threats",
+            "passed": False,
+            "message": f"{dormant_high_threat} dormant high-threat users",
+            "severity": "medium",
+            "action": "Consider archiving or re-engaging dormant users",
+        })
+    else:
+        audit_results.append({
+            "check": "dormant_threats",
+            "passed": True,
+            "message": "Dormant threat levels are acceptable",
+            "severity": None,
+        })
+
+    passed = sum(1 for a in audit_results if a["passed"])
+    total = len(audit_results)
+
+    return jsonify({
+        "audit_results": audit_results,
+        "compliance_score": round((passed / total * 100), 1),
+        "passed": passed,
+        "total": total,
+        "status": "compliant" if passed == total else "warning" if passed >= total * 0.8 else "non-compliant",
+    })
+
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
 # ─────────────────────────────────────────────────────────────
