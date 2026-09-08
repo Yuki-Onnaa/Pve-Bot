@@ -230,6 +230,41 @@ def get_member_activity_stats(data, uid):
         "on_leave": on_leave,
     }
 
+def calculate_threat_score(data, uid):
+    """Calculate a threat score (0-100) based on user behavior patterns.
+
+    Factors:
+    - Recent destructive actions (channel/role deletions)
+    - Action velocity (actions in last hour)
+    - Member activity level (inactive users = higher threat)
+    - On-leave status (users on leave shouldn't have perms)
+    """
+    uid_str = str(uid)
+    threat = 0
+
+    action_log = data.get("_antinuke_action_log", {}).get(uid_str, [])
+    recent_actions = [a for a in action_log if a.get("time")]
+
+    if recent_actions:
+        now = datetime.now(timezone.utc)
+        try:
+            last_hour = [a for a in recent_actions if (now - datetime.fromisoformat(a["time"])).total_seconds() < 3600]
+            threat += min(20, len(last_hour) * 3)
+
+            deletion_actions = [a for a in recent_actions[-20:] if a.get("type") in ["channel_delete", "role_delete"]]
+            threat += min(30, len(deletion_actions) * 5)
+        except (ValueError, TypeError):
+            pass
+
+    activity_stats = get_member_activity_stats(data, uid)
+    if activity_stats:
+        if activity_stats["streak_score"] == 0:
+            threat += 15
+        if activity_stats.get("on_leave"):
+            threat += 25
+
+    return min(100, threat)
+
 # ─────────────────────────────────────────────────────────────
 # SITE ACTIVITY
 # Page loads are counted in memory and flushed to disk periodically, so a busy
@@ -2297,6 +2332,38 @@ def api_members_streaks():
         "semi_active": streaks[2],
         "inactive_recent": streaks[1],
         "dormant": streaks[0],
+    })
+
+@app.route("/api/members/threat-assessment")
+@admin_required
+def api_members_threat_assessment():
+    """Get threat scores for all members based on behavioral patterns and activity."""
+    data = load_data()
+    threats = []
+
+    for uid, rec in user_records(data):
+        if combined_total(rec) > 0:
+            threat_score = calculate_threat_score(data, uid)
+            if threat_score > 0:
+                who = resolve_user(uid)
+                action_log = data.get("_antinuke_action_log", {}).get(uid, [])
+                threats.append({
+                    "uid": uid,
+                    "name": who["name"],
+                    "avatar": who["avatar"],
+                    "threat_score": threat_score,
+                    "risk_level": "critical" if threat_score >= 70 else "high" if threat_score >= 40 else "medium",
+                    "recent_actions": len([a for a in action_log if a.get("time")]),
+                    "on_leave": any(log.get("user_id") == uid and log.get("action") == "start" for log in data.get("_on_leave_logs", [])[-50:]),
+                })
+
+    threats.sort(key=lambda t: t["threat_score"], reverse=True)
+
+    return jsonify({
+        "threats": threats[:100],
+        "count": len(threats),
+        "critical": sum(1 for t in threats if t["risk_level"] == "critical"),
+        "high": sum(1 for t in threats if t["risk_level"] == "high"),
     })
 
 # ─────────────────────────────────────────────────────────────

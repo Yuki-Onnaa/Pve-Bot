@@ -2223,6 +2223,39 @@ def get_member_activity_stats(data, uid):
     }
 
 
+def calculate_threat_score(data, uid):
+    """Calculate a threat score (0-100) based on user behavior patterns.
+
+    Factors:
+    - Recent destructive actions (channel/role deletions)
+    - Action velocity (actions per minute)
+    - Member activity level (inactive users = higher threat)
+    - On-leave status (users on leave shouldn't have perms)
+    """
+    uid_str = str(uid)
+    threat = 0
+
+    action_log = data.get("_antinuke_action_log", {}).get(uid_str, [])
+    recent_actions = [a for a in action_log if a.get("time")]
+
+    if recent_actions:
+        now = datetime.now(timezone.utc)
+        last_hour = [a for a in recent_actions if (now - datetime.fromisoformat(a["time"])).total_seconds() < 3600]
+        threat += min(20, len(last_hour) * 3)
+
+        deletion_actions = [a for a in recent_actions[-20:] if a.get("type") in ["channel_delete", "role_delete"]]
+        threat += min(30, len(deletion_actions) * 5)
+
+    activity_stats = get_member_activity_stats(data, uid)
+    if activity_stats:
+        if activity_stats["streak_score"] == 0:
+            threat += 15
+        if activity_stats.get("on_leave"):
+            threat += 25
+
+    return min(100, threat)
+
+
 def antinuke_check():
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)
