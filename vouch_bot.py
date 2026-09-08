@@ -2724,15 +2724,36 @@ async def check_expired_leaves():
 
         try:
             entry_time = datetime.fromisoformat(log_entry.get("time", ""))
-            days_part = int(duration_str.split()[0])
-            hours_part = int(duration_str.split(":")[0]) if ":" in duration_str else 0
-            minutes_part = int(duration_str.split(":")[1]) if len(duration_str.split(":")) > 1 else 0
 
-            duration = timedelta(days=days_part, hours=hours_part, minutes=minutes_part)
+            # Parse duration text like "2-3 weeks", "5 days", "1 week 2 days", etc.
+            days_total = 0
+            duration_lower = duration_str.lower()
+
+            if re.search(r'\d+.*week', duration_lower):
+                match = re.search(r'(\d+)', duration_lower)
+                if match:
+                    weeks = int(match.group(1))
+                    days_total += weeks * 7
+
+            if re.search(r'\d+.*day', duration_lower):
+                match = re.search(r'(?:^|\D)(\d+)(?=\s*day)', duration_lower)
+                if match:
+                    days_total += int(match.group(1))
+
+            if re.search(r'\d+.*hour', duration_lower):
+                match = re.search(r'(\d+)(?=\s*hour)', duration_lower)
+                if match:
+                    days_total += int(match.group(1)) / 24.0
+
+            # Default to 7 days if parsing failed or result is 0
+            if days_total <= 0:
+                days_total = 7
+
+            duration = timedelta(days=days_total)
             expiry_time = entry_time + duration
             if expiry_time <= now and log_entry not in expired:
                 expired.append(log_entry)
-        except (ValueError, IndexError):
+        except (ValueError, TypeError):
             pass
 
     for entry in expired:
