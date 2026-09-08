@@ -2305,7 +2305,10 @@ async def restore_missing(guild, snapshot):
             continue
         try:
             overwrites = build_overwrites(guild, c["overwrites"], role_id_map)
-            new_cat = await guild.create_category(c["name"], overwrites=overwrites, reason="Anti-nuke restore")
+            new_cat = await guild.create_category(
+                c["name"], overwrites=overwrites, position=c.get("position", 0),
+                reason="Anti-nuke restore"
+            )
             category_id_map[c["id"]] = new_cat
             created_channels += 1
         except discord.HTTPException:
@@ -2327,17 +2330,20 @@ async def restore_missing(guild, snapshot):
                     c["name"], category=parent, overwrites=overwrites,
                     topic=c.get("topic"), nsfw=c.get("nsfw", False),
                     slowmode_delay=c.get("slowmode_delay", 0),
+                    position=c.get("position", 0),
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             elif c["kind"] == "voice":
                 await guild.create_voice_channel(
                     c["name"], category=parent, overwrites=overwrites,
                     bitrate=c.get("bitrate") or 64000, user_limit=c.get("user_limit") or 0,
+                    position=c.get("position", 0),
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             elif c["kind"] == "stage":
                 await guild.create_stage_channel(
                     c["name"], category=parent, overwrites=overwrites,
+                    position=c.get("position", 0),
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             created_channels += 1
