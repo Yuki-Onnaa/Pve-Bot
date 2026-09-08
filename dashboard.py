@@ -287,6 +287,84 @@ def detect_permission_escalation_pattern(data, uid):
 
     return False, None
 
+def calculate_member_milestones(rec):
+    """Calculate member achievement milestones and progression level."""
+    host_total = rec.get("host_runs_total", 0)
+    total_points = combined_total(rec)
+    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+
+    milestones = []
+    achievements = []
+
+    vouch_milestones = [1, 5, 10, 25, 50, 100]
+    for threshold in vouch_milestones:
+        if total_vouches >= threshold:
+            milestones.append({"type": "vouches", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "vouches", "threshold": threshold, "reached": False})
+
+    host_milestones = [1, 5, 10, 25, 50]
+    for threshold in host_milestones:
+        if host_total >= threshold:
+            milestones.append({"type": "hosts", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "hosts", "threshold": threshold, "reached": False})
+
+    points_milestones = [10, 50, 100, 250, 500, 1000]
+    for threshold in points_milestones:
+        if total_points >= threshold:
+            milestones.append({"type": "points", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "points", "threshold": threshold, "reached": False})
+
+    if total_vouches >= 10:
+        achievements.append("vouch_veteran")
+    if host_total >= 10:
+        achievements.append("host_master")
+    if total_points >= 100:
+        achievements.append("points_collector")
+
+    return {
+        "milestones": milestones,
+        "achievements": achievements,
+        "next_milestone": next((m for m in milestones if not m["reached"]), None),
+    }
+
+def get_event_performance(data, category):
+    """Analyze event performance and popularity for a category."""
+    if category not in ALL_CATEGORIES:
+        return None
+
+    event_stats = {}
+    total_vouches = 0
+    total_points = 0
+
+    for uid, rec in user_records(data):
+        cat_data = rec.get(category, {})
+        for event_name, count in cat_data.get("events", {}).items():
+            if event_name not in event_stats:
+                event_stats[event_name] = {"count": 0, "points": 0}
+            event_stats[event_name]["count"] += count
+            total_vouches += count
+
+        event_points = cat_data.get("total_points", 0)
+        total_points += event_points
+
+    ranked = sorted(
+        [{"event": e, **s} for e, s in event_stats.items()],
+        key=lambda x: x["count"],
+        reverse=True
+    )
+
+    return {
+        "category": category,
+        "events": ranked,
+        "total_vouches": total_vouches,
+        "total_points": round(total_points, 1),
+        "unique_events": len(event_stats),
+        "most_popular": ranked[0]["event"] if ranked else None,
+    }
+
 # ─────────────────────────────────────────────────────────────
 # SITE ACTIVITY
 # Page loads are counted in memory and flushed to disk periodically, so a busy
@@ -2550,6 +2628,160 @@ def api_admin_recommendations():
     return jsonify({
         "recommendations": sorted(recommendations, key=lambda r: {"critical": 0, "high": 1, "medium": 2}.get(r["priority"], 3)),
         "count": len(recommendations),
+    })
+
+@app.route("/api/member/<uid>/progression")
+@member_required
+def api_member_progression(uid):
+    """Get member achievement milestones and progression."""
+    data = load_data()
+    rec = data.get(str(uid), {})
+    if not rec:
+        return jsonify({"error": "Member not found"}), 404
+
+    who = resolve_user(uid)
+    stats = get_member_activity_stats(data, uid)
+    milestones = calculate_member_milestones(rec)
+
+    return jsonify({
+        "uid": uid,
+        "name": who["name"],
+        "avatar": who["avatar"],
+        "stats": stats,
+        "milestones": milestones,
+    })
+
+@app.route("/api/events/<category>/performance")
+@member_required
+def api_event_performance(category):
+    """Get performance metrics for events in a category."""
+    data = load_data()
+    performance = get_event_performance(data, category)
+    if not performance:
+        return jsonify({"error": "Invalid category"}), 404
+    return jsonify(performance)
+
+@app.route("/api/members/at-risk")
+@admin_required
+def api_members_at_risk():
+    """Identify members at risk of becoming inactive (churn prediction)."""
+    data = load_data()
+    at_risk = []
+
+    for uid, rec in user_records(data):
+        if combined_total(rec) <= 0:
+            continue
+
+        streak_score = calculate_member_streak_score(rec)
+        activity_stats = get_member_activity_stats(data, uid)
+
+        host_runs = activity_stats["host_runs"] if activity_stats else 0
+        if host_runs < 3:
+            continue
+
+        churn_risk = 0
+        risk_factors = []
+
+        if streak_score == 0:
+            churn_risk += 50
+            risk_factors.append("no_recent_hosting")
+        elif streak_score == 1:
+            churn_risk += 25
+            risk_factors.append("low_recent_activity")
+
+        if host_runs < 5:
+            churn_risk += 15
+            risk_factors.append("few_total_events")
+
+        threat_score = calculate_threat_score(data, uid)
+        if threat_score >= 40:
+            churn_risk += 20
+            risk_factors.append("high_threat_score")
+
+        if churn_risk > 30:
+            who = resolve_user(uid)
+            at_risk.append({
+                "uid": uid,
+                "name": who["name"],
+                "avatar": who["avatar"],
+                "churn_risk": min(100, churn_risk),
+                "risk_factors": risk_factors,
+                "streak_score": streak_score,
+                "host_runs": host_runs,
+            })
+
+    at_risk.sort(key=lambda m: m["churn_risk"], reverse=True)
+
+    return jsonify({
+        "at_risk": at_risk[:50],
+        "count": len(at_risk),
+        "high_risk": sum(1 for m in at_risk if m["churn_risk"] >= 70),
+    })
+
+@app.route("/api/members/search")
+@member_required
+def api_members_search():
+    """Advanced member search with filtering by multiple criteria."""
+    data = load_data()
+
+    min_points = request.args.get("min_points", 0, type=float)
+    max_points = request.args.get("max_points", float('inf'), type=float)
+    min_vouches = request.args.get("min_vouches", 0, type=int)
+    min_hosts = request.args.get("min_hosts", 0, type=int)
+    streak_score = request.args.get("streak", -1, type=int)
+    on_leave = request.args.get("on_leave", "any", type=str)
+    threat_min = request.args.get("threat_min", -1, type=int)
+    threat_max = request.args.get("threat_max", 101, type=int)
+
+    results = []
+
+    for uid, rec in user_records(data):
+        total_points = combined_total(rec)
+        if total_points < min_points or total_points > max_points:
+            continue
+
+        total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+        if total_vouches < min_vouches:
+            continue
+
+        host_runs = len(rec.get("host_runs", []))
+        if host_runs < min_hosts:
+            continue
+
+        member_streak = calculate_member_streak_score(rec)
+        if streak_score >= 0 and member_streak != streak_score:
+            continue
+
+        activity = get_member_activity_stats(data, uid)
+        is_on_leave = activity.get("on_leave", False) if activity else False
+
+        if on_leave == "yes" and not is_on_leave:
+            continue
+        if on_leave == "no" and is_on_leave:
+            continue
+
+        threat = calculate_threat_score(data, uid)
+        if not (threat_min <= threat <= threat_max):
+            continue
+
+        who = resolve_user(uid)
+        results.append({
+            "uid": uid,
+            "name": who["name"],
+            "avatar": who["avatar"],
+            "points": round(total_points, 1),
+            "vouches": total_vouches,
+            "hosts": host_runs,
+            "streak": member_streak,
+            "on_leave": is_on_leave,
+            "threat": threat,
+        })
+
+    results.sort(key=lambda m: m["points"], reverse=True)
+
+    return jsonify({
+        "results": results[:200],
+        "count": len(results),
     })
 
 # ─────────────────────────────────────────────────────────────

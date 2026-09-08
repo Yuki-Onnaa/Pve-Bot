@@ -2294,6 +2294,50 @@ def detect_permission_escalation(guild, member, new_roles):
     return False, None
 
 
+def calculate_member_milestones(rec):
+    """Calculate member achievement milestones and progression level."""
+    host_total = rec.get("host_runs_total", 0)
+    total_points = combined_total(rec)
+    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
+
+    milestones = []
+    achievements = []
+
+    vouch_milestones = [1, 5, 10, 25, 50, 100]
+    for threshold in vouch_milestones:
+        if total_vouches >= threshold:
+            milestones.append({"type": "vouches", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "vouches", "threshold": threshold, "reached": False})
+
+    host_milestones = [1, 5, 10, 25, 50]
+    for threshold in host_milestones:
+        if host_total >= threshold:
+            milestones.append({"type": "hosts", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "hosts", "threshold": threshold, "reached": False})
+
+    points_milestones = [10, 50, 100, 250, 500, 1000]
+    for threshold in points_milestones:
+        if total_points >= threshold:
+            milestones.append({"type": "points", "threshold": threshold, "reached": True})
+        else:
+            milestones.append({"type": "points", "threshold": threshold, "reached": False})
+
+    if total_vouches >= 10:
+        achievements.append("vouch_veteran")
+    if host_total >= 10:
+        achievements.append("host_master")
+    if total_points >= 100:
+        achievements.append("points_collector")
+
+    return {
+        "milestones": milestones,
+        "achievements": achievements,
+        "next_milestone": next((m for m in milestones if not m["reached"]), None),
+    }
+
+
 def antinuke_check():
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)
