@@ -1259,7 +1259,7 @@ def api_givers():
                 if cutoff and when < cutoff:
                     continue
 
-                by = str(entry.get("by", "")).strip()
+                by = (entry.get("by") or "").strip()
                 by_name = (entry.get("by_name") or "").strip()
                 # older entries recorded a label rather than a user id
                 key = by if by.isdigit() else (by_name or by or "unknown")
@@ -1270,9 +1270,11 @@ def api_givers():
                     "given": 0, "points": 0.0, "recipients": set(),
                     "categories": {c: 0 for c in ALL_CATEGORIES}, "last": "",
                 })
-                slot["given"] += int(entry.get("count", 1) or 1)
+                count_val = entry.get("count")
+                count_val = int(count_val) if count_val not in (None, "") else 1
+                slot["given"] += count_val
                 slot["points"] += float(entry.get("points", 0) or 0)
-                slot["categories"][cat] += int(entry.get("count", 1) or 1)
+                slot["categories"][cat] += count_val
                 slot["recipients"].add(uid)
                 if when > slot["last"]:
                     slot["last"] = when
@@ -1402,7 +1404,7 @@ def api_pulse():
                 points_this_week += pts
                 if cat == "pve":
                     host_points_week[uid] = host_points_week.get(uid, 0) + pts
-                by = str(entry.get("by", "")).strip()
+                by = (entry.get("by") or "").strip()
                 if by.isdigit():
                     voucher_counts_week[by] = voucher_counts_week.get(by, 0) + 1
 
@@ -1534,7 +1536,7 @@ def api_user_detail(uid):
 @admin_required
 def api_add_vouch():
     body = request.json or {}
-    uid = str(body.get("uid", "")).strip()
+    uid = (body.get("uid") or "").strip()
     category = body.get("category", "")
     event_name = body.get("event_name", "")
     try:
@@ -1575,9 +1577,9 @@ def api_add_vouch():
 @admin_required
 def api_revert_vouch():
     body = request.json or {}
-    uid = str(body.get("uid", "")).strip()
+    uid = (body.get("uid") or "").strip()
     category = body.get("category", "")
-    log_id = str(body.get("log_id", "")).strip()
+    log_id = (body.get("log_id") or "").strip()
 
     if not uid.isdigit() or category not in CATEGORY_EVENTS:
         return jsonify({"error": "Invalid uid or category"}), 400
@@ -1613,7 +1615,7 @@ def api_revert_vouch():
 @admin_required
 def api_delete_user():
     body = request.json or {}
-    uid = str(body.get("uid", "")).strip()
+    uid = (body.get("uid") or "").strip()
     category = body.get("category", None)
     if not uid.isdigit():
         return jsonify({"error": "Invalid user ID"}), 400
@@ -1982,7 +1984,7 @@ def _collect_audit(args):
     """Flatten every log entry, newest first, applying the given filters."""
     data = load_data()
     category = args.get("category", "")
-    uid_filter = args.get("uid", "").strip()
+    uid_filter = (args.get("uid") or "").strip()
     q = args.get("q", "").lower().strip()
     try:
         days = int(args.get("days", 0))
@@ -3044,10 +3046,11 @@ def api_compliance_audit():
 
     passed = sum(1 for a in audit_results if a["passed"])
     total = len(audit_results)
+    compliance_score = round((passed / total * 100), 1) if total > 0 else 0
 
     return jsonify({
         "audit_results": audit_results,
-        "compliance_score": round((passed / total * 100), 1),
+        "compliance_score": compliance_score,
         "passed": passed,
         "total": total,
         "status": "compliant" if passed == total else "warning" if passed >= total * 0.8 else "non-compliant",

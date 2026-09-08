@@ -840,10 +840,12 @@ def compute_top_vouchers(limit=None, days=None, data=None):
             when = entry.get("time", "")
             if cutoff and when < cutoff:
                 continue
-            by = str(entry.get("by", "")).strip()
+            by = (entry.get("by") or "").strip()
             if not by.isdigit() or by == uid:
                 continue
-            counts[by] = counts.get(by, 0) + int(entry.get("count", 1) or 1)
+            count_val = entry.get("count")
+            count_val = int(count_val) if count_val not in (None, "") else 1
+            counts[by] = counts.get(by, 0) + count_val
 
     if not counts:
         return [], {}
@@ -2716,7 +2718,7 @@ async def check_expired_leaves():
     for log_entry in leave_logs:
         if log_entry.get("action") != "start":
             continue
-        duration_str = log_entry.get("duration", "").lower()
+        duration_str = (log_entry.get("duration") or "").lower()
         if not duration_str or ":" not in duration_str:
             continue
 
