@@ -1,0 +1,39 @@
+[Unit]
+Description=Pve-Bot Discord Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=pvebot
+WorkingDirectory=/opt/pve-bot
+Environment="PYTHONUNBUFFERED=1"
+Environment="DATA_FILE=/data/vouches.json"
+ExecStart=/opt/pve-bot/venv/bin/python vouch_bot.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+MaxStartups=1
+
+# Process management
+KillMode=mixed
+KillSignal=SIGINT
+
+# Resource limits
+LimitNOFILE=65535
+MemoryLimit=1G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pve-bot
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/data /var/log
+
+[Install]
+WantedBy=multi-user.target

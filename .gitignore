@@ -1,2 +1,66 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# Unit test / coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+data/
+logs/
+backups/
+vouches.json
+vouches_*.json
+*.log
+
+# Docker
+docker-compose.override.yml
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# OS specific
+.DS_Store?
+._*
+ehthumbs.db
+Thumbs.db
+
+# Keep these
+!.env.example

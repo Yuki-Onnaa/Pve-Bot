@@ -1,0 +1,52 @@
+# Prometheus configuration for Pve-Bot monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'pve-bot-monitor'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'localhost:9093'
+
+# Load rules
+rule_files:
+  - 'alerts.yml'
+
+scrape_configs:
+  # Pve-Bot API metrics
+  - job_name: 'pve-bot'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Pve-Bot health check
+  - job_name: 'pve-bot-health'
+    static_configs:
+      - targets: ['localhost:5000']
+    metrics_path: '/health'
+    scrape_interval: 30s
+
+  # Redis metrics (optional, if using for caching)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['localhost:6379']
+    scrape_interval: 15s
+
+  # Node exporter (system metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+
+  # Process metrics
+  - job_name: 'pve-bot-process'
+    static_configs:
+      - targets: ['localhost:8001']
+    scrape_interval: 10s

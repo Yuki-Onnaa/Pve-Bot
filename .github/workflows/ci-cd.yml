@@ -1,0 +1,108 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, 'claude/**']
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint & Format Check
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install flake8 black isort pylint
+
+      - name: Run Black (formatting)
+        run: black --check .
+
+      - name: Run isort (import sorting)
+        run: isort --check-only .
+
+      - name: Run Flake8 (linting)
+        run: flake8 . --max-line-length=120 --extend-ignore=E203,W503
+
+      - name: Run pylint
+        run: pylint vouch_bot.py dashboard.py data_store.py --disable=C0111,C0103 || true
+
+  test:
+    runs-on: ubuntu-latest
+    name: Run Tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/ -v --cov=. --cov-report=xml
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+
+  security:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Bandit security scan
+        run: |
+          pip install bandit
+          bandit -r . -ll || true
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
+  build:
+    runs-on: ubuntu-latest
+    name: Build & Package
+    needs: [lint, test, security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t pve-bot:latest -t pve-bot:${{ github.sha }} .
+
+      - name: Verify imports
+        run: python -c "import vouch_bot; import dashboard; import data_store; print('✓ All modules import successfully')"
+
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Production
+    needs: [build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Railway
+        run: |
+          echo "Deploying to Railway..."
+          # Railway deployment via git push (automatic)
+          # This is handled by Railway's GitHub integration
