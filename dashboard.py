@@ -265,6 +265,28 @@ def calculate_threat_score(data, uid):
 
     return min(100, threat)
 
+def detect_permission_escalation_pattern(data, uid):
+    """Detect if a user shows signs of attempting permission escalation.
+
+    Returns (is_escalation, reason) tuple.
+    """
+    uid_str = str(uid)
+    action_log = data.get("_antinuke_action_log", {}).get(uid_str, [])
+
+    if not action_log:
+        return False, None
+
+    dangerous_actions = [a for a in action_log[-30:] if a.get("type") in ["role_assign", "role_create"]]
+
+    if len(dangerous_actions) >= 3:
+        return True, "Multiple rapid role assignment/creation attempts"
+
+    activity_stats = get_member_activity_stats(data, uid)
+    if activity_stats and activity_stats.get("on_leave") and dangerous_actions:
+        return True, "On-leave user attempting role modifications"
+
+    return False, None
+
 # ─────────────────────────────────────────────────────────────
 # SITE ACTIVITY
 # Page loads are counted in memory and flushed to disk periodically, so a busy
@@ -2364,6 +2386,35 @@ def api_members_threat_assessment():
         "count": len(threats),
         "critical": sum(1 for t in threats if t["risk_level"] == "critical"),
         "high": sum(1 for t in threats if t["risk_level"] == "high"),
+    })
+
+@app.route("/api/members/escalation-check")
+@admin_required
+def api_members_escalation_check():
+    """Check for users showing signs of permission escalation attempts."""
+    data = load_data()
+    escalations = []
+
+    for uid, rec in user_records(data):
+        if combined_total(rec) > 0:
+            is_escalation, reason = detect_permission_escalation_pattern(data, uid)
+            if is_escalation:
+                who = resolve_user(uid)
+                threat_score = calculate_threat_score(data, uid)
+                escalations.append({
+                    "uid": uid,
+                    "name": who["name"],
+                    "avatar": who["avatar"],
+                    "reason": reason,
+                    "threat_score": threat_score,
+                    "on_leave": any(log.get("user_id") == uid and log.get("action") == "start" for log in data.get("_on_leave_logs", [])[-50:]),
+                })
+
+    escalations.sort(key=lambda e: e["threat_score"], reverse=True)
+
+    return jsonify({
+        "escalations": escalations[:100],
+        "count": len(escalations),
     })
 
 # ─────────────────────────────────────────────────────────────

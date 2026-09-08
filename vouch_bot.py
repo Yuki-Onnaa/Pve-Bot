@@ -2256,6 +2256,37 @@ def calculate_threat_score(data, uid):
     return min(100, threat)
 
 
+def detect_permission_escalation(guild, member, new_roles):
+    """Detect if a user is attempting to gain dangerous permissions.
+
+    Returns (is_escalation, description) tuple.
+    """
+    if member.bot or member == guild.owner:
+        return False, None
+
+    current_perms = member.guild_permissions
+    new_role_perms = discord.Permissions(0)
+
+    for role in new_roles:
+        new_role_perms |= role.permissions
+
+    dangerous_perms = ["administrator", "manage_guild", "manage_channels", "manage_roles", "manage_webhooks"]
+    gained_dangerous = False
+    dangerous_list = []
+
+    for perm_name in dangerous_perms:
+        has_now = getattr(current_perms, perm_name, False)
+        will_have = getattr(new_role_perms, perm_name, False)
+        if not has_now and will_have:
+            gained_dangerous = True
+            dangerous_list.append(perm_name)
+
+    if gained_dangerous:
+        return True, f"Attempting to gain permissions: {', '.join(dangerous_list)}"
+
+    return False, None
+
+
 def antinuke_check():
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)
