@@ -2490,6 +2490,68 @@ def api_server_health():
         "status": "healthy" if avg_threat < 30 and critical_threats == 0 else "warning" if avg_threat < 50 else "critical",
     })
 
+@app.route("/api/admin-recommendations")
+@admin_required
+def api_admin_recommendations():
+    """Get AI-powered recommendations for admin actions based on server state."""
+    data = load_data()
+    recommendations = []
+
+    threat_scores = {uid: calculate_threat_score(data, uid) for uid, rec in user_records(data) if combined_total(data.get(uid, {})) > 0}
+    critical_users = [uid for uid, score in threat_scores.items() if score >= 70]
+    high_risk_users = [uid for uid, score in threat_scores.items() if 40 <= score < 70]
+
+    if critical_users:
+        recommendations.append({
+            "priority": "critical",
+            "action": "Review user permissions",
+            "reason": f"Found {len(critical_users)} critical threat users",
+            "details": "Consider auditing permissions and role assignments for high-threat users",
+        })
+
+    dormant_count = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(data.get(uid, {})) > 0)
+    if dormant_count > 10:
+        recommendations.append({
+            "priority": "medium",
+            "action": "Review dormant members",
+            "reason": f"Found {dormant_count} dormant members without recent activity",
+            "details": "Consider archiving inactive accounts or offering re-engagement activities",
+        })
+
+    action_log = data.get("_antinuke_action_log", {})
+    if sum(len(a) for a in action_log.values()) > 100:
+        recommendations.append({
+            "priority": "high",
+            "action": "Monitor for nuke patterns",
+            "reason": "High volume of destructive actions detected",
+            "details": "Review recent anti-nuke logs and member activity for anomalies",
+        })
+
+    snapshot = data.get("_backup_snapshot")
+    if not snapshot:
+        recommendations.append({
+            "priority": "high",
+            "action": "Enable snapshot protection",
+            "reason": "No backup snapshot is active",
+            "details": "Create a snapshot to enable automatic channel/role recovery during nukes",
+        })
+
+    on_leave_logs = data.get("_on_leave_logs", [])
+    on_leave_users = [log.get("user_id") for log in on_leave_logs[-50:] if log.get("action") == "start"]
+    high_threat_on_leave = [uid for uid in on_leave_users if threat_scores.get(uid, 0) >= 40]
+    if high_threat_on_leave:
+        recommendations.append({
+            "priority": "medium",
+            "action": "Verify on-leave role restrictions",
+            "reason": f"Found {len(high_threat_on_leave)} high-threat users marked as on-leave",
+            "details": "Verify that dangerous roles have been removed from these users",
+        })
+
+    return jsonify({
+        "recommendations": sorted(recommendations, key=lambda r: {"critical": 0, "high": 1, "medium": 2}.get(r["priority"], 3)),
+        "count": len(recommendations),
+    })
+
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
 # ─────────────────────────────────────────────────────────────
