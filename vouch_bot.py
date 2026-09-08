@@ -1744,12 +1744,19 @@ class OnLeaveModal(discord.ui.Modal, title="Going On Leave"):
                 f"Couldn't give you **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.",
                 ephemeral=True)
             return
+
+        removed = await enforce_on_leave_restrictions(interaction.guild, interaction.user)
+
         await post_leave_log(
             interaction.guild, interaction.user, "start",
             reason=self.reason.value, duration=self.duration.value,
             note=self.note.value if self.note.value else None)
-        await interaction.response.send_message(
-            "You're marked as on leave. Click the button again when you're back.", ephemeral=True)
+
+        msg = "You're marked as on leave. Click the button again when you're back."
+        if removed:
+            msg += f"\n⚠️ Removed dangerous roles for security: {', '.join(removed)}"
+
+        await interaction.response.send_message(msg, ephemeral=True)
 
 
 class OnLeaveButtonView(discord.ui.View):
@@ -2700,6 +2707,32 @@ async def check_expired_leaves():
 @check_expired_leaves.before_loop
 async def before_check_expired_leaves():
     await bot.wait_until_ready()
+
+
+async def enforce_on_leave_restrictions(guild, member):
+    """Remove dangerous permissions from users marked as on-leave.
+
+    Users who are on leave should not have administrative access.
+    This ensures on-leave status is properly enforced.
+    """
+    if member.bot or member == guild.owner:
+        return False
+
+    dangerous_perms = ["administrator", "manage_guild", "manage_channels", "manage_roles"]
+    removed = []
+
+    for role in member.roles:
+        if not role.is_default():
+            for perm in dangerous_perms:
+                if getattr(role.permissions, perm, False):
+                    try:
+                        await member.remove_roles(role, reason="On-leave: dangerous role removed for security")
+                        removed.append(role.name)
+                        break
+                    except discord.HTTPException:
+                        pass
+
+    return bool(removed)
 
 
 @tasks.loop(hours=1)

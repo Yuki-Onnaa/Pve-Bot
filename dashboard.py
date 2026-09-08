@@ -1878,8 +1878,25 @@ def api_on_leave():
     current = [e for e in last_by_user.values() if e.get("action") == "start"]
     current.sort(key=lambda e: e.get("time", ""), reverse=True)
 
+    enhanced_current = []
+    for entry in current:
+        uid = entry.get("user_id")
+        who = resolve_user(uid)
+        threat = calculate_threat_score(data, uid)
+        enhanced_current.append({
+            **entry,
+            "name": who["name"],
+            "avatar": who["avatar"],
+            "threat_score": threat,
+            "flag": "security_concern" if threat >= 40 else None,
+        })
+
     history = sorted(logs, key=lambda e: e.get("time", ""), reverse=True)[:200]
-    return jsonify({"current": current, "history": history})
+    return jsonify({
+        "current": enhanced_current,
+        "history": history,
+        "security_concerns": sum(1 for e in enhanced_current if e.get("flag") == "security_concern"),
+    })
 
 # ── API: Audit Log ──
 
