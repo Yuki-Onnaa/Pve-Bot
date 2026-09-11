@@ -909,25 +909,25 @@ def admin_ips():
 <title>IP Management - Admin</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0c1210;color:#eef4f2;font-family:system-ui;padding:20px}
+body{background:#000000;color:#eef4f2;font-family:system-ui;padding:20px}
 .container{max-width:1200px;margin:0 auto}
 h1{margin-bottom:20px;color:#7fc2b8}
 .search-box{margin-bottom:20px;display:flex;gap:10px}
-.search-box input{flex:1;padding:10px;background:#152220;border:1px solid #233530;color:#eef4f2;border-radius:4px}
-.search-box button{padding:10px 20px;background:#7fc2b8;color:#0c1210;border:none;border-radius:4px;cursor:pointer;font-weight:600}
+.search-box input{flex:1;padding:10px;background:#1a1a1a;border:1px solid #333333;color:#eef4f2;border-radius:4px}
+.search-box button{padding:10px 20px;background:#7fc2b8;color:#000000;border:none;border-radius:4px;cursor:pointer;font-weight:600}
 .search-box button:hover{background:#a8ddd2}
-.user-details{background:#0d1614;border:1px solid #233530;border-radius:4px;padding:20px;margin-bottom:20px;display:none}
+.user-details{background:#111111;border:1px solid #333333;border-radius:4px;padding:20px;margin-bottom:20px;display:none}
 .user-details.show{display:block}
 .user-details h2{color:#7fc2b8;margin-bottom:10px}
-.user-info{background:#152220;padding:15px;border-radius:4px;margin-bottom:15px}
+.user-info{background:#1a1a1a;padding:15px;border-radius:4px;margin-bottom:15px}
 .user-info p{margin:8px 0;color:#8fa39d;word-break:break-all}
-.user-info code{background:#0c1210;padding:2px 6px;border-radius:3px;color:#7fc2b8}
-table{width:100%;border-collapse:collapse;background:#0d1614;border:1px solid #233530}
-th,td{padding:12px;text-align:left;border-bottom:1px solid #233530}
-th{background:#152220;font-weight:600}
+.user-info code{background:#0a0a0a;padding:2px 6px;border-radius:3px;color:#7fc2b8}
+table{width:100%;border-collapse:collapse;background:#111111;border:1px solid #333333}
+th,td{padding:12px;text-align:left;border-bottom:1px solid #333333}
+th{background:#1a1a1a;font-weight:600}
 .banned{background:rgba(199,122,128,.1);color:#c77a80}
-.copy-btn{background:#152220;border:1px solid #233530;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px;font-size:12px}
-.copy-btn:hover{background:#233530}
+.copy-btn{background:#1a1a1a;border:1px solid #333333;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px;font-size:12px}
+.copy-btn:hover{background:#2a2a2a}
 a{color:#7fc2b8;text-decoration:none;cursor:pointer}
 a:hover{text-decoration:underline}
 </style>
@@ -978,11 +978,11 @@ ${data.ips.map(ip=>`<div style="margin-left:10px"><code>${ip.ip}</code> <span st
 </div>
 <div class="user-info">
 <p><strong>Fingerprints (${data.fingerprints.length}):</strong></p>
-${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0c1210;padding:10px;border-radius:4px;font-size:12px"><div style="color:#7fc2b8;margin-bottom:5px"><strong>Browser:</strong> <code>${obj.browser?.substring(0,60)}</code></div><div><strong>Screen:</strong> ${obj.screen} | <strong>Color Depth:</strong> ${obj.colorDepth}</div><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB | <strong>Lang:</strong> ${obj.language}</div><div><strong>TZ:</strong> ${obj.timezone}</div><div style="margin-top:5px"><strong>Canvas:</strong> <code>${obj.canvas?.substring(0,40)}</code></div><div><strong>WebGL:</strong> <code>${obj.webgl?.substring(0,50)}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint}</code></div>`;}}).join('')}
+${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0a0a0a;padding:10px;border-radius:4px;font-size:12px"><div style="color:#7fc2b8;margin-bottom:5px"><strong>Browser:</strong> <code>${obj.browser?.substring(0,60)}</code></div><div><strong>Screen:</strong> ${obj.screen} | <strong>Color Depth:</strong> ${obj.colorDepth}</div><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB | <strong>Lang:</strong> ${obj.language}</div><div><strong>TZ:</strong> ${obj.timezone}</div><div style="margin-top:5px"><strong>Canvas:</strong> <code>${obj.canvas?.substring(0,40)}</code></div><div><strong>WebGL:</strong> <code>${obj.webgl?.substring(0,50)}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint}</code></div>`;}}).join('')}
 </div>
 <div class="user-info">
 <p><strong>HWIDs (${data.hwids.length}):</strong></p>
-${data.hwids.map(hwid=>{try{const obj=JSON.parse(hwid.hwid);return `<div style="margin-left:10px;margin-bottom:10px;background:#0c1210;padding:10px;border-radius:4px;font-size:12px"><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB</div><div><strong>GPU:</strong> <code>${obj.gpu?.substring(0,50)}</code></div>${hwid.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${hwid.hwid}</code></div>`;}}).join('')}
+${data.hwids.map(hwid=>{try{const obj=JSON.parse(hwid.hwid);return `<div style="margin-left:10px;margin-bottom:10px;background:#0a0a0a;padding:10px;border-radius:4px;font-size:12px"><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB</div><div><strong>GPU:</strong> <code>${obj.gpu?.substring(0,50)}</code></div>${hwid.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${hwid.hwid}</code></div>`;}}).join('')}
 </div>`;
       el.classList.add('show');
     }
