@@ -13,6 +13,7 @@ import json
 import os
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 
 DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
 
@@ -59,14 +60,25 @@ def data_txn():
 def is_ip_banned(ip):
     data = load_data()
     banned_ips = data.get("_ip_bans", {})
-    return ip in banned_ips
+    if ip not in banned_ips:
+        return False
+    ban_record = banned_ips[ip]
+    if "expires_at" in ban_record:
+        expiry = datetime.fromisoformat(ban_record["expires_at"])
+        if datetime.now() > expiry:
+            unban_ip(ip)
+            return False
+    return True
 
 
-def ban_ip(ip, user_id):
+def ban_ip(ip, user_id, expires_at=None):
     with data_txn() as data:
         if "_ip_bans" not in data:
             data["_ip_bans"] = {}
-        data["_ip_bans"][ip] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        ban_record = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        if expires_at:
+            ban_record["expires_at"] = expires_at
+        data["_ip_bans"][ip] = ban_record
 
 
 def unban_ip(ip):
@@ -99,14 +111,25 @@ def get_users_for_ip(ip):
 def is_fingerprint_banned(fingerprint):
     data = load_data()
     banned_fingerprints = data.get("_fingerprint_bans", {})
-    return fingerprint in banned_fingerprints
+    if fingerprint not in banned_fingerprints:
+        return False
+    ban_record = banned_fingerprints[fingerprint]
+    if "expires_at" in ban_record:
+        expiry = datetime.fromisoformat(ban_record["expires_at"])
+        if datetime.now() > expiry:
+            unban_fingerprint(fingerprint)
+            return False
+    return True
 
 
-def ban_fingerprint(fingerprint, user_id):
+def ban_fingerprint(fingerprint, user_id, expires_at=None):
     with data_txn() as data:
         if "_fingerprint_bans" not in data:
             data["_fingerprint_bans"] = {}
-        data["_fingerprint_bans"][fingerprint] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        ban_record = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        if expires_at:
+            ban_record["expires_at"] = expires_at
+        data["_fingerprint_bans"][fingerprint] = ban_record
 
 
 def unban_fingerprint(fingerprint):
@@ -139,14 +162,25 @@ def get_users_for_fingerprint(fingerprint):
 def is_hwid_banned(hwid):
     data = load_data()
     banned_hwids = data.get("_hwid_bans", {})
-    return hwid in banned_hwids
+    if hwid not in banned_hwids:
+        return False
+    ban_record = banned_hwids[hwid]
+    if "expires_at" in ban_record:
+        expiry = datetime.fromisoformat(ban_record["expires_at"])
+        if datetime.now() > expiry:
+            unban_hwid(hwid)
+            return False
+    return True
 
 
-def ban_hwid(hwid, user_id):
+def ban_hwid(hwid, user_id, expires_at=None):
     with data_txn() as data:
         if "_hwid_bans" not in data:
             data["_hwid_bans"] = {}
-        data["_hwid_bans"][hwid] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        ban_record = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+        if expires_at:
+            ban_record["expires_at"] = expires_at
+        data["_hwid_bans"][hwid] = ban_record
 
 
 def unban_hwid(hwid):
@@ -174,6 +208,3 @@ def get_users_for_hwid(hwid):
     data = load_data()
     hwid_logs = data.get("_hwid_logs", {})
     return list(hwid_logs.get(hwid, {}).keys())
-
-
-from datetime import datetime
