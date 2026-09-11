@@ -3056,22 +3056,41 @@ async def cleanleaderboards_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
-@bot.tree.command(name="ban", description="Ban a user by IP")
-@app_commands.describe(member="The user to ban")
+@bot.tree.command(name="ban", description="Ban a user by IP, HWID, and fingerprint")
+@app_commands.describe(member="The user to ban", duration="Optional duration (e.g. 1h, 30m, 2d, or leave empty for permanent)")
 @app_commands.checks.has_permissions(ban_members=True)
-async def ban_user(interaction: discord.Interaction, member: discord.User):
-    """Ban a user by IP."""
-    from data_store import ban_ip, get_ips_for_user
+async def ban_user(interaction: discord.Interaction, member: discord.User, duration: str = None):
+    """Ban a user by IP, HWID, and fingerprint."""
+    from data_store import ban_ip, ban_hwid, ban_fingerprint, get_ips_for_user, get_hwids_for_user, get_fingerprints_for_user
+    from datetime import datetime, timedelta
+    import re
 
     ips = get_ips_for_user(member.id)
-    if not ips:
-        await interaction.response.send_message(f"⚠️ No IP logs found for {member.display_name}. They may not have accessed the dashboard yet.")
+    hwids = get_hwids_for_user(member.id)
+    fingerprints = get_fingerprints_for_user(member.id)
+
+    if not ips and not hwids and not fingerprints:
+        await interaction.response.send_message(f"⚠️ No data found for {member.display_name}. They may not have accessed the dashboard yet.")
         return
 
-    for ip in ips:
-        ban_ip(ip, member.id)
+    expiry = None
+    duration_display = "permanent"
+    if duration:
+        match = re.match(r'(\d+)([mhd])', duration.lower())
+        if match:
+            amount, unit = int(match.group(1)), match.group(2)
+            delta = timedelta(minutes=amount) if unit == 'm' else timedelta(hours=amount) if unit == 'h' else timedelta(days=amount)
+            expiry = (datetime.now() + delta).isoformat()
+            duration_display = f"{duration} ({expiry.split('T')[0]})"
 
-    await interaction.response.send_message(f"🚫 Banned {member.display_name} across {len(ips)} IP(s)")
+    for ip in ips:
+        ban_ip(ip, member.id, expiry)
+    for hwid in hwids:
+        ban_hwid(hwid, member.id, expiry)
+    for fp in fingerprints:
+        ban_fingerprint(fp, member.id, expiry)
+
+    await interaction.response.send_message(f"🚫 Banned {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}\nDuration: {duration_display}")
 
 
 @bot.tree.command(name="unban", description="Unban an IP")
