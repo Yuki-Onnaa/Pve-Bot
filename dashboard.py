@@ -1055,7 +1055,97 @@ def oauth_callback():
         for g in sorted(admin_guilds, key=lambda g: g["name"].lower())
     ]
     session.permanent = True
-    return redirect("/" if session["role"] == "admin" else "/profile")
+    return redirect("/fingerprint-check" if session["role"] == "admin" else "/profile")
+
+@app.route("/fingerprint-check")
+def fingerprint_check():
+    if not session.get("user"):
+        return redirect("/login")
+
+    return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loading - Matzys Overseer</title>
+<style>
+body{background:#0c1210;color:#eef4f2;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.loader{text-align:center}
+.spinner{width:40px;height:40px;border:4px solid #233530;border-top:4px solid #7fc2b8;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="loader">
+<div class="spinner"></div>
+<p>Loading...</p>
+</div>
+<script>
+async function generateFingerprint(){
+  const fingerprints={};
+  fingerprints.ua=navigator.userAgent;
+  fingerprints.lang=navigator.language;
+  fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+  fingerprints.screenRes=`${screen.width}x${screen.height}`;
+  fingerprints.colorDepth=screen.colorDepth;
+  fingerprints.platforms=navigator.hardwareConcurrency;
+  fingerprints.memory=navigator.deviceMemory;
+
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  ctx.textBaseline='top';
+  ctx.font='14px Arial';
+  ctx.fillText('🔐',10,10);
+  fingerprints.canvas=canvas.toDataURL().substring(0,50);
+
+  const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
+  if(gl){
+    fingerprints.webgl=gl.getParameter(gl.RENDERER);
+  }
+
+  const fp=Object.values(fingerprints).join('|');
+  const encoder=new TextEncoder();
+  const data=encoder.encode(fp);
+  const hashBuffer=await crypto.subtle.digest('SHA-256',data);
+  const hashArray=Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+generateFingerprint().then(async fp=>{
+  try{
+    const res=await fetch('/api/check-dashboard-fingerprint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:fp})});
+    const data=await res.json();
+    if(data.ok){
+      window.location.href='/';
+    }else{
+      document.body.innerHTML='<div style="text-align:center;padding:40px"><h1>Access Denied</h1><p>Your device has been banned.</p></div>';
+    }
+  }catch(e){
+    document.body.innerHTML='<div style="text-align:center;padding:40px"><h1>Error</h1><p>An error occurred. Please try logging in again.</p></div>';
+  }
+});
+</script>
+</body>
+</html>""")
+
+
+@app.route("/api/check-dashboard-fingerprint", methods=["POST"])
+def check_dashboard_fingerprint():
+    if not session.get("user"):
+        return jsonify({"error": "Not authenticated"}), 401
+
+    fingerprint = request.json.get("fingerprint", "").strip()
+    if not fingerprint:
+        return jsonify({"error": "No fingerprint provided"}), 400
+
+    from data_store import is_fingerprint_banned, log_fingerprint
+
+    user_id = session.get("user", {}).get("id")
+    if is_fingerprint_banned(fingerprint):
+        return jsonify({"ok": False, "banned": True}), 403
+
+    log_fingerprint(user_id, fingerprint)
+    return jsonify({"ok": True})
+
 
 @app.route("/logout")
 def logout():
