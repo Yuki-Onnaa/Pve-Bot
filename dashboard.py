@@ -623,7 +623,40 @@ def log_ip_access():
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     if not session.get("user"):
-        return jsonify({"error": "Not authenticated"}), 401
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification - Matzys Overseer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
+  --border:#233530;--border-2:#324b44;
+  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
+}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px}
+.verify-container{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px;max-width:400px;width:100%;text-align:center}
+.verify-icon{font-size:64px;margin-bottom:20px}
+h1{font-size:24px;margin-bottom:10px;color:var(--text)}
+p{color:var(--muted);margin-bottom:20px;font-size:14px}
+.button{display:inline-block;background:var(--moon);color:var(--bg);padding:12px 24px;border-radius:6px;text-decoration:none;
+  font-weight:600;border:none;cursor:pointer;font-family:inherit;font-size:14px;transition:background .2s}
+.button:hover{background:var(--moon-dim)}
+</style>
+</head>
+<body>
+<div class="verify-container">
+<div class="verify-icon">🔐</div>
+<h1>Authentication Required</h1>
+<p>Please log in to Discord to verify your access.</p>
+<a href="/login" class="button">Login with Discord</a>
+</div>
+</body>
+</html>"""), 401
 
     user_id = session.get("user", {}).get("id")
     ip = get_client_ip()
@@ -631,7 +664,36 @@ def verify():
     from data_store import is_ip_banned
 
     if is_ip_banned(ip):
-        return jsonify({"error": "IP is banned", "banned": True}), 403
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Denied - Matzys Overseer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
+  --border:#233530;--border-2:#324b44;
+  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
+}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px}
+.verify-container{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px;max-width:400px;width:100%;text-align:center}
+.verify-icon{font-size:64px;margin-bottom:20px}
+h1{font-size:24px;margin-bottom:10px;color:var(--red)}
+p{color:var(--muted);margin-bottom:20px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="verify-container">
+<div class="verify-icon">🚫</div>
+<h1>Access Denied</h1>
+<p>Your IP address has been banned from this server.</p>
+</div>
+</body>
+</html>"""), 403
 
     try:
         guild = bot.get_guild(GUILD_ID)
@@ -647,7 +709,49 @@ def verify():
     except Exception as e:
         print(f"[Verify] Role assignment failed: {e}")
 
-    return jsonify({"verified": True, "ip": ip})
+    return render_template_string("""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification Successful - Matzys Overseer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
+  --border:#233530;--border-2:#324b44;
+  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
+}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px}
+.verify-container{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px;max-width:400px;width:100%;text-align:center}
+.verify-icon{font-size:64px;margin-bottom:20px;animation:bounce .6s ease}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+h1{font-size:28px;margin-bottom:10px;color:var(--sage)}
+.ip-info{background:var(--card-2);border:1px solid var(--border);border-radius:6px;padding:16px;margin:20px 0;text-align:left}
+.ip-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.ip-value{font-size:18px;color:var(--moon);font-family:ui-monospace,"SF Mono",Consolas,monospace;margin-top:6px;word-break:break-all}
+p{color:var(--muted);margin:16px 0;font-size:14px}
+.button{display:inline-block;background:var(--moon);color:var(--bg);padding:12px 24px;border-radius:6px;text-decoration:none;
+  font-weight:600;border:none;cursor:pointer;font-family:inherit;font-size:14px;transition:background .2s;margin-top:16px}
+.button:hover{background:var(--moon-dim)}
+</style>
+</head>
+<body>
+<div class="verify-container">
+<div class="verify-icon">✅</div>
+<h1>Verified!</h1>
+<p>Your access has been verified successfully.</p>
+<div class="ip-info">
+<div class="ip-label">Logged IP Address</div>
+<div class="ip-value">{{ ip }}</div>
+</div>
+<p>You've been granted access to server events and assigned the event access role.</p>
+<a href="/" class="button">Return to Dashboard</a>
+</div>
+</body>
+</html>""", ip=ip)
 
 
 @app.route("/dashboard/admin/ips")
