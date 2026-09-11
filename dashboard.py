@@ -623,40 +623,7 @@ def log_ip_access():
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     if not session.get("user"):
-        return render_template_string("""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Verification - Matzys Overseer</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
-  --border:#233530;--border-2:#324b44;
-  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
-  --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
-}
-body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
-  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:20px}
-.verify-container{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px;max-width:400px;width:100%;text-align:center}
-.verify-icon{font-size:64px;margin-bottom:20px}
-h1{font-size:24px;margin-bottom:10px;color:var(--text)}
-p{color:var(--muted);margin-bottom:20px;font-size:14px}
-.button{display:inline-block;background:var(--moon);color:var(--bg);padding:12px 24px;border-radius:6px;text-decoration:none;
-  font-weight:600;border:none;cursor:pointer;font-family:inherit;font-size:14px;transition:background .2s}
-.button:hover{background:var(--moon-dim)}
-</style>
-</head>
-<body>
-<div class="verify-container">
-<div class="verify-icon">🔐</div>
-<h1>Authentication Required</h1>
-<p>Please log in to Discord to verify your access.</p>
-<a href="/login" class="button">Login with Discord</a>
-</div>
-</body>
-</html>"""), 401
+        return redirect("/login")
 
     user_id = session.get("user", {}).get("id")
     ip = get_client_ip()
