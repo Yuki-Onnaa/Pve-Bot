@@ -136,4 +136,44 @@ def get_users_for_fingerprint(fingerprint):
     return list(fingerprint_logs.get(fingerprint, {}).keys())
 
 
+def is_hwid_banned(hwid):
+    data = load_data()
+    banned_hwids = data.get("_hwid_bans", {})
+    return hwid in banned_hwids
+
+
+def ban_hwid(hwid, user_id):
+    with data_txn() as data:
+        if "_hwid_bans" not in data:
+            data["_hwid_bans"] = {}
+        data["_hwid_bans"][hwid] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+
+
+def unban_hwid(hwid):
+    with data_txn() as data:
+        if "_hwid_bans" in data and hwid in data["_hwid_bans"]:
+            del data["_hwid_bans"][hwid]
+
+
+def log_hwid(user_id, hwid):
+    with data_txn() as data:
+        if "_hwid_logs" not in data:
+            data["_hwid_logs"] = {}
+        if hwid not in data["_hwid_logs"]:
+            data["_hwid_logs"][hwid] = {}
+        data["_hwid_logs"][hwid][str(user_id)] = datetime.now().isoformat()
+
+
+def get_hwids_for_user(user_id):
+    data = load_data()
+    hwid_logs = data.get("_hwid_logs", {})
+    return [hwid for hwid, users in hwid_logs.items() if str(user_id) in users]
+
+
+def get_users_for_hwid(hwid):
+    data = load_data()
+    hwid_logs = data.get("_hwid_logs", {})
+    return list(hwid_logs.get(hwid, {}).keys())
+
+
 from datetime import datetime

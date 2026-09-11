@@ -635,11 +635,23 @@ def verify():
         if not fingerprint:
             return jsonify({"error": "No fingerprint provided"}), 400
 
-        if is_ip_banned(ip) or is_fingerprint_banned(fingerprint):
+        import json as json_lib
+        try:
+            fp_obj = json_lib.loads(fingerprint)
+            hwid = fp_obj.get("hwid", {})
+            hwid_str = json_lib.dumps(hwid, sort_keys=True)
+        except:
+            hwid_str = ""
+
+        from data_store import is_hwid_banned, log_hwid
+
+        if is_ip_banned(ip) or is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
             return jsonify({"verified": False, "banned": True}), 403
 
         log_ip(user_id, ip)
         log_fingerprint(user_id, fingerprint)
+        if hwid_str:
+            log_hwid(user_id, hwid_str)
 
         try:
             guild = bot.get_guild(GUILD_ID)
@@ -747,11 +759,14 @@ async function generateFingerprint(){
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
 
+  let webglRenderer='';
   const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
   if(gl){
-    fingerprints.webgl=gl.getParameter(gl.RENDERER);
+    webglRenderer=gl.getParameter(gl.RENDERER);
+    fingerprints.webgl=webglRenderer;
   }
 
+  fingerprints.hwid={cores:navigator.hardwareConcurrency,memory:navigator.deviceMemory,gpu:webglRenderer};
   return JSON.stringify(fingerprints);
 }
 
@@ -881,6 +896,10 @@ ${data.ips.map(ip=>`<div style="margin-left:10px"><code>${ip.ip}</code> <span st
 <div class="user-info">
 <p><strong>Fingerprints (${data.fingerprints.length}):</strong></p>
 ${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0c1210;padding:10px;border-radius:4px;font-size:12px"><div style="color:#7fc2b8;margin-bottom:5px"><strong>Browser:</strong> <code>${obj.browser?.substring(0,60)}</code></div><div><strong>Screen:</strong> ${obj.screen} | <strong>Color Depth:</strong> ${obj.colorDepth}</div><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB | <strong>Lang:</strong> ${obj.language}</div><div><strong>TZ:</strong> ${obj.timezone}</div><div style="margin-top:5px"><strong>Canvas:</strong> <code>${obj.canvas?.substring(0,40)}</code></div><div><strong>WebGL:</strong> <code>${obj.webgl?.substring(0,50)}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint}</code></div>`;}}).join('')}
+</div>
+<div class="user-info">
+<p><strong>HWIDs (${data.hwids.length}):</strong></p>
+${data.hwids.map(hwid=>{try{const obj=JSON.parse(hwid.hwid);return `<div style="margin-left:10px;margin-bottom:10px;background:#0c1210;padding:10px;border-radius:4px;font-size:12px"><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB</div><div><strong>GPU:</strong> <code>${obj.gpu?.substring(0,50)}</code></div>${hwid.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${hwid.hwid}</code></div>`;}}).join('')}
 </div>`;
       el.classList.add('show');
     }
@@ -914,6 +933,8 @@ def api_user_details():
     ip_bans = data.get("_ip_bans", {})
     fingerprint_logs = data.get("_fingerprint_logs", {})
     fingerprint_bans = data.get("_fingerprint_bans", {})
+    hwid_logs = data.get("_hwid_logs", {})
+    hwid_bans = data.get("_hwid_bans", {})
 
     ips = []
     for ip, users in ip_logs.items():
@@ -933,13 +954,23 @@ def api_user_details():
                 "banned": fp in fingerprint_bans
             })
 
-    if not ips and not fingerprints:
+    hwids = []
+    for hwid, users in hwid_logs.items():
+        if query_user_id in users:
+            hwids.append({
+                "hwid": hwid,
+                "last_seen": users.get(query_user_id, "N/A"),
+                "banned": hwid in hwid_bans
+            })
+
+    if not ips and not fingerprints and not hwids:
         return jsonify({"error": "User not found"}), 404
 
     return jsonify({
         "user_id": query_user_id,
         "ips": sorted(ips, key=lambda x: x["last_seen"], reverse=True),
-        "fingerprints": sorted(fingerprints, key=lambda x: x["last_seen"], reverse=True)
+        "fingerprints": sorted(fingerprints, key=lambda x: x["last_seen"], reverse=True),
+        "hwids": sorted(hwids, key=lambda x: x["last_seen"], reverse=True)
     })
 
 
@@ -1092,11 +1123,14 @@ async function generateFingerprint(){
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
 
+  let webglRenderer='';
   const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
   if(gl){
-    fingerprints.webgl=gl.getParameter(gl.RENDERER);
+    webglRenderer=gl.getParameter(gl.RENDERER);
+    fingerprints.webgl=webglRenderer;
   }
 
+  fingerprints.hwid={cores:navigator.hardwareConcurrency,memory:navigator.deviceMemory,gpu:webglRenderer};
   return JSON.stringify(fingerprints);
 }
 
@@ -1127,13 +1161,23 @@ def check_dashboard_fingerprint():
     if not fingerprint:
         return jsonify({"error": "No fingerprint provided"}), 400
 
-    from data_store import is_fingerprint_banned, log_fingerprint
+    import json as json_lib
+    try:
+        fp_obj = json_lib.loads(fingerprint)
+        hwid = fp_obj.get("hwid", {})
+        hwid_str = json_lib.dumps(hwid, sort_keys=True)
+    except:
+        hwid_str = ""
+
+    from data_store import is_fingerprint_banned, is_hwid_banned, log_fingerprint, log_hwid
 
     user_id = session.get("user", {}).get("id")
-    if is_fingerprint_banned(fingerprint):
+    if is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
         return jsonify({"ok": False, "banned": True}), 403
 
     log_fingerprint(user_id, fingerprint)
+    if hwid_str:
+        log_hwid(user_id, hwid_str)
     return jsonify({"ok": True})
 
 
