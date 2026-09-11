@@ -1992,8 +1992,6 @@ def api_role_grants_add():
         return jsonify({"error": "A role name to grant is required."}), 400
     with data_txn() as data:
         entries = data.get("_role_grants", [])
-        if any(e["granter_role_name"].lower() == granter_role_name.lower() for e in entries):
-            return jsonify({"error": "That role already has a grant - remove it first to change it."}), 400
         entries.append({
             "id": uuid.uuid4().hex[:8],
             "granter_role_name": granter_role_name,
@@ -4178,7 +4176,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
   <section id="sec-rolegrants" class="section">
     <div class="section-head"><h2>Role grants</h2></div>
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Whitelist a role for one grant</div>
+      <div class="card-title">Whitelist role grants</div>
       <div class="form-group"><label>Exact role name that can use /giverole</label>
         <input type="text" id="new-rolegrant-granter" placeholder="e.g. Senior Mod" maxlength="100">
       </div>
@@ -4190,7 +4188,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <div class="card">
       <div class="card-title">Who can grant what</div>
-      <div class="eco-note">Anyone holding the role on the left can use /giverole and /takerole to hand out (or take back) only the role on the right - never any other role, even ones that would normally sit below it in the server's role hierarchy. To change a grant, remove it and add a new one.</div>
+      <div class="eco-note">Anyone holding the role on the left can use /giverole and /takerole to hand out (or take back) the roles on the right - never any other roles, even ones that would normally sit below it in the server's role hierarchy.</div>
       <div id="rolegrant-list"><div class="empty">Loading…</div></div>
     </div>
   </section>
