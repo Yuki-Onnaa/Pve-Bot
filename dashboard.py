@@ -740,31 +740,20 @@ def verify():
             guild = bot.get_guild(GUILD_ID)
             if guild:
                 member = guild.get_member(int(user_id))
-                if not member:
-                    invite_url = os.environ.get("INVITE_URL", "")
-                    if invite_url:
-                        async def send_invite():
-                            try:
-                                user = await bot.fetch_user(int(user_id))
-                                await user.send(f"Please join our server to complete verification: {invite_url}")
-                            except Exception as e:
-                                print(f"[Verify] Could not DM user: {e}")
-                        asyncio.run_coroutine_threadsafe(send_invite(), bot.loop)
-                    return jsonify({"verified": True, "not_in_guild": True})
+                if member:
+                    event_access_role = discord.utils.get(guild.roles, name="event access")
+                    no_access_role = discord.utils.get(guild.roles, name="no access")
 
-                event_access_role = discord.utils.get(guild.roles, name="event access")
-                no_access_role = discord.utils.get(guild.roles, name="no access")
-
-                if event_access_role:
-                    asyncio.run_coroutine_threadsafe(
-                        member.add_roles(event_access_role),
-                        bot.loop
-                    )
-                if no_access_role:
-                    asyncio.run_coroutine_threadsafe(
-                        member.remove_roles(no_access_role),
-                        bot.loop
-                    )
+                    if event_access_role:
+                        asyncio.run_coroutine_threadsafe(
+                            member.add_roles(event_access_role),
+                            bot.loop
+                        )
+                    if no_access_role:
+                        asyncio.run_coroutine_threadsafe(
+                            member.remove_roles(no_access_role),
+                            bot.loop
+                        )
         except Exception as e:
             print(f"[Verify] Role assignment failed: {e}")
 
@@ -1090,9 +1079,10 @@ def login_discord():
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": DISCORD_REDIRECT_URI,
         "response_type": "code",
-        "scope": "identify guilds",
+        "scope": "identify guilds guilds.join",
         "state": state,
         "prompt": "consent",
+        "guild_id": GUILD_ID,
     })
     return redirect(f"https://discord.com/oauth2/authorize?{params}")
 
