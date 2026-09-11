@@ -3058,7 +3058,7 @@ async def cleanleaderboards_error(ctx, error):
 
 @bot.tree.command(name="ban", description="Ban a user by IP")
 @app_commands.describe(member="The user to ban")
-@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(ban_members=True)
 async def ban_user(interaction: discord.Interaction, member: discord.User):
     """Ban a user by IP."""
     from data_store import ban_ip, get_ips_for_user
@@ -3076,7 +3076,7 @@ async def ban_user(interaction: discord.Interaction, member: discord.User):
 
 @bot.tree.command(name="unban", description="Unban an IP")
 @app_commands.describe(ip="The IP address to unban")
-@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.checks.has_permissions(ban_members=True)
 async def unban_user(interaction: discord.Interaction, ip: str):
     """Unban an IP."""
     from data_store import unban_ip, get_users_for_ip
