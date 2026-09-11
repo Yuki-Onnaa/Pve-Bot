@@ -913,7 +913,7 @@ body{background:#000000;color:#eef4f2;font-family:system-ui;padding:20px}
 .container{max-width:1200px;margin:0 auto}
 h1{margin-bottom:20px;color:#7fc2b8}
 .search-box{margin-bottom:20px;display:flex;gap:10px}
-.search-box input{flex:1;padding:10px;background:#1a1a1a;border:1px solid #333333;color:#eef4f2;border-radius:4px}
+.search-box input{flex:1;padding:10px;background:#ffffff;border:1px solid #333333;color:#000000;border-radius:4px}
 .search-box button{padding:10px 20px;background:#7fc2b8;color:#000000;border:none;border-radius:4px;cursor:pointer;font-weight:600}
 .search-box button:hover{background:#a8ddd2}
 .user-details{background:#111111;border:1px solid #333333;border-radius:4px;padding:20px;margin-bottom:20px;display:none}
