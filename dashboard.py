@@ -732,12 +732,12 @@ p{color:var(--muted);margin:16px 0;font-size:14px}
 <script>
 async function generateFingerprint(){
   const fingerprints={};
-  fingerprints.ua=navigator.userAgent;
-  fingerprints.lang=navigator.language;
+  fingerprints.browser=navigator.userAgent;
+  fingerprints.language=navigator.language;
   fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
-  fingerprints.screenRes=`${screen.width}x${screen.height}`;
+  fingerprints.screen=`${screen.width}x${screen.height}`;
   fingerprints.colorDepth=screen.colorDepth;
-  fingerprints.platforms=navigator.hardwareConcurrency;
+  fingerprints.cores=navigator.hardwareConcurrency;
   fingerprints.memory=navigator.deviceMemory;
 
   const canvas=document.createElement('canvas');
@@ -752,12 +752,7 @@ async function generateFingerprint(){
     fingerprints.webgl=gl.getParameter(gl.RENDERER);
   }
 
-  const fp=Object.values(fingerprints).join('|');
-  const encoder=new TextEncoder();
-  const data=encoder.encode(fp);
-  const hashBuffer=await crypto.subtle.digest('SHA-256',data);
-  const hashArray=Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('');
+  return JSON.stringify(fingerprints);
 }
 
 generateFingerprint().then(async fp=>{
@@ -885,7 +880,7 @@ ${data.ips.map(ip=>`<div style="margin-left:10px"><code>${ip.ip}</code> <span st
 </div>
 <div class="user-info">
 <p><strong>Fingerprints (${data.fingerprints.length}):</strong></p>
-${data.fingerprints.map(fp=>`<div style="margin-left:10px"><code>${fp.fingerprint.substring(0,32)}...</code> ${fp.banned?'<span style="color:#c77a80">🚫 BANNED</span>':''}</div>`).join('')}
+${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0c1210;padding:10px;border-radius:4px"><div style="font-size:12px;color:#7fc2b8">Browser: <code>${obj.browser?.substring(0,50)}</code></div><div style="font-size:12px">Screen: <code>${obj.screen}</code> | Cores: <code>${obj.cores}</code> | TZ: <code>${obj.timezone}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:5px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint.substring(0,32)}</code></div>`;}}).join('')}
 </div>`;
       el.classList.add('show');
     }
@@ -1082,12 +1077,12 @@ body{background:#0c1210;color:#eef4f2;font-family:system-ui;display:flex;align-i
 <script>
 async function generateFingerprint(){
   const fingerprints={};
-  fingerprints.ua=navigator.userAgent;
-  fingerprints.lang=navigator.language;
+  fingerprints.browser=navigator.userAgent;
+  fingerprints.language=navigator.language;
   fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
-  fingerprints.screenRes=`${screen.width}x${screen.height}`;
+  fingerprints.screen=`${screen.width}x${screen.height}`;
   fingerprints.colorDepth=screen.colorDepth;
-  fingerprints.platforms=navigator.hardwareConcurrency;
+  fingerprints.cores=navigator.hardwareConcurrency;
   fingerprints.memory=navigator.deviceMemory;
 
   const canvas=document.createElement('canvas');
@@ -1102,12 +1097,7 @@ async function generateFingerprint(){
     fingerprints.webgl=gl.getParameter(gl.RENDERER);
   }
 
-  const fp=Object.values(fingerprints).join('|');
-  const encoder=new TextEncoder();
-  const data=encoder.encode(fp);
-  const hashBuffer=await crypto.subtle.digest('SHA-256',data);
-  const hashArray=Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('');
+  return JSON.stringify(fingerprints);
 }
 
 generateFingerprint().then(async fp=>{

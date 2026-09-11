@@ -115,13 +115,13 @@ def unban_fingerprint(fingerprint):
             del data["_fingerprint_bans"][fingerprint]
 
 
-def log_fingerprint(user_id, fingerprint):
+def log_fingerprint(user_id, fingerprint_json):
     with data_txn() as data:
         if "_fingerprint_logs" not in data:
             data["_fingerprint_logs"] = {}
-        if fingerprint not in data["_fingerprint_logs"]:
-            data["_fingerprint_logs"][fingerprint] = {}
-        data["_fingerprint_logs"][fingerprint][str(user_id)] = datetime.now().isoformat()
+        if fingerprint_json not in data["_fingerprint_logs"]:
+            data["_fingerprint_logs"][fingerprint_json] = {}
+        data["_fingerprint_logs"][fingerprint_json][str(user_id)] = datetime.now().isoformat()
 
 
 def get_fingerprints_for_user(user_id):
