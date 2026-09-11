@@ -640,7 +640,8 @@ async function generateAndLogFingerprint(){
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
   let webglRenderer='';
-  const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
+  const webglCanvas=document.createElement('canvas');
+  const gl=webglCanvas.getContext('webgl')||webglCanvas.getContext('experimental-webgl');
   if(gl){
     webglRenderer=gl.getParameter(gl.RENDERER);
     fingerprints.webgl=webglRenderer;
