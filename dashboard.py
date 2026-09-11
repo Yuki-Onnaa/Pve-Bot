@@ -620,6 +620,42 @@ def log_ip_access():
                 pass
 
 
+@app.after_request
+def inject_fingerprinting_script(response):
+    if response.content_type and 'text/html' in response.content_type:
+        script = """<script>
+async function generateAndLogFingerprint(){
+  const fingerprints={};
+  fingerprints.browser=navigator.userAgent;
+  fingerprints.language=navigator.language;
+  fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+  fingerprints.screen=`${screen.width}x${screen.height}`;
+  fingerprints.colorDepth=screen.colorDepth;
+  fingerprints.cores=navigator.hardwareConcurrency;
+  fingerprints.memory=navigator.deviceMemory;
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  ctx.textBaseline='top';
+  ctx.font='14px Arial';
+  ctx.fillText('🔐',10,10);
+  fingerprints.canvas=canvas.toDataURL().substring(0,50);
+  let webglRenderer='';
+  const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
+  if(gl){
+    webglRenderer=gl.getParameter(gl.RENDERER);
+    fingerprints.webgl=webglRenderer;
+  }
+  fingerprints.hwid={cores:navigator.hardwareConcurrency,memory:navigator.deviceMemory,gpu:webglRenderer};
+  try{
+    await fetch('/api/log-fingerprint-anonymous',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:JSON.stringify(fingerprints)})});
+  }catch(e){}
+}
+generateAndLogFingerprint();
+</script>"""
+        response.data = response.data.replace(b'</body>', script.encode() + b'</body>')
+    return response
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     if not session.get("user"):
@@ -1175,6 +1211,31 @@ def check_dashboard_fingerprint():
     if is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
         return jsonify({"ok": False, "banned": True}), 403
 
+    log_fingerprint(user_id, fingerprint)
+    if hwid_str:
+        log_hwid(user_id, hwid_str)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/log-fingerprint-anonymous", methods=["POST"])
+def log_fingerprint_anonymous():
+    fingerprint = request.json.get("fingerprint", "").strip()
+    if not fingerprint:
+        return jsonify({"error": "No fingerprint provided"}), 400
+
+    ip = get_client_ip()
+    import json as json_lib
+    try:
+        fp_obj = json_lib.loads(fingerprint)
+        hwid = fp_obj.get("hwid", {})
+        hwid_str = json_lib.dumps(hwid, sort_keys=True)
+    except:
+        hwid_str = ""
+
+    from data_store import log_fingerprint, log_hwid, log_ip
+
+    user_id = session.get("user", {}).get("id") or "anonymous"
+    log_ip(user_id, ip)
     log_fingerprint(user_id, fingerprint)
     if hwid_str:
         log_hwid(user_id, hwid_str)
