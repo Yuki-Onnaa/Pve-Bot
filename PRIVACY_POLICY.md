@@ -35,7 +35,7 @@ We collect and store:
 ### Technical Data
 - **API requests** (timestamps, endpoints accessed)
 - **Error logs** (for debugging)
-- **IP addresses** (for infrastructure logging only, not tracked per user)
+- **IP addresses** (logged when you verify access to server events; used for security, abuse prevention, and identifying banned users)
 
 ## 3. What We DON'T Collect
 
@@ -65,7 +65,26 @@ We DO NOT:
 - Combine data from multiple servers (kept separate)
 - Track you across other websites
 
-## 5. Data Storage & Security
+## 5. IP Logging and Verification
+
+### How We Use IP Addresses
+- **Verification:** When you use `/verify` to access server events, your IP is logged
+- **Security:** IP logging helps prevent abuse and protect server integrity
+- **Banning:** Server administrators can ban users by IP address to prevent ban evasion
+- **Fraud prevention:** Identifying multi-account users and malicious activity
+
+### Your IP Data
+- IP addresses are linked to your Discord user ID
+- Only server administrators can view IP logs
+- IPs are stored in the same secure data location as vouch data
+- You can request deletion of your IP logs from server admins
+
+### IP Banning
+- If your IP is banned, you won't be able to verify access
+- Administrators can ban and unban IPs using `/ban` and `/unban` commands
+- IP bans are server-specific and don't affect other servers
+
+## 6. Data Storage & Security
 
 ### Where Data is Stored
 - **Primary:** JSON file on deployment server (Railway)
@@ -84,7 +103,7 @@ We DO NOT:
 - Bugs may cause unexpected data exposure
 - Discord's security is outside our control
 
-## 6. Server Admin Access
+## 7. Server Admin Access
 
 Server administrators with bot access can:
 - View all user vouch data in their server
@@ -95,7 +114,7 @@ Server administrators with bot access can:
 
 **Admins are responsible for protecting user privacy** - if your server misuses data, that's not our liability.
 
-## 7. Data Retention
+## 8. Data Retention
 
 ### How Long We Keep Data
 - **Active servers:** While you're a member and the bot is active
@@ -109,7 +128,7 @@ If you want your data deleted:
 2. Admin can use `?` command to delete your records
 3. Contact bot developers if admins don't cooperate
 
-## 8. Third-Party Services
+## 9. Third-Party Services
 
 ### Discord
 - The bot uses Discord's API
@@ -126,11 +145,11 @@ If you want your data deleted:
 - User data is NOT on GitHub
 - See GitHub's Privacy Policy
 
-## 9. Children's Privacy
+## 10. Children's Privacy
 
 This bot is not intended for children under 13. We don't knowingly collect data from children. If you're under 13, don't use this bot without parent permission.
 
-## 10. Your Rights
+## 11. Your Rights
 
 You have the right to:
 - **Access:** Ask your admin for your data
@@ -141,15 +160,15 @@ You have the right to:
 
 Contact your server admin or bot developers to exercise these rights.
 
-## 11. International Users
+## 12. International Users
 
 If you're outside the US, your data may be stored internationally. By using this bot, you consent to that transfer.
 
-## 12. Changes to Policy
+## 13. Changes to Policy
 
 We may update this policy anytime. We'll notify users of major changes. Continued use = acceptance.
 
-## 13. Disclosure of Data
+## 14. Disclosure of Data
 
 We may disclose your data if:
 - **Legal requirement** - Court order, law enforcement
@@ -158,7 +177,7 @@ We may disclose your data if:
 - **Admin request** - Server admins can access their data
 - **Bot developers only** - No third-party access
 
-## 14. Contact & Complaints
+## 15. Contact & Complaints
 
 ### Questions?
 Contact the bot developers via:
@@ -171,7 +190,7 @@ If you believe we're mishandling your data:
 2. Contact bot developers with details
 3. File a complaint with appropriate data protection authorities
 
-## 15. CCPA & GDPR Notices
+## 16. CCPA & GDPR Notices
 
 ### California (CCPA)
 If you're a California resident, you have additional rights under CCPA. Contact us for a data access request.
@@ -179,7 +198,7 @@ If you're a California resident, you have additional rights under CCPA. Contact 
 ### Europe (GDPR)
 If you're in the EU, your data is protected under GDPR. You have rights to access, correct, delete, and port your data.
 
-## 16. Limitations
+## 17. Limitations
 
 **Important:** We are not professional data handlers. This is a hobby/community bot. For sensitive operations, use professional services with guaranteed privacy.
 

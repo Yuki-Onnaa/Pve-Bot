@@ -46,7 +46,18 @@ Server administrators have authority to:
 
 The bot tracks administrative actions and logs them for security purposes.
 
-## 6. Data Retention
+## 6. IP Logging and Verification
+
+When you use the verification feature:
+- Your IP address is logged for security purposes
+- IP logging helps prevent abuse and protect server integrity
+- Administrators can ban users by their IP address
+- You can verify your access to server events through the `/verify` command
+- Verification checks if your IP is banned before granting access
+
+For details on how your data is used, see our Privacy Policy.
+
+## 7. Data Retention
 
 Your data is stored while:
 - You are a member of a server using Pve-Bot
@@ -55,7 +66,7 @@ Your data is stored while:
 
 You can request data deletion from server admins or the bot owners.
 
-## 7. Limitation of Liability
+## 8. Limitation of Liability
 
 THE BOT IS PROVIDED "AS-IS" WITHOUT WARRANTIES. WE ARE NOT LIABLE FOR:
 - Data loss or corruption
@@ -65,14 +76,14 @@ THE BOT IS PROVIDED "AS-IS" WITHOUT WARRANTIES. WE ARE NOT LIABLE FOR:
 
 Use this bot at your own risk. Don't rely on it as your sole source of important decisions.
 
-## 8. Disclaimers
+## 9. Disclaimers
 
 - **No Guarantees:** The bot may have bugs or unexpected behavior
 - **Third-party Service:** The bot uses Discord's services and is subject to their policies
 - **No Legal Advice:** Threat scores and vouchings are not legal determinations
 - **Community Tool:** The bot is meant for community management, not legal enforcement
 
-## 9. Server Admin Liability
+## 10. Server Admin Liability
 
 Server administrators are responsible for:
 - Compliance with Discord ToS

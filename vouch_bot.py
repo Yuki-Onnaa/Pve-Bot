@@ -3086,23 +3086,17 @@ async def unban_user(interaction: discord.Interaction, ip: str):
     await interaction.response.send_message(f"✅ Unbanned IP {ip} (was linked to {len(users)} user(s))")
 
 
-@bot.tree.command(name="verify", description="Verify your access to the dashboard")
+@bot.tree.command(name="verify", description="Verify your access to server events")
 async def verify_access(interaction: discord.Interaction):
-    """Verify your access to the dashboard."""
+    """Verify your access to server events."""
     dashboard_url = os.environ.get("DASHBOARD_URL", "https://mattzys.up.railway.app")
     verify_link = f"{dashboard_url}/dashboard/verify"
 
     embed = discord.Embed(
         title="🔐 Verify Access",
-        description="Click the button below to verify your access to the dashboard.",
+        description="Click the button below to verify your access to server events.",
         color=discord.Color.green()
     )
-    embed.add_field(
-        name="What does this do?",
-        value="Verifying logs your IP and checks if you're banned. If you're not banned, you'll get event access.",
-        inline=False
-    )
-    embed.set_footer(text="This is required to access certain dashboard features.")
 
     view = discord.ui.View()
     view.add_item(discord.ui.Button(
