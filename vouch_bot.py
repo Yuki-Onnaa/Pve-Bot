@@ -2662,6 +2662,27 @@ async def on_ready():
         event_ping_loop.start()
 
 
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if before.channel == after.channel:
+        return
+
+    if after.channel is not None:
+        data = load_data()
+        user_data = data.get(str(member.id), {})
+        for cat in CATEGORY_EVENTS:
+            if user_data.get(cat, {}).get("total_vouches", 0) > 0:
+                activity = discord.Activity(
+                    type=discord.ActivityType.playing,
+                    name=f"{CATEGORY_NAMES[cat]} In Matzys"
+                )
+                try:
+                    await bot.change_presence(activity=activity)
+                except Exception as e:
+                    print(f"[Activity] Failed to update: {e}")
+                return
+
+
 # ── Passive "hanging out" chime-ins in one general channel ──
 CHIME_IN_CHANNEL_ID = 1478405937080307806
 _chime_in_counter = 0
