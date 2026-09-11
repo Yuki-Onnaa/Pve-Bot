@@ -2935,7 +2935,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
       <a class="sb-item" href="/dashboard">
         <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3M13 4.5v5M7 9.5v5M13 14.5v5"/></svg>Admin dashboard</a>
       {% if user.id == 1387930623766827140 %}
-      <a class="sb-item" href="/admin/ips">
+      <a class="sb-item" href="/dashboard/admin/ips">
         <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 10 10 10 10 0 0 1-10 10A10 10 0 0 1 2 12 10 10 0 0 1 12 2M12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8 8 8 0 0 0 8-8 8 8 0 0 0-8-8M13 8h-2v4h-4v2h4v4h2v-4h4v-2h-4z"/></svg>IP Management</a>
       {% endif %}
       {% endif %}
