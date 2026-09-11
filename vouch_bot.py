@@ -4029,8 +4029,8 @@ async def slash_backfillhostbadges(interaction: discord.Interaction):
         ephemeral=True)
 
 
-@bot.tree.command(name="giverole", description="Give someone the one role you're whitelisted to grant")
-@app_commands.describe(member="Who to give the role to")
+@bot.tree.command(name="giverole", description="Toggle a role for someone")
+@app_commands.describe(member="Who to toggle the role for")
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
     role_name = get_role_grant(interaction.user)
     if not role_name:
@@ -4045,23 +4045,23 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
             f"No role named **{role_name}** exists anymore - ask an admin to check the Role Grants tab.",
             ephemeral=True)
         return
-    if role in member.roles:
-        await interaction.response.send_message(
-            f"{member.mention} already has **{role_name}**.", ephemeral=True)
-        return
     if role >= interaction.guild.me.top_role:
         await interaction.response.send_message(
-            f"Can't grant **{role_name}** - it sits above my own top role.", ephemeral=True)
+            f"Can't manage **{role_name}** - it sits above my own top role.", ephemeral=True)
         return
 
     try:
-        await member.add_roles(role, reason=f"/giverole by {interaction.user}")
+        if role in member.roles:
+            await member.remove_roles(role, reason=f"/giverole by {interaction.user}")
+            await interaction.response.send_message(f"Removed **{role_name}** from {member.mention}.", ephemeral=True)
+            await log_audit(f"{interaction.user.mention} removed **{role_name}** from {member.mention} (/giverole)")
+        else:
+            await member.add_roles(role, reason=f"/giverole by {interaction.user}")
+            await interaction.response.send_message(f"Gave {member.mention} **{role_name}**.", ephemeral=True)
+            await log_audit(f"{interaction.user.mention} gave **{role_name}** to {member.mention} (/giverole)")
     except discord.Forbidden:
-        await interaction.response.send_message(f"Couldn't grant **{role_name}** - missing permissions.",
+        await interaction.response.send_message(f"Couldn't manage **{role_name}** - missing permissions.",
                                                   ephemeral=True)
-        return
-    await interaction.response.send_message(f"Gave {member.mention} **{role_name}**.", ephemeral=True)
-    await log_audit(f"{interaction.user.mention} gave **{role_name}** to {member.mention} (/giverole)")
 
 
 @bot.tree.command(name="takerole", description="Remove the one role you're whitelisted to grant")
