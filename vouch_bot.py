@@ -4082,8 +4082,8 @@ async def slash_backfillhostbadges(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="giverole", description="Toggle roles you're whitelisted to grant")
-@app_commands.describe(member="Who to toggle the role for")
-async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
+@app_commands.describe(member="Who to toggle the role for", role="Which role to toggle (optional if you can only grant one)")
+async def slash_giverole(interaction: discord.Interaction, member: discord.Member, role: str = None):
     from data_store import load_data
     data = load_data()
     user_role_names = {r.name.lower() for r in interaction.user.roles}
@@ -4095,13 +4095,22 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
             "Role Grants tab.", ephemeral=True)
         return
 
-    if len(user_grants) > 1:
-        roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
-        await interaction.response.send_message(
-            f"You can grant multiple roles: {roles_text}. Use the first one (**{user_grants[0]['role_name']}**).", ephemeral=True)
-        return
-
-    role_name = user_grants[0]["role_name"]
+    if not role:
+        if len(user_grants) == 1:
+            role_name = user_grants[0]["role_name"]
+        else:
+            roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
+            await interaction.response.send_message(
+                f"You can grant multiple roles: {roles_text}. Specify which one: `/giverole {member} role:<role>`", ephemeral=True)
+            return
+    else:
+        matching_grants = [g for g in user_grants if g["role_name"].lower() == role.lower()]
+        if not matching_grants:
+            roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
+            await interaction.response.send_message(
+                f"You can't grant **{role}**. You can grant: {roles_text}", ephemeral=True)
+            return
+        role_name = matching_grants[0]["role_name"]
 
     role = discord.utils.get(interaction.guild.roles, name=role_name)
     if role is None:
