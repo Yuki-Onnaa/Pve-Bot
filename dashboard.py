@@ -668,9 +668,16 @@ p{color:var(--muted);margin-bottom:20px;font-size:14px}
             member = guild.get_member(int(user_id))
             if member:
                 event_access_role = discord.utils.get(guild.roles, name="event access")
+                no_access_role = discord.utils.get(guild.roles, name="no access")
+
                 if event_access_role:
                     asyncio.run_coroutine_threadsafe(
                         member.add_roles(event_access_role),
+                        bot.loop
+                    )
+                if no_access_role:
+                    asyncio.run_coroutine_threadsafe(
+                        member.remove_roles(no_access_role),
                         bot.loop
                     )
     except Exception as e:
