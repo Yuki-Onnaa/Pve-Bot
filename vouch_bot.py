@@ -3056,37 +3056,39 @@ async def cleanleaderboards_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
-@bot.command(name="ban", aliases=["ipban"])
-@commands.has_permissions(manage_guild=True)
-async def ban_user(ctx, member: discord.Member):
-    """Ban a user by IP. Usage: ?ban @user"""
+@bot.tree.command(name="ban", description="Ban a user by IP")
+@app_commands.describe(member="The user to ban")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def ban_user(interaction: discord.Interaction, member: discord.User):
+    """Ban a user by IP."""
     from data_store import ban_ip, get_ips_for_user
 
     ips = get_ips_for_user(member.id)
     if not ips:
-        await ctx.send(f"⚠️ No IP logs found for {member.display_name}. They may not have accessed the dashboard yet.")
+        await interaction.response.send_message(f"⚠️ No IP logs found for {member.display_name}. They may not have accessed the dashboard yet.")
         return
 
     for ip in ips:
         ban_ip(ip, member.id)
 
-    await ctx.send(f"🚫 Banned {member.display_name} across {len(ips)} IP(s)")
+    await interaction.response.send_message(f"🚫 Banned {member.display_name} across {len(ips)} IP(s)")
 
 
-@bot.command(name="unban", aliases=["unipban"])
-@commands.has_permissions(manage_guild=True)
-async def unban_user(ctx, ip: str):
-    """Unban an IP. Usage: ?unban 192.168.1.1"""
+@bot.tree.command(name="unban", description="Unban an IP")
+@app_commands.describe(ip="The IP address to unban")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def unban_user(interaction: discord.Interaction, ip: str):
+    """Unban an IP."""
     from data_store import unban_ip, get_users_for_ip
 
     users = get_users_for_ip(ip)
     unban_ip(ip)
-    await ctx.send(f"✅ Unbanned IP {ip} (was linked to {len(users)} user(s))")
+    await interaction.response.send_message(f"✅ Unbanned IP {ip} (was linked to {len(users)} user(s))")
 
 
-@bot.command(name="verify")
-async def verify_access(ctx):
-    """Verify your access to the dashboard. Usage: ?verify"""
+@bot.tree.command(name="verify", description="Verify your access to the dashboard")
+async def verify_access(interaction: discord.Interaction):
+    """Verify your access to the dashboard."""
     dashboard_url = os.environ.get("DASHBOARD_URL", "https://mattzys.up.railway.app")
     verify_link = f"{dashboard_url}/dashboard/verify"
 
@@ -3110,7 +3112,7 @@ async def verify_access(ctx):
         emoji="✅"
     ))
 
-    await ctx.send(embed=embed, view=view)
+    await interaction.response.send_message(embed=embed, view=view)
 
 
 @bot.command(name="testeventping")
