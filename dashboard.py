@@ -819,18 +819,33 @@ def admin_ips():
 body{background:#0c1210;color:#eef4f2;font-family:system-ui;padding:20px}
 .container{max-width:1200px;margin:0 auto}
 h1{margin-bottom:20px;color:#7fc2b8}
+.search-box{margin-bottom:20px;display:flex;gap:10px}
+.search-box input{flex:1;padding:10px;background:#152220;border:1px solid #233530;color:#eef4f2;border-radius:4px}
+.search-box button{padding:10px 20px;background:#7fc2b8;color:#0c1210;border:none;border-radius:4px;cursor:pointer;font-weight:600}
+.search-box button:hover{background:#a8ddd2}
+.user-details{background:#0d1614;border:1px solid #233530;border-radius:4px;padding:20px;margin-bottom:20px;display:none}
+.user-details.show{display:block}
+.user-details h2{color:#7fc2b8;margin-bottom:10px}
+.user-info{background:#152220;padding:15px;border-radius:4px;margin-bottom:15px}
+.user-info p{margin:8px 0;color:#8fa39d;word-break:break-all}
+.user-info code{background:#0c1210;padding:2px 6px;border-radius:3px;color:#7fc2b8}
 table{width:100%;border-collapse:collapse;background:#0d1614;border:1px solid #233530}
 th,td{padding:12px;text-align:left;border-bottom:1px solid #233530}
 th{background:#152220;font-weight:600}
 .banned{background:rgba(199,122,128,.1);color:#c77a80}
-.copy-btn{background:#152220;border:1px solid #233530;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px}
+.copy-btn{background:#152220;border:1px solid #233530;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px;font-size:12px}
 .copy-btn:hover{background:#233530}
-a{color:#7fc2b8;text-decoration:none}
+a{color:#7fc2b8;text-decoration:none;cursor:pointer}
 a:hover{text-decoration:underline}
 </style>
 </head><body>
 <div class="container">
 <h1>IP Management</h1>
+<div class="search-box">
+<input type="text" id="userSearch" placeholder="Search by User ID...">
+<button onclick="searchUser()">Search</button>
+</div>
+<div class="user-details" id="userDetails"></div>
 <p style="margin-bottom:20px;color:#8fa39d">Total IPs: """ + str(len(ips_info)) + """ | Banned: """ + str(sum(1 for x in ips_info if x["banned"])) + """</p>
 <table>
 <thead><tr><th>IP Address</th><th>Users</th><th>Status</th><th>Last Seen</th></tr></thead>
@@ -839,7 +854,7 @@ a:hover{text-decoration:underline}
 
     for info in ips_info:
         status = '<span class="banned">🚫 BANNED</span>' if info["banned"] else '✅ Active'
-        users_html = ", ".join([f'<a href="/?uid={u}">{u}</a>' for u in info["users"]])
+        users_html = ", ".join([f'<a onclick="searchUserById(\'{u}\')">{u}</a>' for u in info["users"]])
         html += f"""<tr class="{'banned' if info['banned'] else ''}">
 <td><code>{info['ip']}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('{info['ip']}')">Copy</button></td>
 <td>{users_html}</td>
@@ -848,9 +863,89 @@ a:hover{text-decoration:underline}
 </tr>"""
 
     html += """</tbody></table>
-</div></body></html>"""
+</div>
+<script>
+function searchUserById(uid){
+  document.getElementById('userSearch').value=uid;
+  searchUser();
+}
+function searchUser(){
+  const uid=document.getElementById('userSearch').value.trim();
+  if(!uid)return;
+  fetch(`/api/user_details?user_id=${uid}`).then(r=>r.json()).then(data=>{
+    const el=document.getElementById('userDetails');
+    if(data.error){
+      el.textContent='User not found';
+      el.classList.add('show');
+    }else{
+      el.innerHTML=`<h2>User Details: ${data.user_id}</h2>
+<div class="user-info">
+<p><strong>IPs (${data.ips.length}):</strong></p>
+${data.ips.map(ip=>`<div style="margin-left:10px"><code>${ip.ip}</code> <span style="color:#8fa39d">${ip.last_seen}</span> ${ip.banned?'<span style="color:#c77a80">🚫 BANNED</span>':''}</div>`).join('')}
+</div>
+<div class="user-info">
+<p><strong>Fingerprints (${data.fingerprints.length}):</strong></p>
+${data.fingerprints.map(fp=>`<div style="margin-left:10px"><code>${fp.fingerprint.substring(0,32)}...</code> ${fp.banned?'<span style="color:#c77a80">🚫 BANNED</span>':''}</div>`).join('')}
+</div>`;
+      el.classList.add('show');
+    }
+  }).catch(e=>{
+    document.getElementById('userDetails').textContent='Error loading user details';
+    document.getElementById('userDetails').classList.add('show');
+  });
+}
+</script>
+</body></html>"""
 
     return html
+
+
+@app.route("/api/user_details")
+def api_user_details():
+    if not session.get("user"):
+        return jsonify({"error": "Not authenticated"}), 401
+    user_id = session.get("user", {}).get("id")
+    if int(user_id) != 1387930623766827140:
+        return jsonify({"error": "Access denied"}), 403
+
+    query_user_id = request.args.get("user_id", "").strip()
+    if not query_user_id:
+        return jsonify({"error": "No user_id provided"}), 400
+
+    from data_store import load_data
+
+    data = load_data()
+    ip_logs = data.get("_ip_logs", {})
+    ip_bans = data.get("_ip_bans", {})
+    fingerprint_logs = data.get("_fingerprint_logs", {})
+    fingerprint_bans = data.get("_fingerprint_bans", {})
+
+    ips = []
+    for ip, users in ip_logs.items():
+        if query_user_id in users:
+            ips.append({
+                "ip": ip,
+                "last_seen": users.get(query_user_id, "N/A"),
+                "banned": ip in ip_bans
+            })
+
+    fingerprints = []
+    for fp, users in fingerprint_logs.items():
+        if query_user_id in users:
+            fingerprints.append({
+                "fingerprint": fp,
+                "last_seen": users.get(query_user_id, "N/A"),
+                "banned": fp in fingerprint_bans
+            })
+
+    if not ips and not fingerprints:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify({
+        "user_id": query_user_id,
+        "ips": sorted(ips, key=lambda x: x["last_seen"], reverse=True),
+        "fingerprints": sorted(fingerprints, key=lambda x: x["last_seen"], reverse=True)
+    })
 
 
 @app.route("/login")
