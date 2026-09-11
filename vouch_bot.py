@@ -2674,7 +2674,7 @@ async def on_voice_state_update(member, before, after):
             if user_data.get(cat, {}).get("total_vouches", 0) > 0:
                 activity = discord.Activity(
                     type=discord.ActivityType.playing,
-                    name=f"{CATEGORY_NAMES[cat]} In Matzys"
+                    name="Hosting In Matzys"
                 )
                 try:
                     await bot.change_presence(activity=activity)
