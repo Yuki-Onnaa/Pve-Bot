@@ -3090,7 +3090,7 @@ async def unban_user(interaction: discord.Interaction, ip: str):
 async def verify_access(interaction: discord.Interaction):
     """Verify your access to server events."""
     dashboard_url = os.environ.get("DASHBOARD_URL", "https://matzys.up.railway.app")
-    verify_link = f"{dashboard_url}/dashboard/verify"
+    verify_link = f"{dashboard_url}/verify"
 
     embed = discord.Embed(
         title="🔐 Verify Access",
