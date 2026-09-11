@@ -2602,11 +2602,6 @@ async def on_stage_instance_delete(stage_instance):
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
-    try:
-        synced = await bot.tree.sync()
-        print(f"[Commands] Synced {len(synced)} slash commands")
-    except Exception as e:
-        print(f"[Commands] Failed to sync: {e}")
     reset_stale_live_tracking()
     # Start the web dashboard in a background thread
     try:
