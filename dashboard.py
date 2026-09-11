@@ -1082,8 +1082,9 @@ def login_discord():
         "scope": "identify guilds guilds.join",
         "state": state,
         "prompt": "consent",
-        "guild_id": GUILD_ID,
     })
+    if GUILD_ID:
+        params += f"&guild_id={GUILD_ID}&disable_guild_select=true"
     return redirect(f"https://discord.com/oauth2/authorize?{params}")
 
 @app.route("/callback")
