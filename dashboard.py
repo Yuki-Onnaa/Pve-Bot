@@ -601,6 +601,119 @@ def badge_icon(key):
                      headers={"Cache-Control": "public, max-age=604800"})
 
 
+def get_client_ip():
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    return request.remote_addr
+
+
+@app.before_request
+def log_ip_access():
+    if session.get("user"):
+        user_id = session.get("user", {}).get("id")
+        ip = get_client_ip()
+        if user_id and ip:
+            from data_store import log_ip
+            try:
+                log_ip(user_id, ip)
+            except Exception:
+                pass
+
+
+@app.route("/verify", methods=["GET", "POST"])
+def verify():
+    if not session.get("user"):
+        return jsonify({"error": "Not authenticated"}), 401
+
+    user_id = session.get("user", {}).get("id")
+    ip = get_client_ip()
+
+    from data_store import is_ip_banned
+
+    if is_ip_banned(ip):
+        return jsonify({"error": "IP is banned", "banned": True}), 403
+
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            member = guild.get_member(int(user_id))
+            if member:
+                event_access_role = discord.utils.get(guild.roles, name="event access")
+                if event_access_role:
+                    asyncio.run_coroutine_threadsafe(
+                        member.add_roles(event_access_role),
+                        bot.loop
+                    )
+    except Exception as e:
+        print(f"[Verify] Role assignment failed: {e}")
+
+    return jsonify({"verified": True, "ip": ip})
+
+
+@app.route("/admin/ips")
+@admin_required
+def admin_ips():
+    from data_store import load_data
+
+    data = load_data()
+    ip_logs = data.get("_ip_logs", {})
+    ip_bans = data.get("_ip_bans", {})
+
+    ips_info = []
+    for ip, users in ip_logs.items():
+        banned = ip in ip_bans
+        ips_info.append({
+            "ip": ip,
+            "users": list(users.keys()),
+            "banned": banned,
+            "last_seen": max(users.values()) if users else None
+        })
+
+    ips_info.sort(key=lambda x: x["last_seen"] or "", reverse=True)
+
+    html = """<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP Management - Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:system-ui;padding:20px}
+.container{max-width:1200px;margin:0 auto}
+h1{margin-bottom:20px;color:#7fc2b8}
+table{width:100%;border-collapse:collapse;background:#0d1614;border:1px solid #233530}
+th,td{padding:12px;text-align:left;border-bottom:1px solid #233530}
+th{background:#152220;font-weight:600}
+.banned{background:rgba(199,122,128,.1);color:#c77a80}
+.copy-btn{background:#152220;border:1px solid #233530;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px}
+.copy-btn:hover{background:#233530}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+</style>
+</head><body>
+<div class="container">
+<h1>IP Management</h1>
+<p style="margin-bottom:20px;color:#8fa39d">Total IPs: """ + str(len(ips_info)) + """ | Banned: """ + str(sum(1 for x in ips_info if x["banned"])) + """</p>
+<table>
+<thead><tr><th>IP Address</th><th>Users</th><th>Status</th><th>Last Seen</th></tr></thead>
+<tbody>
+"""
+
+    for info in ips_info:
+        status = '<span class="banned">🚫 BANNED</span>' if info["banned"] else '✅ Active'
+        users_html = ", ".join([f'<a href="/?uid={u}">{u}</a>' for u in info["users"]])
+        html += f"""<tr class="{'banned' if info['banned'] else ''}">
+<td><code>{info['ip']}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('{info['ip']}')">Copy</button></td>
+<td>{users_html}</td>
+<td>{status}</td>
+<td>{info['last_seen'][:10] if info['last_seen'] else 'N/A'}</td>
+</tr>"""
+
+    html += """</tbody></table>
+</div></body></html>"""
+
+    return html
+
+
 @app.route("/login")
 def login():
     if session.get("user") and session.get("admin_guilds"):
