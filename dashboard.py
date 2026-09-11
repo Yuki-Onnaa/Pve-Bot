@@ -2939,7 +2939,8 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
       </div>
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;">
         <a href="/terms" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
-        <a href="/privacy" style="color:var(--muted);text-decoration:none">Privacy Policy</a>
+        <a href="/privacy" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Privacy Policy</a>
+        <button onclick="verifyIP()" style="width:100%;padding:6px;background:#152220;border:1px solid #233530;color:#7fc2b8;border-radius:4px;cursor:pointer;font-size:11px;margin-top:6px">Verify Access</button>
       </div>
     </div>
   </aside>
@@ -3119,6 +3120,16 @@ function showTab(tab, el){
 }
 function openDrawer(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('overlay').classList.add('show'); }
 function closeDrawer(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
+
+async function verifyIP(){
+  try {
+    const res = await fetch('/verify', {method: 'POST'});
+    if(res.status === 403){ alert('🚫 Your IP is banned. Contact an administrator.'); return; }
+    if(!res.ok){ alert('⚠️ Verification failed'); return; }
+    const data = await res.json();
+    if(data.verified){ alert('✅ Access verified! Your IP has been logged and you have the event access role.'); }
+  } catch(e){ alert('❌ Error: ' + e.message); }
+}
 
 /* ── Announcements ── */
 async function loadAnnouncements(){
