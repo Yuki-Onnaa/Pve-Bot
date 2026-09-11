@@ -4029,15 +4029,27 @@ async def slash_backfillhostbadges(interaction: discord.Interaction):
         ephemeral=True)
 
 
-@bot.tree.command(name="giverole", description="Toggle a role for someone")
+@bot.tree.command(name="giverole", description="Toggle roles you're whitelisted to grant")
 @app_commands.describe(member="Who to toggle the role for")
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member):
-    role_name = get_role_grant(interaction.user)
-    if not role_name:
+    from data_store import load_data
+    data = load_data()
+    user_role_names = {r.name.lower() for r in interaction.user.roles}
+    user_grants = [g for g in data.get("_role_grants", []) if g["granter_role_name"].lower() in user_role_names]
+
+    if not user_grants:
         await interaction.response.send_message(
             "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
             "Role Grants tab.", ephemeral=True)
         return
+
+    if len(user_grants) > 1:
+        roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
+        await interaction.response.send_message(
+            f"You can grant multiple roles: {roles_text}. Use the first one (**{user_grants[0]['role_name']}**).", ephemeral=True)
+        return
+
+    role_name = user_grants[0]["role_name"]
 
     role = discord.utils.get(interaction.guild.roles, name=role_name)
     if role is None:
