@@ -631,22 +631,68 @@ async function generateAndLogFingerprint(){
   fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
   fingerprints.screen=`${screen.width}x${screen.height}`;
   fingerprints.colorDepth=screen.colorDepth;
-  fingerprints.cores=navigator.hardwareConcurrency;
-  fingerprints.memory=navigator.deviceMemory;
+
+  const hwid={};
+  hwid.cores=navigator.hardwareConcurrency;
+  hwid.memory=navigator.deviceMemory;
+
+  const webglCanvas=document.createElement('canvas');
+  const gl=webglCanvas.getContext('webgl')||webglCanvas.getContext('experimental-webgl');
+  if(gl){
+    hwid.gpu=gl.getParameter(gl.RENDERER);
+    hwid.vendor=gl.getParameter(gl.VENDOR);
+    hwid.version=gl.getParameter(gl.VERSION);
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    if(ext){
+      hwid.unmaskedGpu=gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+      hwid.unmaskedVendor=gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+    }
+    hwid.maxTexture=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    hwid.maxViewport=gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  }
+
   const canvas=document.createElement('canvas');
   const ctx=canvas.getContext('2d');
   ctx.textBaseline='top';
   ctx.font='14px Arial';
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
-  let webglRenderer='';
-  const webglCanvas=document.createElement('canvas');
-  const gl=webglCanvas.getContext('webgl')||webglCanvas.getContext('experimental-webgl');
-  if(gl){
-    webglRenderer=gl.getParameter(gl.RENDERER);
-    fingerprints.webgl=webglRenderer;
-  }
-  fingerprints.hwid={cores:navigator.hardwareConcurrency,memory:navigator.deviceMemory,gpu:webglRenderer};
+
+  let audioContext;
+  try{
+    audioContext=new(window.AudioContext||window.webkitAudioContext)();
+    hwid.audioSampleRate=audioContext.sampleRate;
+    hwid.audioChannels=audioContext.destination.maxChannelCount;
+    audioContext.close();
+  }catch(e){}
+
+  try{
+    const battery=await navigator.getBattery?.();
+    if(battery){
+      hwid.batteryLevel=battery.level;
+      hwid.batteryCharging=battery.charging;
+    }
+  }catch(e){}
+
+  hwid.timezone=new Date().getTimezoneOffset();
+  hwid.locale=navigator.language;
+  hwid.platform=navigator.platform;
+  hwid.hardwareConcurrency=navigator.hardwareConcurrency;
+  hwid.deviceMemory=navigator.deviceMemory;
+  hwid.maxTouchPoints=navigator.maxTouchPoints;
+  hwid.vendor=navigator.vendor;
+  hwid.plugins=navigator.plugins.length;
+
+  try{
+    const storage=await navigator.storage?.estimate();
+    if(storage){
+      hwid.storageQuota=storage.quota;
+      hwid.storageUsage=storage.usage;
+    }
+  }catch(e){}
+
+  fingerprints.hwid=hwid;
+
   try{
     await fetch('/api/log-fingerprint-anonymous',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:JSON.stringify(fingerprints)})});
   }catch(e){}
