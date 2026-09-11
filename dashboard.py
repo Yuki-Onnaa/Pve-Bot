@@ -650,7 +650,7 @@ def verify():
     return jsonify({"verified": True, "ip": ip})
 
 
-@app.route("/admin/ips")
+@app.route("/dashboard/admin/ips")
 def admin_ips():
     if not session.get("user"):
         return redirect("/login")
