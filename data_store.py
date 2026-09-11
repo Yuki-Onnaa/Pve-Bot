@@ -96,4 +96,44 @@ def get_users_for_ip(ip):
     return list(ip_logs.get(ip, {}).keys())
 
 
+def is_fingerprint_banned(fingerprint):
+    data = load_data()
+    banned_fingerprints = data.get("_fingerprint_bans", {})
+    return fingerprint in banned_fingerprints
+
+
+def ban_fingerprint(fingerprint, user_id):
+    with data_txn() as data:
+        if "_fingerprint_bans" not in data:
+            data["_fingerprint_bans"] = {}
+        data["_fingerprint_bans"][fingerprint] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+
+
+def unban_fingerprint(fingerprint):
+    with data_txn() as data:
+        if "_fingerprint_bans" in data and fingerprint in data["_fingerprint_bans"]:
+            del data["_fingerprint_bans"][fingerprint]
+
+
+def log_fingerprint(user_id, fingerprint):
+    with data_txn() as data:
+        if "_fingerprint_logs" not in data:
+            data["_fingerprint_logs"] = {}
+        if fingerprint not in data["_fingerprint_logs"]:
+            data["_fingerprint_logs"][fingerprint] = {}
+        data["_fingerprint_logs"][fingerprint][str(user_id)] = datetime.now().isoformat()
+
+
+def get_fingerprints_for_user(user_id):
+    data = load_data()
+    fingerprint_logs = data.get("_fingerprint_logs", {})
+    return [fp for fp, users in fingerprint_logs.items() if str(user_id) in users]
+
+
+def get_users_for_fingerprint(fingerprint):
+    data = load_data()
+    fingerprint_logs = data.get("_fingerprint_logs", {})
+    return list(fingerprint_logs.get(fingerprint, {}).keys())
+
+
 from datetime import datetime

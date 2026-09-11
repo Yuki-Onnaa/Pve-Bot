@@ -628,7 +628,41 @@ def verify():
     user_id = session.get("user", {}).get("id")
     ip = get_client_ip()
 
-    from data_store import is_ip_banned
+    from data_store import is_ip_banned, is_fingerprint_banned, log_fingerprint, log_ip
+
+    if request.method == "POST":
+        fingerprint = request.json.get("fingerprint", "").strip()
+        if not fingerprint:
+            return jsonify({"error": "No fingerprint provided"}), 400
+
+        if is_ip_banned(ip) or is_fingerprint_banned(fingerprint):
+            return jsonify({"verified": False, "banned": True}), 403
+
+        log_ip(user_id, ip)
+        log_fingerprint(user_id, fingerprint)
+
+        try:
+            guild = bot.get_guild(GUILD_ID)
+            if guild:
+                member = guild.get_member(int(user_id))
+                if member:
+                    event_access_role = discord.utils.get(guild.roles, name="event access")
+                    no_access_role = discord.utils.get(guild.roles, name="no access")
+
+                    if event_access_role:
+                        asyncio.run_coroutine_threadsafe(
+                            member.add_roles(event_access_role),
+                            bot.loop
+                        )
+                    if no_access_role:
+                        asyncio.run_coroutine_threadsafe(
+                            member.remove_roles(no_access_role),
+                            bot.loop
+                        )
+        except Exception as e:
+            print(f"[Verify] Role assignment failed: {e}")
+
+        return jsonify({"verified": True})
 
     if is_ip_banned(ip):
         return render_template_string("""<!DOCTYPE html>
@@ -662,32 +696,11 @@ p{color:var(--muted);margin-bottom:20px;font-size:14px}
 </body>
 </html>"""), 403
 
-    try:
-        guild = bot.get_guild(GUILD_ID)
-        if guild:
-            member = guild.get_member(int(user_id))
-            if member:
-                event_access_role = discord.utils.get(guild.roles, name="event access")
-                no_access_role = discord.utils.get(guild.roles, name="no access")
-
-                if event_access_role:
-                    asyncio.run_coroutine_threadsafe(
-                        member.add_roles(event_access_role),
-                        bot.loop
-                    )
-                if no_access_role:
-                    asyncio.run_coroutine_threadsafe(
-                        member.remove_roles(no_access_role),
-                        bot.loop
-                    )
-    except Exception as e:
-        print(f"[Verify] Role assignment failed: {e}")
-
     return render_template_string("""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Verification Successful - Matzys Overseer</title>
+<title>Verification - Matzys Overseer</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -707,16 +720,66 @@ p{color:var(--muted);margin:16px 0;font-size:14px}
 .button{display:inline-block;background:var(--moon);color:var(--bg);padding:12px 24px;border-radius:6px;text-decoration:none;
   font-weight:600;border:none;cursor:pointer;font-family:inherit;font-size:14px;transition:background .2s;margin-top:16px}
 .button:hover{background:var(--moon-dim)}
+.loading{animation:pulse 1.5s infinite}@keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
 </style>
 </head>
 <body>
 <div class="verify-container">
-<div class="verify-icon">✅</div>
-<h1>Verified!</h1>
-<p>Your access has been verified successfully.</p>
-<p>You've been granted access to server events and assigned the event access role.</p>
-<a href="/" class="button">Return to Dashboard</a>
+<div class="verify-icon loading">⏳</div>
+<h1>Verifying...</h1>
+<p>Collecting device information and verifying your access.</p>
 </div>
+<script>
+async function generateFingerprint(){
+  const fingerprints={};
+  fingerprints.ua=navigator.userAgent;
+  fingerprints.lang=navigator.language;
+  fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+  fingerprints.screenRes=`${screen.width}x${screen.height}`;
+  fingerprints.colorDepth=screen.colorDepth;
+  fingerprints.platforms=navigator.hardwareConcurrency;
+  fingerprints.memory=navigator.deviceMemory;
+
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  ctx.textBaseline='top';
+  ctx.font='14px Arial';
+  ctx.fillText('🔐',10,10);
+  fingerprints.canvas=canvas.toDataURL().substring(0,50);
+
+  const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
+  if(gl){
+    fingerprints.webgl=gl.getParameter(gl.RENDERER);
+  }
+
+  const fp=Object.values(fingerprints).join('|');
+  const encoder=new TextEncoder();
+  const data=encoder.encode(fp);
+  const hashBuffer=await crypto.subtle.digest('SHA-256',data);
+  const hashArray=Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+generateFingerprint().then(async fp=>{
+  try{
+    const res=await fetch('/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:fp})});
+    if(res.ok){
+      document.querySelector('.verify-icon').textContent='✅';
+      document.querySelector('h1').textContent='Verified!';
+      document.querySelector('p').textContent='Your access has been verified successfully.';
+      document.querySelector('.verify-container').innerHTML+='<p>You\'ve been granted access to server events and assigned the event access role.</p><a href="/" class="button">Return to Dashboard</a>';
+    }else{
+      document.querySelector('.verify-icon').textContent='🚫';
+      document.querySelector('h1').textContent='Access Denied';
+      document.querySelector('p').textContent='Your device has been banned from accessing this server.';
+    }
+  }catch(e){
+    document.querySelector('.verify-icon').textContent='❌';
+    document.querySelector('h1').textContent='Error';
+    document.querySelector('p').textContent='An error occurred during verification.';
+  }
+});
+</script>
 </body>
 </html>""")
 
