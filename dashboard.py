@@ -729,9 +729,6 @@ body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-s
 .verify-icon{font-size:64px;margin-bottom:20px;animation:bounce .6s ease}
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
 h1{font-size:28px;margin-bottom:10px;color:var(--sage)}
-.ip-info{background:var(--card-2);border:1px solid var(--border);border-radius:6px;padding:16px;margin:20px 0;text-align:left}
-.ip-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.ip-value{font-size:18px;color:var(--moon);font-family:ui-monospace,"SF Mono",Consolas,monospace;margin-top:6px;word-break:break-all}
 p{color:var(--muted);margin:16px 0;font-size:14px}
 .button{display:inline-block;background:var(--moon);color:var(--bg);padding:12px 24px;border-radius:6px;text-decoration:none;
   font-weight:600;border:none;cursor:pointer;font-family:inherit;font-size:14px;transition:background .2s;margin-top:16px}
@@ -743,15 +740,11 @@ p{color:var(--muted);margin:16px 0;font-size:14px}
 <div class="verify-icon">✅</div>
 <h1>Verified!</h1>
 <p>Your access has been verified successfully.</p>
-<div class="ip-info">
-<div class="ip-label">Logged IP Address</div>
-<div class="ip-value">{{ ip }}</div>
-</div>
 <p>You've been granted access to server events and assigned the event access role.</p>
 <a href="/" class="button">Return to Dashboard</a>
 </div>
 </body>
-</html>""", ip=ip)
+</html>""")
 
 
 @app.route("/dashboard/admin/ips")
