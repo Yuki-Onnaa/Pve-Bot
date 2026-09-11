@@ -715,6 +715,249 @@ def logout():
     session.clear()
     return redirect("/login")
 
+@app.route("/terms")
+def terms():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service - Pve-Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
+.container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
+h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+p{margin-bottom:12px;color:#eef4f2}
+li{margin-left:20px;margin-bottom:8px}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+.back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back">← Back to dashboard</a>
+<h1>Terms of Service - Pve-Bot</h1>
+<p><strong>Last Updated:</strong> September 11, 2026</p>
+
+<h2>1. Agreement to Terms</h2>
+<p>By using Pve-Bot (the "Service"), you agree to these Terms of Service. If you don't agree, don't use the bot. We may update these terms at any time, and continued use means you accept changes.</p>
+
+<h2>2. Description of Service</h2>
+<p>Pve-Bot is a Discord bot that provides:</p>
+<ul>
+<li>Vouch tracking and management system</li>
+<li>Leaderboards and statistics</li>
+<li>User threat scoring and behavioral analysis</li>
+<li>On-leave/role management</li>
+<li>Admin audit logging</li>
+</ul>
+
+<h2>3. User Responsibilities</h2>
+<p>You agree to:</p>
+<ul>
+<li><strong>Use the bot legally</strong> - Don't use it for illegal activities, harassment, or abuse</li>
+<li><strong>Respect Discord ToS</strong> - This bot is subject to Discord's Terms of Service</li>
+<li><strong>Don't circumvent systems</strong> - No hacking, exploiting, or bypassing security features</li>
+<li><strong>Accurate information</strong> - Vouches must be honest and accurate</li>
+<li><strong>No spam</strong> - Don't abuse commands or flood the server</li>
+</ul>
+<p>Violations may result in bot removal from your server.</p>
+
+<h2>4. Prohibited Activities</h2>
+<p>Don't use Pve-Bot to:</p>
+<ul>
+<li>Harass, threaten, or abuse other users</li>
+<li>Spam commands or flood the server</li>
+<li>Manipulate vouch counts or leaderboards</li>
+<li>Reverse-engineer or modify the bot code without permission</li>
+<li>Attempt to gain unauthorized access to data</li>
+<li>Violate Discord's Terms of Service or Community Guidelines</li>
+</ul>
+
+<h2>5. Admin Authority</h2>
+<p>Server administrators have authority to:</p>
+<ul>
+<li>Manage vouch data (add, remove, revert)</li>
+<li>Configure bot settings for their server</li>
+<li>Remove users from tracking systems</li>
+<li>Access audit logs</li>
+</ul>
+<p>The bot tracks administrative actions and logs them for security purposes.</p>
+
+<h2>6. Data Retention</h2>
+<p>Your data is stored while:</p>
+<ul>
+<li>You are a member of a server using Pve-Bot</li>
+<li>Administrators haven't deleted your records</li>
+<li>The server hasn't removed the bot</li>
+</ul>
+<p>You can request data deletion from server admins or the bot owners.</p>
+
+<h2>7. Limitation of Liability</h2>
+<p><strong>THE BOT IS PROVIDED "AS-IS" WITHOUT WARRANTIES. WE ARE NOT LIABLE FOR:</strong></p>
+<ul>
+<li>Data loss or corruption</li>
+<li>Service interruptions or downtime</li>
+<li>Leaderboard inaccuracies</li>
+<li>Decisions made based on bot data</li>
+</ul>
+<p>Use this bot at your own risk. Don't rely on it as your sole source of important decisions.</p>
+
+<h2>8. Disclaimers</h2>
+<ul>
+<li><strong>No Guarantees:</strong> The bot may have bugs or unexpected behavior</li>
+<li><strong>Third-party Service:</strong> The bot uses Discord's services and is subject to their policies</li>
+<li><strong>No Legal Advice:</strong> Threat scores and vouchings are not legal determinations</li>
+<li><strong>Community Tool:</strong> The bot is meant for community management, not legal enforcement</li>
+</ul>
+
+<h2>9. Server Admin Liability</h2>
+<p>Server administrators are responsible for:</p>
+<ul>
+<li>Compliance with Discord ToS</li>
+<li>Proper use of bot features</li>
+<li>User privacy in their community</li>
+<li>Vouch data accuracy</li>
+</ul>
+
+<h2>10. Bot Removal</h2>
+<p>We reserve the right to:</p>
+<ul>
+<li>Remove the bot from servers violating these terms</li>
+<li>Disable features that enable abuse</li>
+<li>Suspend or terminate access for bad actors</li>
+</ul>
+
+<h2>11. Changes to Terms</h2>
+<p>We may update these terms anytime. Continued use = acceptance.</p>
+
+<h2>12. Governing Law</h2>
+<p>These terms are governed by applicable law. Disputes should be resolved through Discord's mechanisms first.</p>
+
+<h2>13. Contact</h2>
+<p>For terms questions: Contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a> or Discord support channels.</p>
+
+<p><strong>By inviting Pve-Bot to your server, you accept these Terms of Service.</strong></p>
+</div>
+</body>
+</html>"""
+    return html
+
+@app.route("/privacy")
+def privacy():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy - Pve-Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
+.container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
+h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+p{margin-bottom:12px;color:#eef4f2}
+li{margin-left:20px;margin-bottom:8px}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+.back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back">← Back to dashboard</a>
+<h1>Privacy Policy - Pve-Bot</h1>
+<p><strong>Last Updated:</strong> September 11, 2026</p>
+
+<h2>1. Overview</h2>
+<p>Pve-Bot ("we", "us", "the Service") is committed to protecting your privacy. This policy explains what data we collect, how we use it, and your rights.</p>
+
+<h2>2. What Data We Collect</h2>
+<p>We collect and store:</p>
+
+<h3 style="font-size:16px;margin-top:15px">User Identifiers</h3>
+<ul>
+<li><strong>Discord User ID</strong> (required to track vouches)</li>
+<li><strong>Discord Username/Display Name</strong> (for display purposes)</li>
+<li><strong>Server/Guild ID</strong> (to organize data by server)</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Vouch Data</h3>
+<ul>
+<li><strong>Vouch records</strong> - Category, event type, count, points</li>
+<li><strong>Who vouched for you</strong> (user ID of voucher)</li>
+<li><strong>When vouched</strong> (timestamp)</li>
+<li><strong>Vouch comments/notes</strong> (if provided)</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Behavioral Data</h3>
+<ul>
+<li><strong>Threat scores</strong> (calculated from vouches and behavior)</li>
+<li><strong>On-leave status</strong> (duration, reason)</li>
+<li><strong>Role changes and removals</strong></li>
+<li><strong>Leaderboard positions</strong></li>
+</ul>
+
+<h2>3. What We DON'T Collect</h2>
+<p>We explicitly do NOT collect:</p>
+<ul>
+<li>Passwords or authentication tokens</li>
+<li>Direct messages or private communication</li>
+<li>Payment information</li>
+<li>Location data</li>
+<li>Browsing history outside Discord</li>
+<li>Biometric data</li>
+<li>Sensitive personal information</li>
+</ul>
+
+<h2>4. How We Use Your Data</h2>
+<p>We use your data to:</p>
+<ul>
+<li><strong>Maintain vouch records</strong> - Core functionality</li>
+<li><strong>Calculate leaderboards</strong> - Ranking and statistics</li>
+<li><strong>Generate threat scores</strong> - Behavioral analysis for server safety</li>
+<li><strong>Audit trails</strong> - Track who modified what and when</li>
+<li><strong>Service improvement</strong> - Fix bugs, optimize performance</li>
+<li><strong>Compliance</strong> - Prevent abuse and enforce Terms of Service</li>
+</ul>
+
+<h2>5. Data Storage & Security</h2>
+<h3 style="font-size:16px;margin-top:15px">Where Data is Stored</h3>
+<ul>
+<li><strong>Primary:</strong> JSON file on deployment server (Railway)</li>
+<li><strong>Backup:</strong> Encrypted backups if configured</li>
+<li><strong>Not cloud:</strong> Data is not replicated to unknown cloud services</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Security Measures</h3>
+<ul>
+<li><strong>File permissions:</strong> Restricted access to data files</li>
+<li><strong>Encryption in transit:</strong> HTTPS for all dashboard connections</li>
+<li><strong>No public access:</strong> Data is not publicly accessible</li>
+<li><strong>Admin-only access:</strong> Only server admins can view/modify</li>
+</ul>
+
+<h2>6. Your Rights</h2>
+<p>You have the right to:</p>
+<ul>
+<li><strong>Access:</strong> Ask your admin for your data</li>
+<li><strong>Correct:</strong> Request inaccurate data be fixed</li>
+<li><strong>Delete:</strong> Request your data be removed</li>
+<li><strong>Port:</strong> Get your data in a readable format</li>
+<li><strong>Object:</strong> Challenge how your data is used</li>
+</ul>
+
+<h2>7. Contact</h2>
+<p>For privacy questions, contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a>.</p>
+
+<p><strong>By using Pve-Bot, you accept this Privacy Policy.</strong></p>
+</div>
+</body>
+</html>"""
+    return html
+
 @app.route("/")
 @member_required
 def index():
@@ -2582,8 +2825,8 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <a class="sb-signout" href="/logout">Sign out</a>
       </div>
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;">
-        <a href="https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/TERMS_OF_SERVICE.md" target="_blank" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
-        <a href="https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/PRIVACY_POLICY.md" target="_blank" style="color:var(--muted);text-decoration:none">Privacy Policy</a>
+        <a href="/terms" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
+        <a href="/privacy" style="color:var(--muted);text-decoration:none">Privacy Policy</a>
       </div>
     </div>
   </aside>

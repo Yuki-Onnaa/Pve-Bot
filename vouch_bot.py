@@ -3161,14 +3161,15 @@ async def personas_cmd(ctx):
 @bot.command(name="info", aliases=["about"])
 async def info_cmd(ctx):
     """Show bot info and legal documents."""
+    dashboard_url = os.environ.get("DASHBOARD_URL", "https://matzys.up.railway.app")
     embed = discord.Embed(
         title="Pve-Bot",
         description="Community threat scoring and vouch tracking bot",
         color=0x7fc2b8
     )
     embed.add_field(
-        name="Documentation",
-        value="[Terms of Service](https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/TERMS_OF_SERVICE.md)\n[Privacy Policy](https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/PRIVACY_POLICY.md)",
+        name="Legal",
+        value=f"[Terms of Service]({dashboard_url}/terms)\n[Privacy Policy]({dashboard_url}/privacy)",
         inline=False
     )
     embed.add_field(
