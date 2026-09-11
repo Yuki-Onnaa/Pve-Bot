@@ -179,192 +179,6 @@ def ensure_user_cat(data, uid, category):
         data[uid][category]["events"].setdefault(e, 0)
     return data[uid][category]
 
-def calculate_member_streak_score(record):
-    """Calculate an activity score (0-3) based on hosting streak and consistency."""
-    host_runs = record.get("host_runs", [])
-    if not host_runs:
-        return 0
-
-    now = datetime.now(timezone.utc)
-    try:
-        latest = datetime.fromisoformat(host_runs[-1])
-    except (ValueError, IndexError):
-        return 0
-
-    days_since_last = (now - latest).days
-
-    if days_since_last > 30:
-        return 0
-    if days_since_last > 14:
-        return 1
-    if days_since_last > 7:
-        return 2
-    return 3
-
-def get_member_activity_stats(data, uid):
-    """Get comprehensive activity stats for a member including streak score and on-leave status."""
-    rec = data.get(str(uid), {})
-    if not rec:
-        return None
-
-    total_points = combined_total(rec)
-    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
-    host_runs = len(rec.get("host_runs", []))
-    host_total = rec.get("host_runs_total", 0)
-    streak_score = calculate_member_streak_score(rec)
-
-    on_leave = False
-    leave_logs = data.get("_on_leave_logs", [])
-    for log in leave_logs[-50:]:
-        if str(log.get("user_id")) == str(uid) and log.get("action") == "start":
-            on_leave = True
-            break
-
-    return {
-        "uid": str(uid),
-        "total_points": total_points,
-        "total_vouches": total_vouches,
-        "host_runs": host_runs,
-        "host_total": host_total,
-        "streak_score": streak_score,
-        "on_leave": on_leave,
-    }
-
-def calculate_threat_score(data, uid):
-    """Calculate a threat score (0-100) based on user behavior patterns.
-
-    Factors:
-    - Recent destructive actions (channel/role deletions)
-    - Action velocity (actions in last hour)
-    - Member activity level (inactive users = higher threat)
-    - On-leave status (users on leave shouldn't have perms)
-    """
-    uid_str = str(uid)
-    threat = 0
-
-    action_log = data.get("_antinuke_action_log", {}).get(uid_str, [])
-    recent_actions = [a for a in action_log if a.get("time")]
-
-    if recent_actions:
-        now = datetime.now(timezone.utc)
-        try:
-            last_hour = [a for a in recent_actions if (now - datetime.fromisoformat(a["time"])).total_seconds() < 3600]
-            threat += min(20, len(last_hour) * 3)
-
-            deletion_actions = [a for a in recent_actions[-20:] if a.get("type") in ["channel_delete", "role_delete"]]
-            threat += min(30, len(deletion_actions) * 5)
-        except (ValueError, TypeError):
-            pass
-
-    activity_stats = get_member_activity_stats(data, uid)
-    if activity_stats:
-        if activity_stats["streak_score"] == 0:
-            threat += 15
-        if activity_stats.get("on_leave"):
-            threat += 25
-
-    return min(100, threat)
-
-def detect_permission_escalation_pattern(data, uid):
-    """Detect if a user shows signs of attempting permission escalation.
-
-    Returns (is_escalation, reason) tuple.
-    """
-    uid_str = str(uid)
-    action_log = data.get("_antinuke_action_log", {}).get(uid_str, [])
-
-    if not action_log:
-        return False, None
-
-    dangerous_actions = [a for a in action_log[-30:] if a.get("type") in ["role_assign", "role_create"]]
-
-    if len(dangerous_actions) >= 3:
-        return True, "Multiple rapid role assignment/creation attempts"
-
-    activity_stats = get_member_activity_stats(data, uid)
-    if activity_stats and activity_stats.get("on_leave") and dangerous_actions:
-        return True, "On-leave user attempting role modifications"
-
-    return False, None
-
-def calculate_member_milestones(rec):
-    """Calculate member achievement milestones and progression level."""
-    host_total = rec.get("host_runs_total", 0)
-    total_points = combined_total(rec)
-    total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
-
-    milestones = []
-    achievements = []
-
-    vouch_milestones = [1, 5, 10, 25, 50, 100]
-    for threshold in vouch_milestones:
-        if total_vouches >= threshold:
-            milestones.append({"type": "vouches", "threshold": threshold, "reached": True})
-        else:
-            milestones.append({"type": "vouches", "threshold": threshold, "reached": False})
-
-    host_milestones = [1, 5, 10, 25, 50]
-    for threshold in host_milestones:
-        if host_total >= threshold:
-            milestones.append({"type": "hosts", "threshold": threshold, "reached": True})
-        else:
-            milestones.append({"type": "hosts", "threshold": threshold, "reached": False})
-
-    points_milestones = [10, 50, 100, 250, 500, 1000]
-    for threshold in points_milestones:
-        if total_points >= threshold:
-            milestones.append({"type": "points", "threshold": threshold, "reached": True})
-        else:
-            milestones.append({"type": "points", "threshold": threshold, "reached": False})
-
-    if total_vouches >= 10:
-        achievements.append("vouch_veteran")
-    if host_total >= 10:
-        achievements.append("host_master")
-    if total_points >= 100:
-        achievements.append("points_collector")
-
-    return {
-        "milestones": milestones,
-        "achievements": achievements,
-        "next_milestone": next((m for m in milestones if not m["reached"]), None),
-    }
-
-def get_event_performance(data, category):
-    """Analyze event performance and popularity for a category."""
-    if category not in ALL_CATEGORIES:
-        return None
-
-    event_stats = {}
-    total_vouches = 0
-    total_points = 0
-
-    for uid, rec in user_records(data):
-        cat_data = rec.get(category, {})
-        for event_name, count in cat_data.get("events", {}).items():
-            if event_name not in event_stats:
-                event_stats[event_name] = {"count": 0, "points": 0}
-            event_stats[event_name]["count"] += count
-            total_vouches += count
-
-        event_points = cat_data.get("total_points", 0)
-        total_points += event_points
-
-    ranked = sorted(
-        [{"event": e, **s} for e, s in event_stats.items()],
-        key=lambda x: x["count"],
-        reverse=True
-    )
-
-    return {
-        "category": category,
-        "events": ranked,
-        "total_vouches": total_vouches,
-        "total_points": round(total_points, 1),
-        "unique_events": len(event_stats),
-        "most_popular": ranked[0]["event"] if ranked else None,
-    }
-
 # ─────────────────────────────────────────────────────────────
 # SITE ACTIVITY
 # Page loads are counted in memory and flushed to disk periodically, so a busy
@@ -787,6 +601,124 @@ def badge_icon(key):
                      headers={"Cache-Control": "public, max-age=604800"})
 
 
+def get_client_ip():
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    return request.remote_addr
+
+
+@app.before_request
+def log_ip_access():
+    if session.get("user"):
+        user_id = session.get("user", {}).get("id")
+        ip = get_client_ip()
+        if user_id and ip:
+            from data_store import log_ip
+            try:
+                log_ip(user_id, ip)
+            except Exception:
+                pass
+
+
+@app.route("/verify", methods=["GET", "POST"])
+def verify():
+    if not session.get("user"):
+        return jsonify({"error": "Not authenticated"}), 401
+
+    user_id = session.get("user", {}).get("id")
+    ip = get_client_ip()
+
+    from data_store import is_ip_banned
+
+    if is_ip_banned(ip):
+        return jsonify({"error": "IP is banned", "banned": True}), 403
+
+    try:
+        guild = bot.get_guild(GUILD_ID)
+        if guild:
+            member = guild.get_member(int(user_id))
+            if member:
+                event_access_role = discord.utils.get(guild.roles, name="event access")
+                if event_access_role:
+                    asyncio.run_coroutine_threadsafe(
+                        member.add_roles(event_access_role),
+                        bot.loop
+                    )
+    except Exception as e:
+        print(f"[Verify] Role assignment failed: {e}")
+
+    return jsonify({"verified": True, "ip": ip})
+
+
+@app.route("/admin/ips")
+def admin_ips():
+    if not session.get("user"):
+        return redirect("/login")
+    user_id = session.get("user", {}).get("id")
+    if int(user_id) != 1387930623766827140:
+        return jsonify({"error": "Access denied"}), 403
+
+    from data_store import load_data
+
+    data = load_data()
+    ip_logs = data.get("_ip_logs", {})
+    ip_bans = data.get("_ip_bans", {})
+
+    ips_info = []
+    for ip, users in ip_logs.items():
+        banned = ip in ip_bans
+        ips_info.append({
+            "ip": ip,
+            "users": list(users.keys()),
+            "banned": banned,
+            "last_seen": max(users.values()) if users else None
+        })
+
+    ips_info.sort(key=lambda x: x["last_seen"] or "", reverse=True)
+
+    html = """<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP Management - Admin</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:system-ui;padding:20px}
+.container{max-width:1200px;margin:0 auto}
+h1{margin-bottom:20px;color:#7fc2b8}
+table{width:100%;border-collapse:collapse;background:#0d1614;border:1px solid #233530}
+th,td{padding:12px;text-align:left;border-bottom:1px solid #233530}
+th{background:#152220;font-weight:600}
+.banned{background:rgba(199,122,128,.1);color:#c77a80}
+.copy-btn{background:#152220;border:1px solid #233530;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px}
+.copy-btn:hover{background:#233530}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+</style>
+</head><body>
+<div class="container">
+<h1>IP Management</h1>
+<p style="margin-bottom:20px;color:#8fa39d">Total IPs: """ + str(len(ips_info)) + """ | Banned: """ + str(sum(1 for x in ips_info if x["banned"])) + """</p>
+<table>
+<thead><tr><th>IP Address</th><th>Users</th><th>Status</th><th>Last Seen</th></tr></thead>
+<tbody>
+"""
+
+    for info in ips_info:
+        status = '<span class="banned">🚫 BANNED</span>' if info["banned"] else '✅ Active'
+        users_html = ", ".join([f'<a href="/?uid={u}">{u}</a>' for u in info["users"]])
+        html += f"""<tr class="{'banned' if info['banned'] else ''}">
+<td><code>{info['ip']}</code> <button class="copy-btn" onclick="navigator.clipboard.writeText('{info['ip']}')">Copy</button></td>
+<td>{users_html}</td>
+<td>{status}</td>
+<td>{info['last_seen'][:10] if info['last_seen'] else 'N/A'}</td>
+</tr>"""
+
+    html += """</tbody></table>
+</div></body></html>"""
+
+    return html
+
+
 @app.route("/login")
 def login():
     if session.get("user") and session.get("admin_guilds"):
@@ -900,6 +832,249 @@ def oauth_callback():
 def logout():
     session.clear()
     return redirect("/login")
+
+@app.route("/terms")
+def terms():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service - Pve-Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
+.container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
+h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+p{margin-bottom:12px;color:#eef4f2}
+li{margin-left:20px;margin-bottom:8px}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+.back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back">← Back to dashboard</a>
+<h1>Terms of Service - Pve-Bot</h1>
+<p><strong>Last Updated:</strong> September 11, 2026</p>
+
+<h2>1. Agreement to Terms</h2>
+<p>By using Pve-Bot (the "Service"), you agree to these Terms of Service. If you don't agree, don't use the bot. We may update these terms at any time, and continued use means you accept changes.</p>
+
+<h2>2. Description of Service</h2>
+<p>Pve-Bot is a Discord bot that provides:</p>
+<ul>
+<li>Vouch tracking and management system</li>
+<li>Leaderboards and statistics</li>
+<li>User threat scoring and behavioral analysis</li>
+<li>On-leave/role management</li>
+<li>Admin audit logging</li>
+</ul>
+
+<h2>3. User Responsibilities</h2>
+<p>You agree to:</p>
+<ul>
+<li><strong>Use the bot legally</strong> - Don't use it for illegal activities, harassment, or abuse</li>
+<li><strong>Respect Discord ToS</strong> - This bot is subject to Discord's Terms of Service</li>
+<li><strong>Don't circumvent systems</strong> - No hacking, exploiting, or bypassing security features</li>
+<li><strong>Accurate information</strong> - Vouches must be honest and accurate</li>
+<li><strong>No spam</strong> - Don't abuse commands or flood the server</li>
+</ul>
+<p>Violations may result in bot removal from your server.</p>
+
+<h2>4. Prohibited Activities</h2>
+<p>Don't use Pve-Bot to:</p>
+<ul>
+<li>Harass, threaten, or abuse other users</li>
+<li>Spam commands or flood the server</li>
+<li>Manipulate vouch counts or leaderboards</li>
+<li>Reverse-engineer or modify the bot code without permission</li>
+<li>Attempt to gain unauthorized access to data</li>
+<li>Violate Discord's Terms of Service or Community Guidelines</li>
+</ul>
+
+<h2>5. Admin Authority</h2>
+<p>Server administrators have authority to:</p>
+<ul>
+<li>Manage vouch data (add, remove, revert)</li>
+<li>Configure bot settings for their server</li>
+<li>Remove users from tracking systems</li>
+<li>Access audit logs</li>
+</ul>
+<p>The bot tracks administrative actions and logs them for security purposes.</p>
+
+<h2>6. Data Retention</h2>
+<p>Your data is stored while:</p>
+<ul>
+<li>You are a member of a server using Pve-Bot</li>
+<li>Administrators haven't deleted your records</li>
+<li>The server hasn't removed the bot</li>
+</ul>
+<p>You can request data deletion from server admins or the bot owners.</p>
+
+<h2>7. Limitation of Liability</h2>
+<p><strong>THE BOT IS PROVIDED "AS-IS" WITHOUT WARRANTIES. WE ARE NOT LIABLE FOR:</strong></p>
+<ul>
+<li>Data loss or corruption</li>
+<li>Service interruptions or downtime</li>
+<li>Leaderboard inaccuracies</li>
+<li>Decisions made based on bot data</li>
+</ul>
+<p>Use this bot at your own risk. Don't rely on it as your sole source of important decisions.</p>
+
+<h2>8. Disclaimers</h2>
+<ul>
+<li><strong>No Guarantees:</strong> The bot may have bugs or unexpected behavior</li>
+<li><strong>Third-party Service:</strong> The bot uses Discord's services and is subject to their policies</li>
+<li><strong>No Legal Advice:</strong> Threat scores and vouchings are not legal determinations</li>
+<li><strong>Community Tool:</strong> The bot is meant for community management, not legal enforcement</li>
+</ul>
+
+<h2>9. Server Admin Liability</h2>
+<p>Server administrators are responsible for:</p>
+<ul>
+<li>Compliance with Discord ToS</li>
+<li>Proper use of bot features</li>
+<li>User privacy in their community</li>
+<li>Vouch data accuracy</li>
+</ul>
+
+<h2>10. Bot Removal</h2>
+<p>We reserve the right to:</p>
+<ul>
+<li>Remove the bot from servers violating these terms</li>
+<li>Disable features that enable abuse</li>
+<li>Suspend or terminate access for bad actors</li>
+</ul>
+
+<h2>11. Changes to Terms</h2>
+<p>We may update these terms anytime. Continued use = acceptance.</p>
+
+<h2>12. Governing Law</h2>
+<p>These terms are governed by applicable law. Disputes should be resolved through Discord's mechanisms first.</p>
+
+<h2>13. Contact</h2>
+<p>For terms questions: Contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a> or Discord support channels.</p>
+
+<p><strong>By inviting Pve-Bot to your server, you accept these Terms of Service.</strong></p>
+</div>
+</body>
+</html>"""
+    return html
+
+@app.route("/privacy")
+def privacy():
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy - Pve-Bot</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
+.container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
+h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+p{margin-bottom:12px;color:#eef4f2}
+li{margin-left:20px;margin-bottom:8px}
+a{color:#7fc2b8;text-decoration:none}
+a:hover{text-decoration:underline}
+.back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back">← Back to dashboard</a>
+<h1>Privacy Policy - Pve-Bot</h1>
+<p><strong>Last Updated:</strong> September 11, 2026</p>
+
+<h2>1. Overview</h2>
+<p>Pve-Bot ("we", "us", "the Service") is committed to protecting your privacy. This policy explains what data we collect, how we use it, and your rights.</p>
+
+<h2>2. What Data We Collect</h2>
+<p>We collect and store:</p>
+
+<h3 style="font-size:16px;margin-top:15px">User Identifiers</h3>
+<ul>
+<li><strong>Discord User ID</strong> (required to track vouches)</li>
+<li><strong>Discord Username/Display Name</strong> (for display purposes)</li>
+<li><strong>Server/Guild ID</strong> (to organize data by server)</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Vouch Data</h3>
+<ul>
+<li><strong>Vouch records</strong> - Category, event type, count, points</li>
+<li><strong>Who vouched for you</strong> (user ID of voucher)</li>
+<li><strong>When vouched</strong> (timestamp)</li>
+<li><strong>Vouch comments/notes</strong> (if provided)</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Behavioral Data</h3>
+<ul>
+<li><strong>Threat scores</strong> (calculated from vouches and behavior)</li>
+<li><strong>On-leave status</strong> (duration, reason)</li>
+<li><strong>Role changes and removals</strong></li>
+<li><strong>Leaderboard positions</strong></li>
+</ul>
+
+<h2>3. What We DON'T Collect</h2>
+<p>We explicitly do NOT collect:</p>
+<ul>
+<li>Passwords or authentication tokens</li>
+<li>Direct messages or private communication</li>
+<li>Payment information</li>
+<li>Location data</li>
+<li>Browsing history outside Discord</li>
+<li>Biometric data</li>
+<li>Sensitive personal information</li>
+</ul>
+
+<h2>4. How We Use Your Data</h2>
+<p>We use your data to:</p>
+<ul>
+<li><strong>Maintain vouch records</strong> - Core functionality</li>
+<li><strong>Calculate leaderboards</strong> - Ranking and statistics</li>
+<li><strong>Generate threat scores</strong> - Behavioral analysis for server safety</li>
+<li><strong>Audit trails</strong> - Track who modified what and when</li>
+<li><strong>Service improvement</strong> - Fix bugs, optimize performance</li>
+<li><strong>Compliance</strong> - Prevent abuse and enforce Terms of Service</li>
+</ul>
+
+<h2>5. Data Storage & Security</h2>
+<h3 style="font-size:16px;margin-top:15px">Where Data is Stored</h3>
+<ul>
+<li><strong>Primary:</strong> JSON file on deployment server (Railway)</li>
+<li><strong>Backup:</strong> Encrypted backups if configured</li>
+<li><strong>Not cloud:</strong> Data is not replicated to unknown cloud services</li>
+</ul>
+
+<h3 style="font-size:16px;margin-top:15px">Security Measures</h3>
+<ul>
+<li><strong>File permissions:</strong> Restricted access to data files</li>
+<li><strong>Encryption in transit:</strong> HTTPS for all dashboard connections</li>
+<li><strong>No public access:</strong> Data is not publicly accessible</li>
+<li><strong>Admin-only access:</strong> Only server admins can view/modify</li>
+</ul>
+
+<h2>6. Your Rights</h2>
+<p>You have the right to:</p>
+<ul>
+<li><strong>Access:</strong> Ask your admin for your data</li>
+<li><strong>Correct:</strong> Request inaccurate data be fixed</li>
+<li><strong>Delete:</strong> Request your data be removed</li>
+<li><strong>Port:</strong> Get your data in a readable format</li>
+<li><strong>Object:</strong> Challenge how your data is used</li>
+</ul>
+
+<h2>7. Contact</h2>
+<p>For privacy questions, contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a>.</p>
+
+<p><strong>By using Pve-Bot, you accept this Privacy Policy.</strong></p>
+</div>
+</body>
+</html>"""
+    return html
 
 @app.route("/")
 @member_required
@@ -1215,18 +1390,11 @@ def api_members():
             if progress and progress.get("current"):
                 rank = {"name": progress["current"], "category": CATEGORY_NAMES[top_cat]}
 
-        on_leave = False
-        leave_logs = data.get("_on_leave_logs", [])
-        for log in leave_logs[-100:]:
-            if log.get("user_id") == uid and log.get("action") == "start":
-                on_leave = True
-                break
-
         who = resolve_user(uid)
         rows.append({
             "uid": uid, "name": who["name"], "avatar": who["avatar"], "resolved": who["resolved"],
             "total": total, "vouches": vouches, "totals": totals, "rank": rank,
-            "is_me": uid == me, "badge": top_host_badge(rec), "on_leave": on_leave,
+            "is_me": uid == me, "badge": top_host_badge(rec),
         })
 
     rows.sort(key=lambda r: r["total"], reverse=True)
@@ -1740,17 +1908,6 @@ def api_antinuke_whitelist_delete(user_id):
         data["_antinuke_whitelist"] = new_entries
     return jsonify({"ok": True})
 
-@app.route("/api/antinuke_action_log", methods=["GET"])
-@admin_required
-def api_antinuke_action_log():
-    """Get recent anti-nuke actions for monitoring and analysis."""
-    data = load_data()
-    action_log = data.get("_antinuke_action_log", {})
-    result = {}
-    for user_id, actions in action_log.items():
-        result[user_id] = sorted(actions, key=lambda a: a.get("time", ""), reverse=True)[:50]
-    return jsonify(result)
-
 # ── API: Role grants (anyone holding a granter role can grant exactly one target role via /giverole) ──
 
 @app.route("/api/role_grants", methods=["GET"])
@@ -1958,25 +2115,8 @@ def api_on_leave():
     current = [e for e in last_by_user.values() if e.get("action") == "start"]
     current.sort(key=lambda e: e.get("time", ""), reverse=True)
 
-    enhanced_current = []
-    for entry in current:
-        uid = entry.get("user_id")
-        who = resolve_user(uid)
-        threat = calculate_threat_score(data, uid)
-        enhanced_current.append({
-            **entry,
-            "name": who["name"],
-            "avatar": who["avatar"],
-            "threat_score": threat,
-            "flag": "security_concern" if threat >= 40 else None,
-        })
-
     history = sorted(logs, key=lambda e: e.get("time", ""), reverse=True)[:200]
-    return jsonify({
-        "current": enhanced_current,
-        "history": history,
-        "security_concerns": sum(1 for e in enhanced_current if e.get("flag") == "security_concern"),
-    })
+    return jsonify({"current": current, "history": history})
 
 # ── API: Audit Log ──
 
@@ -2391,671 +2531,6 @@ def api_events_update():
         data["_event_schedule"] = validated
     return jsonify({"ok": True})
 
-@app.route("/api/member/<uid>/activity")
-@member_required
-def api_member_activity(uid):
-    """Get detailed activity stats for a specific member."""
-    data = load_data()
-    stats = get_member_activity_stats(data, uid)
-    if not stats:
-        return jsonify({"error": "Member not found"}), 404
-    return jsonify(stats)
-
-@app.route("/api/members/activity-leaderboard")
-@member_required
-def api_members_activity_leaderboard():
-    """Get members ranked by activity (streak score, host runs, consistency)."""
-    data = load_data()
-    members = []
-
-    for uid, rec in user_records(data):
-        stats = get_member_activity_stats(data, uid)
-        if stats and stats["total_points"] > 0:
-            members.append(stats)
-
-    members.sort(key=lambda m: (m["streak_score"], m["host_total"], m["host_runs"]), reverse=True)
-
-    for i, member in enumerate(members):
-        member["activity_rank"] = i + 1
-
-    return jsonify({
-        "leaderboard": members[:100],
-        "count": len(members),
-    })
-
-@app.route("/api/members/streaks")
-@member_required
-def api_members_streaks():
-    """Get members grouped by current activity streak level (0-3)."""
-    data = load_data()
-    streaks = {0: [], 1: [], 2: [], 3: []}
-
-    for uid, rec in user_records(data):
-        who = resolve_user(uid)
-        if combined_total(rec) > 0:
-            streak_score = calculate_member_streak_score(rec)
-            streaks[streak_score].append({
-                "uid": uid,
-                "name": who["name"],
-                "avatar": who["avatar"],
-                "streak_score": streak_score,
-                "host_total": rec.get("host_runs_total", 0),
-                "host_runs": len(rec.get("host_runs", [])),
-            })
-
-    for score in streaks:
-        streaks[score].sort(key=lambda m: (m["host_total"], m["host_runs"]), reverse=True)
-
-    return jsonify({
-        "active": streaks[3],
-        "semi_active": streaks[2],
-        "inactive_recent": streaks[1],
-        "dormant": streaks[0],
-    })
-
-@app.route("/api/members/threat-assessment")
-@admin_required
-def api_members_threat_assessment():
-    """Get threat scores for all members based on behavioral patterns and activity."""
-    data = load_data()
-    threats = []
-
-    for uid, rec in user_records(data):
-        if combined_total(rec) > 0:
-            threat_score = calculate_threat_score(data, uid)
-            if threat_score > 0:
-                who = resolve_user(uid)
-                action_log = data.get("_antinuke_action_log", {}).get(uid, [])
-                threats.append({
-                    "uid": uid,
-                    "name": who["name"],
-                    "avatar": who["avatar"],
-                    "threat_score": threat_score,
-                    "risk_level": "critical" if threat_score >= 70 else "high" if threat_score >= 40 else "medium",
-                    "recent_actions": len([a for a in action_log if a.get("time")]),
-                    "on_leave": any(log.get("user_id") == uid and log.get("action") == "start" for log in data.get("_on_leave_logs", [])[-50:]),
-                })
-
-    threats.sort(key=lambda t: t["threat_score"], reverse=True)
-
-    return jsonify({
-        "threats": threats[:100],
-        "count": len(threats),
-        "critical": sum(1 for t in threats if t["risk_level"] == "critical"),
-        "high": sum(1 for t in threats if t["risk_level"] == "high"),
-    })
-
-@app.route("/api/members/escalation-check")
-@admin_required
-def api_members_escalation_check():
-    """Check for users showing signs of permission escalation attempts."""
-    data = load_data()
-    escalations = []
-
-    for uid, rec in user_records(data):
-        if combined_total(rec) > 0:
-            is_escalation, reason = detect_permission_escalation_pattern(data, uid)
-            if is_escalation:
-                who = resolve_user(uid)
-                threat_score = calculate_threat_score(data, uid)
-                escalations.append({
-                    "uid": uid,
-                    "name": who["name"],
-                    "avatar": who["avatar"],
-                    "reason": reason,
-                    "threat_score": threat_score,
-                    "on_leave": any(log.get("user_id") == uid and log.get("action") == "start" for log in data.get("_on_leave_logs", [])[-50:]),
-                })
-
-    escalations.sort(key=lambda e: e["threat_score"], reverse=True)
-
-    return jsonify({
-        "escalations": escalations[:100],
-        "count": len(escalations),
-    })
-
-@app.route("/api/server-health")
-@admin_required
-def api_server_health():
-    """Get comprehensive server health and security status."""
-    data = load_data()
-
-    total_members = sum(1 for uid, _ in user_records(data) if combined_total(data.get(uid, {})) > 0)
-    active_members = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 3)
-    on_leave_members = len([log for log in data.get("_on_leave_logs", [])[-100:] if log.get("action") == "start"])
-
-    threat_scores = []
-    for uid, rec in user_records(data):
-        if combined_total(rec) > 0:
-            threat_scores.append(calculate_threat_score(data, uid))
-
-    action_log = data.get("_antinuke_action_log", {})
-    total_destructive_actions = sum(len(actions) for actions in action_log.values())
-    recent_actions = sum(len([a for a in actions if a.get("time")]) for actions in action_log.values())
-
-    escalations = 0
-    for uid, rec in user_records(data):
-        is_escalation, _ = detect_permission_escalation_pattern(data, uid)
-        if is_escalation:
-            escalations += 1
-
-    snapshot = data.get("_backup_snapshot")
-    has_snapshot = snapshot is not None
-    snapshot_channels = len(snapshot.get("channels", [])) if snapshot else 0
-    snapshot_roles = len(snapshot.get("roles", [])) if snapshot else 0
-
-    avg_threat = sum(threat_scores) / len(threat_scores) if threat_scores else 0
-    critical_threats = sum(1 for score in threat_scores if score >= 70)
-    high_threats = sum(1 for score in threat_scores if score >= 40)
-
-    return jsonify({
-        "members": {
-            "total": total_members,
-            "active": active_members,
-            "on_leave": on_leave_members,
-            "engagement_rate": round(active_members / max(1, total_members) * 100, 1),
-        },
-        "security": {
-            "avg_threat_score": round(avg_threat, 1),
-            "critical_threats": critical_threats,
-            "high_threats": high_threats,
-            "escalation_attempts": escalations,
-            "total_destructive_actions": total_destructive_actions,
-        },
-        "recovery": {
-            "snapshot_enabled": has_snapshot,
-            "protected_channels": snapshot_channels,
-            "protected_roles": snapshot_roles,
-        },
-        "status": "healthy" if avg_threat < 30 and critical_threats == 0 else "warning" if avg_threat < 50 else "critical",
-    })
-
-@app.route("/api/admin-recommendations")
-@admin_required
-def api_admin_recommendations():
-    """Get AI-powered recommendations for admin actions based on server state."""
-    data = load_data()
-    recommendations = []
-
-    threat_scores = {uid: calculate_threat_score(data, uid) for uid, rec in user_records(data) if combined_total(data.get(uid, {})) > 0}
-    critical_users = [uid for uid, score in threat_scores.items() if score >= 70]
-    high_risk_users = [uid for uid, score in threat_scores.items() if 40 <= score < 70]
-
-    if critical_users:
-        recommendations.append({
-            "priority": "critical",
-            "action": "Review user permissions",
-            "reason": f"Found {len(critical_users)} critical threat users",
-            "details": "Consider auditing permissions and role assignments for high-threat users",
-        })
-
-    dormant_count = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(data.get(uid, {})) > 0)
-    if dormant_count > 10:
-        recommendations.append({
-            "priority": "medium",
-            "action": "Review dormant members",
-            "reason": f"Found {dormant_count} dormant members without recent activity",
-            "details": "Consider archiving inactive accounts or offering re-engagement activities",
-        })
-
-    action_log = data.get("_antinuke_action_log", {})
-    if sum(len(a) for a in action_log.values()) > 100:
-        recommendations.append({
-            "priority": "high",
-            "action": "Monitor for nuke patterns",
-            "reason": "High volume of destructive actions detected",
-            "details": "Review recent anti-nuke logs and member activity for anomalies",
-        })
-
-    snapshot = data.get("_backup_snapshot")
-    if not snapshot:
-        recommendations.append({
-            "priority": "high",
-            "action": "Enable snapshot protection",
-            "reason": "No backup snapshot is active",
-            "details": "Create a snapshot to enable automatic channel/role recovery during nukes",
-        })
-
-    on_leave_logs = data.get("_on_leave_logs", [])
-    on_leave_users = [log.get("user_id") for log in on_leave_logs[-50:] if log.get("action") == "start"]
-    high_threat_on_leave = [uid for uid in on_leave_users if threat_scores.get(uid, 0) >= 40]
-    if high_threat_on_leave:
-        recommendations.append({
-            "priority": "medium",
-            "action": "Verify on-leave role restrictions",
-            "reason": f"Found {len(high_threat_on_leave)} high-threat users marked as on-leave",
-            "details": "Verify that dangerous roles have been removed from these users",
-        })
-
-    return jsonify({
-        "recommendations": sorted(recommendations, key=lambda r: {"critical": 0, "high": 1, "medium": 2}.get(r["priority"], 3)),
-        "count": len(recommendations),
-    })
-
-@app.route("/api/member/<uid>/progression")
-@member_required
-def api_member_progression(uid):
-    """Get member achievement milestones and progression."""
-    data = load_data()
-    rec = data.get(str(uid), {})
-    if not rec:
-        return jsonify({"error": "Member not found"}), 404
-
-    who = resolve_user(uid)
-    stats = get_member_activity_stats(data, uid)
-    milestones = calculate_member_milestones(rec)
-
-    return jsonify({
-        "uid": uid,
-        "name": who["name"],
-        "avatar": who["avatar"],
-        "stats": stats,
-        "milestones": milestones,
-    })
-
-@app.route("/api/events/<category>/performance")
-@member_required
-def api_event_performance(category):
-    """Get performance metrics for events in a category."""
-    data = load_data()
-    performance = get_event_performance(data, category)
-    if not performance:
-        return jsonify({"error": "Invalid category"}), 404
-    return jsonify(performance)
-
-@app.route("/api/members/at-risk")
-@admin_required
-def api_members_at_risk():
-    """Identify members at risk of becoming inactive (churn prediction)."""
-    data = load_data()
-    at_risk = []
-
-    for uid, rec in user_records(data):
-        if combined_total(rec) <= 0:
-            continue
-
-        streak_score = calculate_member_streak_score(rec)
-        activity_stats = get_member_activity_stats(data, uid)
-
-        host_runs = activity_stats["host_runs"] if activity_stats else 0
-        if host_runs < 3:
-            continue
-
-        churn_risk = 0
-        risk_factors = []
-
-        if streak_score == 0:
-            churn_risk += 50
-            risk_factors.append("no_recent_hosting")
-        elif streak_score == 1:
-            churn_risk += 25
-            risk_factors.append("low_recent_activity")
-
-        if host_runs < 5:
-            churn_risk += 15
-            risk_factors.append("few_total_events")
-
-        threat_score = calculate_threat_score(data, uid)
-        if threat_score >= 40:
-            churn_risk += 20
-            risk_factors.append("high_threat_score")
-
-        if churn_risk > 30:
-            who = resolve_user(uid)
-            at_risk.append({
-                "uid": uid,
-                "name": who["name"],
-                "avatar": who["avatar"],
-                "churn_risk": min(100, churn_risk),
-                "risk_factors": risk_factors,
-                "streak_score": streak_score,
-                "host_runs": host_runs,
-            })
-
-    at_risk.sort(key=lambda m: m["churn_risk"], reverse=True)
-
-    return jsonify({
-        "at_risk": at_risk[:50],
-        "count": len(at_risk),
-        "high_risk": sum(1 for m in at_risk if m["churn_risk"] >= 70),
-    })
-
-@app.route("/api/members/search")
-@member_required
-def api_members_search():
-    """Advanced member search with filtering by multiple criteria."""
-    data = load_data()
-
-    min_points = request.args.get("min_points", 0, type=float)
-    max_points = request.args.get("max_points", float('inf'), type=float)
-    min_vouches = request.args.get("min_vouches", 0, type=int)
-    min_hosts = request.args.get("min_hosts", 0, type=int)
-    streak_score = request.args.get("streak", -1, type=int)
-    on_leave = request.args.get("on_leave", "any", type=str)
-    threat_min = request.args.get("threat_min", -1, type=int)
-    threat_max = request.args.get("threat_max", 101, type=int)
-
-    results = []
-
-    for uid, rec in user_records(data):
-        total_points = combined_total(rec)
-        if total_points < min_points or total_points > max_points:
-            continue
-
-        total_vouches = sum(rec.get(cat, {}).get("total_vouches", 0) for cat in ALL_CATEGORIES)
-        if total_vouches < min_vouches:
-            continue
-
-        host_runs = len(rec.get("host_runs", []))
-        if host_runs < min_hosts:
-            continue
-
-        member_streak = calculate_member_streak_score(rec)
-        if streak_score >= 0 and member_streak != streak_score:
-            continue
-
-        activity = get_member_activity_stats(data, uid)
-        is_on_leave = activity.get("on_leave", False) if activity else False
-
-        if on_leave == "yes" and not is_on_leave:
-            continue
-        if on_leave == "no" and is_on_leave:
-            continue
-
-        threat = calculate_threat_score(data, uid)
-        if not (threat_min <= threat <= threat_max):
-            continue
-
-        who = resolve_user(uid)
-        results.append({
-            "uid": uid,
-            "name": who["name"],
-            "avatar": who["avatar"],
-            "points": round(total_points, 1),
-            "vouches": total_vouches,
-            "hosts": host_runs,
-            "streak": member_streak,
-            "on_leave": is_on_leave,
-            "threat": threat,
-        })
-
-    results.sort(key=lambda m: m["points"], reverse=True)
-
-    return jsonify({
-        "results": results[:200],
-        "count": len(results),
-    })
-
-@app.route("/api/engagement-summary")
-@member_required
-def api_engagement_summary():
-    """Get comprehensive engagement summary and trends."""
-    data = load_data()
-
-    category_totals = {}
-    category_members = {}
-
-    for cat in ALL_CATEGORIES:
-        category_totals[cat] = {"vouches": 0, "points": 0, "members": 0}
-        category_members[cat] = []
-
-    for uid, rec in user_records(data):
-        for cat in ALL_CATEGORIES:
-            cat_data = rec.get(cat, {})
-            vouches = cat_data.get("total_vouches", 0)
-            points = cat_data.get("total_points", 0)
-
-            if vouches > 0 or points > 0:
-                category_totals[cat]["vouches"] += vouches
-                category_totals[cat]["points"] += points
-                category_totals[cat]["members"] += 1
-
-    engagement_by_tier = {
-        "active": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 3),
-        "semi_active": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 2),
-        "inactive_recent": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 1),
-        "dormant": sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0),
-    }
-
-    return jsonify({
-        "by_category": category_totals,
-        "by_engagement_tier": engagement_by_tier,
-        "total_active_members": sum(engagement_by_tier.values()),
-    })
-
-@app.route("/api/roles/performance")
-@admin_required
-def api_roles_performance():
-    """Analyze role performance and associated risk metrics."""
-    data = load_data()
-    role_stats = {}
-
-    action_log = data.get("_antinuke_action_log", {})
-
-    for uid, actions in action_log.items():
-        for action in actions:
-            target_id = action.get("target_id")
-            if not target_id or action.get("type") not in ["role_delete", "role_assign"]:
-                continue
-
-            if target_id not in role_stats:
-                role_stats[target_id] = {
-                    "deletions": 0,
-                    "assignments": 0,
-                    "related_threats": 0,
-                }
-
-            if action.get("type") == "role_delete":
-                role_stats[target_id]["deletions"] += 1
-            else:
-                role_stats[target_id]["assignments"] += 1
-
-            threat_score = calculate_threat_score(data, uid)
-            if threat_score >= 40:
-                role_stats[target_id]["related_threats"] += 1
-
-    performance = []
-    for role_id, stats in role_stats.items():
-        risk_score = (stats["deletions"] * 2) + (stats["related_threats"] * 1.5)
-        performance.append({
-            "role_id": role_id,
-            "deletions": stats["deletions"],
-            "high_threat_actions": stats["related_threats"],
-            "risk_score": round(risk_score, 1),
-            "risk_level": "critical" if risk_score >= 10 else "high" if risk_score >= 5 else "medium",
-        })
-
-    performance.sort(key=lambda r: r["risk_score"], reverse=True)
-
-    return jsonify({
-        "roles": performance[:50],
-        "total_tracked": len(role_stats),
-        "critical_roles": sum(1 for r in performance if r["risk_level"] == "critical"),
-    })
-
-@app.route("/api/comprehensive-insights")
-@admin_required
-def api_comprehensive_insights():
-    """Comprehensive server insights combining all analytics."""
-    data = load_data()
-
-    now = datetime.now(timezone.utc)
-    week_ago = now - timedelta(days=7)
-    month_ago = now - timedelta(days=30)
-
-    all_users = list(user_records(data))
-    active_users = [uid for uid, rec in all_users if combined_total(rec) > 0]
-
-    recent_hosts = 0
-    for uid, rec in all_users:
-        host_runs = rec.get("host_runs", [])
-        for run_time_str in host_runs[-50:]:
-            try:
-                run_time = datetime.fromisoformat(run_time_str)
-                if run_time > month_ago:
-                    recent_hosts += 1
-            except (ValueError, TypeError):
-                pass
-
-    threat_scores = [calculate_threat_score(data, uid) for uid, _ in active_users]
-
-    milestone_distribution = {}
-    for uid, rec in all_users:
-        milestones = calculate_member_milestones(rec)
-        achievements = len(milestones.get("achievements", []))
-        if achievements not in milestone_distribution:
-            milestone_distribution[achievements] = 0
-        milestone_distribution[achievements] += 1
-
-    escalation_attempts = sum(1 for uid, rec in all_users if detect_permission_escalation_pattern(data, uid)[0])
-
-    event_breakdown = {}
-    for cat in ALL_CATEGORIES:
-        perf = get_event_performance(data, cat)
-        if perf:
-            event_breakdown[cat] = perf
-
-    return jsonify({
-        "timestamp": now.isoformat(),
-        "overview": {
-            "total_members": len(active_users),
-            "active_this_month": recent_hosts,
-            "avg_threat_score": round(sum(threat_scores) / max(1, len(threat_scores)), 1),
-        },
-        "security": {
-            "threat_distribution": {
-                "critical": sum(1 for s in threat_scores if s >= 70),
-                "high": sum(1 for s in threat_scores if 40 <= s < 70),
-                "medium": sum(1 for s in threat_scores if 20 <= s < 40),
-                "low": sum(1 for s in threat_scores if s < 20),
-            },
-            "escalation_attempts": escalation_attempts,
-            "average_threat": round(sum(threat_scores) / max(1, len(threat_scores)), 1),
-        },
-        "engagement": {
-            "active": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 3),
-            "semi_active": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 2),
-            "inactive_recent": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 1),
-            "dormant": sum(1 for uid, rec in all_users if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0),
-        },
-        "achievements": {
-            "members_with_1_plus": milestone_distribution.get(1, 0),
-            "members_with_2_plus": milestone_distribution.get(2, 0),
-            "members_with_3_plus": milestone_distribution.get(3, 0),
-        },
-        "events": event_breakdown,
-    })
-
-@app.route("/api/compliance-audit")
-@admin_required
-def api_compliance_audit():
-    """Audit security and policy compliance across the server."""
-    data = load_data()
-    audit_results = []
-
-    snapshot = data.get("_backup_snapshot")
-    if not snapshot:
-        audit_results.append({
-            "check": "backup_snapshot",
-            "passed": False,
-            "message": "No backup snapshot is active",
-            "severity": "high",
-            "action": "Create a snapshot to enable disaster recovery",
-        })
-    else:
-        audit_results.append({
-            "check": "backup_snapshot",
-            "passed": True,
-            "message": f"Snapshot protecting {len(snapshot.get('channels', []))} channels and {len(snapshot.get('roles', []))} roles",
-            "severity": None,
-        })
-
-    whitelist = set(e.get("id") for e in data.get("_antinuke_whitelist", []) if e.get("id"))
-    if len(whitelist) > 20:
-        audit_results.append({
-            "check": "whitelist_size",
-            "passed": False,
-            "message": f"Whitelist is large ({len(whitelist)} entries) - harder to manage",
-            "severity": "medium",
-            "action": "Review and consolidate whitelist entries",
-        })
-    else:
-        audit_results.append({
-            "check": "whitelist_size",
-            "passed": True,
-            "message": f"Whitelist size is reasonable ({len(whitelist)} entries)",
-            "severity": None,
-        })
-
-    critical_threats = sum(1 for uid, rec in user_records(data) if calculate_threat_score(data, uid) >= 70)
-    if critical_threats > 0:
-        audit_results.append({
-            "check": "threat_levels",
-            "passed": False,
-            "message": f"Found {critical_threats} critical threat users",
-            "severity": "critical",
-            "action": "Review and address high-threat users",
-        })
-    else:
-        audit_results.append({
-            "check": "threat_levels",
-            "passed": True,
-            "message": "No critical threat users detected",
-            "severity": None,
-        })
-
-    on_leave_high_threat = 0
-    on_leave_logs = data.get("_on_leave_logs", [])
-    on_leave_users = [log.get("user_id") for log in on_leave_logs[-50:] if log.get("action") == "start"]
-    for uid in on_leave_users:
-        if calculate_threat_score(data, uid) >= 40:
-            on_leave_high_threat += 1
-
-    if on_leave_high_threat > 0:
-        audit_results.append({
-            "check": "on_leave_compliance",
-            "passed": False,
-            "message": f"{on_leave_high_threat} high-threat users marked as on-leave",
-            "severity": "high",
-            "action": "Verify role restrictions for on-leave users",
-        })
-    else:
-        audit_results.append({
-            "check": "on_leave_compliance",
-            "passed": True,
-            "message": "All on-leave users appear compliant",
-            "severity": None,
-        })
-
-    dormant_high_threat = sum(1 for uid, rec in user_records(data) if calculate_member_streak_score(rec) == 0 and combined_total(rec) > 0 and calculate_threat_score(data, uid) >= 40)
-    if dormant_high_threat > 5:
-        audit_results.append({
-            "check": "dormant_threats",
-            "passed": False,
-            "message": f"{dormant_high_threat} dormant high-threat users",
-            "severity": "medium",
-            "action": "Consider archiving or re-engaging dormant users",
-        })
-    else:
-        audit_results.append({
-            "check": "dormant_threats",
-            "passed": True,
-            "message": "Dormant threat levels are acceptable",
-            "severity": None,
-        })
-
-    passed = sum(1 for a in audit_results if a["passed"])
-    total = len(audit_results)
-    compliance_score = round((passed / total * 100), 1) if total > 0 else 0
-
-    return jsonify({
-        "audit_results": audit_results,
-        "compliance_score": compliance_score,
-        "passed": passed,
-        "total": total,
-        "status": "compliant" if passed == total else "warning" if passed >= total * 0.8 else "non-compliant",
-    })
-
 # ─────────────────────────────────────────────────────────────
 # LOGIN HTML
 # ─────────────────────────────────────────────────────────────
@@ -3467,6 +2942,11 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <div><div class="nm">{{ user.username }}</div><div class="rl">{% if is_admin %}Administrator{% else %}Member{% endif %}</div></div>
         <a class="sb-signout" href="/logout">Sign out</a>
       </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;">
+        <a href="/terms" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
+        <a href="/privacy" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Privacy Policy</a>
+        <button onclick="verifyIP()" style="width:100%;padding:6px;background:#152220;border:1px solid #233530;color:#7fc2b8;border-radius:4px;cursor:pointer;font-size:11px;margin-top:6px">Verify Access</button>
+      </div>
     </div>
   </aside>
 
@@ -3645,6 +3125,16 @@ function showTab(tab, el){
 }
 function openDrawer(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('overlay').classList.add('show'); }
 function closeDrawer(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
+
+async function verifyIP(){
+  try {
+    const res = await fetch('/verify', {method: 'POST'});
+    if(res.status === 403){ alert('🚫 Your IP is banned. Contact an administrator.'); return; }
+    if(!res.ok){ alert('⚠️ Verification failed'); return; }
+    const data = await res.json();
+    if(data.verified){ alert('✅ Access verified! Your IP has been logged and you have the event access role.'); }
+  } catch(e){ alert('❌ Error: ' + e.message); }
+}
 
 /* ── Announcements ── */
 async function loadAnnouncements(){
