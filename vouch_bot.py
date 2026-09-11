@@ -3056,6 +3056,34 @@ async def cleanleaderboards_error(ctx, error):
         await ctx.send("⚠️ You need Manage Server permission to do that.")
 
 
+@bot.command(name="ban", aliases=["ipban"])
+@commands.has_permissions(manage_guild=True)
+async def ban_user(ctx, member: discord.Member):
+    """Ban a user by IP. Usage: ?ban @user"""
+    from data_store import ban_ip, get_ips_for_user
+
+    ips = get_ips_for_user(member.id)
+    if not ips:
+        await ctx.send(f"⚠️ No IP logs found for {member.display_name}. They may not have accessed the dashboard yet.")
+        return
+
+    for ip in ips:
+        ban_ip(ip, member.id)
+
+    await ctx.send(f"🚫 Banned {member.display_name} across {len(ips)} IP(s)")
+
+
+@bot.command(name="unban", aliases=["unipban"])
+@commands.has_permissions(manage_guild=True)
+async def unban_user(ctx, ip: str):
+    """Unban an IP. Usage: ?unban 192.168.1.1"""
+    from data_store import unban_ip, get_users_for_ip
+
+    users = get_users_for_ip(ip)
+    unban_ip(ip)
+    await ctx.send(f"✅ Unbanned IP {ip} (was linked to {len(users)} user(s))")
+
+
 @bot.command(name="testeventping")
 @commands.has_permissions(manage_guild=True)
 async def testeventping(ctx, *, event_name: str = None):

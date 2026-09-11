@@ -54,3 +54,46 @@ def data_txn():
         data = load_data()
         yield data
         save_data(data)
+
+
+def is_ip_banned(ip):
+    data = load_data()
+    banned_ips = data.get("_ip_bans", {})
+    return ip in banned_ips
+
+
+def ban_ip(ip, user_id):
+    with data_txn() as data:
+        if "_ip_bans" not in data:
+            data["_ip_bans"] = {}
+        data["_ip_bans"][ip] = {"user_id": str(user_id), "banned_at": datetime.now().isoformat()}
+
+
+def unban_ip(ip):
+    with data_txn() as data:
+        if "_ip_bans" in data and ip in data["_ip_bans"]:
+            del data["_ip_bans"][ip]
+
+
+def log_ip(user_id, ip):
+    with data_txn() as data:
+        if "_ip_logs" not in data:
+            data["_ip_logs"] = {}
+        if ip not in data["_ip_logs"]:
+            data["_ip_logs"][ip] = {}
+        data["_ip_logs"][ip][str(user_id)] = datetime.now().isoformat()
+
+
+def get_ips_for_user(user_id):
+    data = load_data()
+    ip_logs = data.get("_ip_logs", {})
+    return [ip for ip, users in ip_logs.items() if str(user_id) in users]
+
+
+def get_users_for_ip(ip):
+    data = load_data()
+    ip_logs = data.get("_ip_logs", {})
+    return list(ip_logs.get(ip, {}).keys())
+
+
+from datetime import datetime
