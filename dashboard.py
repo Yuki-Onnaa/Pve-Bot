@@ -2581,6 +2581,10 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <div><div class="nm">{{ user.username }}</div><div class="rl">{% if is_admin %}Administrator{% else %}Member{% endif %}</div></div>
         <a class="sb-signout" href="/logout">Sign out</a>
       </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;">
+        <a href="https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/TERMS_OF_SERVICE.md" target="_blank" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
+        <a href="https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/PRIVACY_POLICY.md" target="_blank" style="color:var(--muted);text-decoration:none">Privacy Policy</a>
+      </div>
     </div>
   </aside>
 
