@@ -3105,6 +3105,39 @@ async def unban_user(interaction: discord.Interaction, ip: str):
     await interaction.response.send_message(f"✅ Unbanned IP {ip} (was linked to {len(users)} user(s))")
 
 
+@bot.tree.command(name="report", description="Report a raider with device fingerprinting evidence")
+@app_commands.describe(member="The raider to report")
+@app_commands.checks.has_permissions(ban_members=True)
+async def report_raider(interaction: discord.Interaction, member: discord.User):
+    """Report a raider with full device fingerprinting evidence."""
+    from data_store import get_ips_for_user, get_fingerprints_for_user, get_hwids_for_user
+
+    ips = get_ips_for_user(member.id)
+    fingerprints = get_fingerprints_for_user(member.id)
+    hwids = get_hwids_for_user(member.id)
+
+    if not ips and not fingerprints and not hwids:
+        await interaction.response.send_message(f"⚠️ No device data found for {member.display_name}. They may not have accessed the dashboard.")
+        return
+
+    evidence = f"**Raider Report: {member.display_name}** ({member.id})\n\n"
+    evidence += f"**IPs ({len(ips)}):** {', '.join(ips) if ips else 'None'}\n"
+    evidence += f"**HWIDs ({len(hwids)}):** {', '.join(hwids[:3]) if hwids else 'None'}\n"
+    evidence += f"**Fingerprints ({len(fingerprints)}):** Captured\n"
+    evidence += f"**Timestamp:** {datetime.now().isoformat()}\n"
+
+    log_channel_id = int(os.environ.get("RAID_LOG_CHANNEL", "0"))
+    if log_channel_id:
+        log_channel = bot.get_channel(log_channel_id)
+        if log_channel:
+            try:
+                await log_channel.send(f"```\n{evidence}\n```")
+            except Exception as e:
+                print(f"[Report] Failed to log to channel: {e}")
+
+    await interaction.response.send_message(f"🚨 Reported {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}")
+
+
 @bot.tree.command(name="verify", description="Verify your access to server events")
 async def verify_access(interaction: discord.Interaction):
     """Verify your access to server events."""
