@@ -3158,6 +3158,27 @@ async def personas_cmd(ctx):
     await ctx.send("**Available personas:**\n" + "\n".join(lines))
 
 
+@bot.command(name="info", aliases=["about"])
+async def info_cmd(ctx):
+    """Show bot info and legal documents."""
+    embed = discord.Embed(
+        title="Pve-Bot",
+        description="Community threat scoring and vouch tracking bot",
+        color=0x7fc2b8
+    )
+    embed.add_field(
+        name="Documentation",
+        value="[Terms of Service](https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/TERMS_OF_SERVICE.md)\n[Privacy Policy](https://github.com/Yuki-Onnaa/Pve-Bot/blob/main/PRIVACY_POLICY.md)",
+        inline=False
+    )
+    embed.add_field(
+        name="Repository",
+        value="[Pve-Bot on GitHub](https://github.com/Yuki-Onnaa/Pve-Bot)",
+        inline=False
+    )
+    await ctx.send(embed=embed)
+
+
 @bot.command(name="leaderboard")
 async def leaderboard(ctx, top_n: int = 10):
     """Host/PVE leaderboard. Usage: ?leaderboard [n]"""
