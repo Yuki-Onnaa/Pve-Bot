@@ -771,7 +771,7 @@ def verify():
 :root{
   --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
   --border:#233530;--border-2:#324b44;
-  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --moon:#8fa39d;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
   --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
 }
 body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
@@ -802,7 +802,7 @@ p{color:var(--muted);margin-bottom:20px;font-size:14px}
 :root{
   --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
   --border:#233530;--border-2:#324b44;
-  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --moon:#8fa39d;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
   --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
 }
 body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
@@ -911,24 +911,24 @@ def admin_ips():
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000000;color:#eef4f2;font-family:system-ui;padding:20px}
 .container{max-width:1200px;margin:0 auto}
-h1{margin-bottom:20px;color:#7fc2b8}
+h1{margin-bottom:20px;color:#8fa39d}
 .search-box{margin-bottom:20px;display:flex;gap:10px}
 .search-box input{flex:1;padding:10px;background:#ffffff;border:1px solid #333333;color:#666666;border-radius:4px}
-.search-box button{padding:10px 20px;background:#7fc2b8;color:#000000;border:none;border-radius:4px;cursor:pointer;font-weight:600}
+.search-box button{padding:10px 20px;background:#8fa39d;color:#000000;border:none;border-radius:4px;cursor:pointer;font-weight:600}
 .search-box button:hover{background:#a8ddd2}
 .user-details{background:#111111;border:1px solid #333333;border-radius:4px;padding:20px;margin-bottom:20px;display:none}
 .user-details.show{display:block}
-.user-details h2{color:#7fc2b8;margin-bottom:10px}
+.user-details h2{color:#8fa39d;margin-bottom:10px}
 .user-info{background:#1a1a1a;padding:15px;border-radius:4px;margin-bottom:15px}
 .user-info p{margin:8px 0;color:#8fa39d;word-break:break-all}
-.user-info code{background:#0a0a0a;padding:2px 6px;border-radius:3px;color:#7fc2b8}
+.user-info code{background:#0a0a0a;padding:2px 6px;border-radius:3px;color:#8fa39d}
 table{width:100%;border-collapse:collapse;background:#111111;border:1px solid #333333}
 th,td{padding:12px;text-align:left;border-bottom:1px solid #333333}
 th{background:#1a1a1a;font-weight:600}
 .banned{background:rgba(199,122,128,.1);color:#c77a80}
-.copy-btn{background:#1a1a1a;border:1px solid #333333;color:#7fc2b8;padding:4px 8px;cursor:pointer;border-radius:4px;font-size:12px}
+.copy-btn{background:#1a1a1a;border:1px solid #333333;color:#8fa39d;padding:4px 8px;cursor:pointer;border-radius:4px;font-size:12px}
 .copy-btn:hover{background:#2a2a2a}
-a{color:#7fc2b8;text-decoration:none;cursor:pointer}
+a{color:#8fa39d;text-decoration:none;cursor:pointer}
 a:hover{text-decoration:underline}
 </style>
 </head><body>
@@ -978,7 +978,7 @@ ${data.ips.map(ip=>`<div style="margin-left:10px"><code>${ip.ip}</code> <span st
 </div>
 <div class="user-info">
 <p><strong>Fingerprints (${data.fingerprints.length}):</strong></p>
-${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0a0a0a;padding:10px;border-radius:4px;font-size:12px"><div style="color:#7fc2b8;margin-bottom:5px"><strong>Browser:</strong> <code>${obj.browser?.substring(0,60)}</code></div><div><strong>Screen:</strong> ${obj.screen} | <strong>Color Depth:</strong> ${obj.colorDepth}</div><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB | <strong>Lang:</strong> ${obj.language}</div><div><strong>TZ:</strong> ${obj.timezone}</div><div style="margin-top:5px"><strong>Canvas:</strong> <code>${obj.canvas?.substring(0,40)}</code></div><div><strong>WebGL:</strong> <code>${obj.webgl?.substring(0,50)}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint}</code></div>`;}}).join('')}
+${data.fingerprints.map(fp=>{try{const obj=JSON.parse(fp.fingerprint);return `<div style="margin-left:10px;margin-bottom:10px;background:#0a0a0a;padding:10px;border-radius:4px;font-size:12px"><div style="color:#8fa39d;margin-bottom:5px"><strong>Browser:</strong> <code>${obj.browser?.substring(0,60)}</code></div><div><strong>Screen:</strong> ${obj.screen} | <strong>Color Depth:</strong> ${obj.colorDepth}</div><div><strong>Cores:</strong> ${obj.cores} | <strong>Memory:</strong> ${obj.memory}GB | <strong>Lang:</strong> ${obj.language}</div><div><strong>TZ:</strong> ${obj.timezone}</div><div style="margin-top:5px"><strong>Canvas:</strong> <code>${obj.canvas?.substring(0,40)}</code></div><div><strong>WebGL:</strong> <code>${obj.webgl?.substring(0,50)}</code></div>${fp.banned?'<div style="color:#c77a80;margin-top:8px">🚫 BANNED</div>':''}</div>`;}catch(e){return `<div style="margin-left:10px"><code>${fp.fingerprint}</code></div>`;}}).join('')}
 </div>
 <div class="user-info">
 <p><strong>HWIDs (${data.hwids.length}):</strong></p>
@@ -1179,7 +1179,7 @@ def fingerprint_check():
 <style>
 body{background:#0c1210;color:#eef4f2;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .loader{text-align:center}
-.spinner{width:40px;height:40px;border:4px solid #233530;border-top:4px solid #7fc2b8;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px}
+.spinner{width:40px;height:40px;border:4px solid #233530;border-top:4px solid #8fa39d;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 20px}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
@@ -1305,11 +1305,11 @@ def terms():
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
 .container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
-h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
-h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+h1{font-size:28px;margin-bottom:20px;color:#8fa39d}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#8fa39d}
 p{margin-bottom:12px;color:#eef4f2}
 li{margin-left:20px;margin-bottom:8px}
-a{color:#7fc2b8;text-decoration:none}
+a{color:#8fa39d;text-decoration:none}
 a:hover{text-decoration:underline}
 .back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
 </style>
@@ -1435,11 +1435,11 @@ def privacy():
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0c1210;color:#eef4f2;font-family:'Space Grotesk',-apple-system,sans-serif;line-height:1.6;padding:40px 20px}
 .container{max-width:960px;margin:0 auto;background:#0d1614;border:1px solid #233530;border-radius:4px;padding:40px}
-h1{font-size:28px;margin-bottom:20px;color:#7fc2b8}
-h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#7fc2b8}
+h1{font-size:28px;margin-bottom:20px;color:#8fa39d}
+h2{font-size:20px;margin-top:30px;margin-bottom:15px;color:#8fa39d}
 p{margin-bottom:12px;color:#eef4f2}
 li{margin-left:20px;margin-bottom:8px}
-a{color:#7fc2b8;text-decoration:none}
+a{color:#8fa39d;text-decoration:none}
 a:hover{text-decoration:underline}
 .back{display:inline-block;margin-bottom:20px;padding:8px 16px;background:#152220;border-radius:4px;border:1px solid #233530}
 </style>
@@ -2898,7 +2898,7 @@ def api_commands_save():
             "response": response_text,
             "embed": bool(body.get("embed", False)),
             "title": (body.get("title") or "").strip()[:200],
-            "color": (body.get("color") or "#7fc2b8").strip()[:7],
+            "color": (body.get("color") or "#8fa39d").strip()[:7],
             "enabled": bool(body.get("enabled", True)),
             "uses": 0,
             "created_by": session.get("user", {}).get("username", "dashboard"),
@@ -3004,7 +3004,7 @@ LOGIN_HTML = """<!DOCTYPE html>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
   --bg:#0c1210;--panel:#0d1614;--panel-2:#152220;--border:#233530;
-  --text:#eef4f2;--muted:#8fa39d;--accent:#7fc2b8;--red:#c77a80;
+  --text:#eef4f2;--muted:#8fa39d;--accent:#8fa39d;--red:#c77a80;
   --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
   --sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
 }
@@ -3140,7 +3140,7 @@ PUBLIC_HTML = """<!DOCTYPE html>
 html{scroll-behavior:smooth}
 :root{
   --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;--border:#233530;--border-2:#324b44;
-  --accent:#7fc2b8;--accent-dim:#1f3d37;--moon:#7fc2b8;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --accent:#8fa39d;--accent-dim:#1f3d37;--moon:#8fa39d;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
   --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
   --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
   --sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
@@ -3408,7 +3408,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;">
         <a href="/terms" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Terms of Service</a>
         <a href="/privacy" style="display:block;color:var(--muted);text-decoration:none;margin-bottom:6px">Privacy Policy</a>
-        <button onclick="verifyIP()" style="width:100%;padding:6px;background:#152220;border:1px solid #233530;color:#7fc2b8;border-radius:4px;cursor:pointer;font-size:11px;margin-top:6px">Verify Access</button>
+        <button onclick="verifyIP()" style="width:100%;padding:6px;background:#152220;border:1px solid #233530;color:#8fa39d;border-radius:4px;cursor:pointer;font-size:11px;margin-top:6px">Verify Access</button>
       </div>
     </div>
   </aside>
@@ -3532,7 +3532,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
 
 <script>
 const CAT_NAMES = {pve:'Host', security:'Security', support:'Support'};
-const CAT_COLORS = {pve:'#7fc2b8', security:'#9c8fe0', support:'#5fcf9f'};
+const CAT_COLORS = {pve:'#8fa39d', security:'#9c8fe0', support:'#5fcf9f'};
 const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 const VIEWING = "{{ viewing_uid|default('', true) }}";
 const VIEWING_NAME = "{{ viewing_name|default('', true) }}";
@@ -3854,7 +3854,7 @@ async function loadProfile(){
   else { delta.textContent = 'same as last week'; delta.className = 'delta flat'; }
 
   document.getElementById('cats').innerHTML = d.categories.map(function(c){
-    const color = CAT_COLORS[c.key] || '#7fc2b8';
+    const color = CAT_COLORS[c.key] || '#8fa39d';
     const rk = c.rank;
     const bar = rk
       ? '<div class="rank-top"><span class="rank-name">' + esc(rk.current || 'No rank yet') + '</span>' +
@@ -3991,7 +3991,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 :root{
   --bg:#0c1210;--header:#0d1614;--card:#0d1614;--card-2:#152220;
   --border:#233530;--border-2:#324b44;
-  --moon:#7fc2b8;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
+  --moon:#8fa39d;--moon-dim:#a8ddd2;--steel:#9c8fe0;--sage:#5fcf9f;--red:#c77a80;--amber:#d1a86a;
   --text:#eef4f2;--muted:#8fa39d;--dim:#5c6f69;
   --mono:ui-monospace,"SF Mono",Consolas,monospace;--sans:'Space Grotesk',-apple-system,"Segoe UI",system-ui,sans-serif;
   --serif:'Cinzel',ui-serif,"Iowan Old Style",Georgia,serif;
@@ -4674,7 +4674,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
             <span style="font-size:13px;color:var(--muted)">Nicer formatting, coloured bar</span></div>
         </div>
         <div class="form-group"><label>Embed colour</label>
-          <input id="cmd-color" type="color" value="#7fc2b8" style="height:44px;padding:4px">
+          <input id="cmd-color" type="color" value="#8fa39d" style="height:44px;padding:4px">
         </div>
       </div>
       <button class="btn btn-primary" onclick="saveCommand()">Save command</button>
@@ -5294,10 +5294,10 @@ function drawActivityChart(d){
       (dash ? ' stroke-dasharray="4 4"' : '') + '/>';
   };
   holder.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img">' +
-    g + line(d.views, '#7fc2b8', false) + line(d.uniques, '#9c8fe0', true) + '</svg>';
+    g + line(d.views, '#8fa39d', false) + line(d.uniques, '#9c8fe0', true) + '</svg>';
   const pages = d.pages || {};
   document.getElementById('act-legend').innerHTML =
-    '<span><i style="background:#7fc2b8"></i>Page views</span>' +
+    '<span><i style="background:#8fa39d"></i>Page views</span>' +
     '<span><i style="background:#9c8fe0"></i>Unique visitors</span>' +
     '<span style="color:var(--dim)">dashboard ' + (pages.dashboard || 0) +
     ' / profile ' + (pages.profile || 0) + '</span>';
@@ -5430,7 +5430,7 @@ async function loadChart(){
 function renderChart(d){
   const W=760,H=240,PL=44,PR=12,PT=14,PB=28;
   const cats=['pve','security','support'];
-  const colors={pve:'#7fc2b8',security:'#9c8fe0',support:'#5fcf9f'};
+  const colors={pve:'#8fa39d',security:'#9c8fe0',support:'#5fcf9f'};
   const all=cats.flatMap(c=>d.series[c]||[]);
   const max=Math.max(1,...all);
   const n=d.labels.length;
@@ -5497,7 +5497,7 @@ function editCommand(c){
   document.getElementById('cmd-title').value = c.title||'';
   document.getElementById('cmd-response').value = c.response||'';
   document.getElementById('cmd-embed').checked = !!c.embed;
-  document.getElementById('cmd-color').value = c.color||'#7fc2b8';
+  document.getElementById('cmd-color').value = c.color||'#8fa39d';
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function resetCommandForm(){
@@ -5505,7 +5505,7 @@ function resetCommandForm(){
   document.getElementById('cmd-form-title').textContent = 'Create a command';
   ['cmd-name','cmd-title','cmd-response'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('cmd-embed').checked=false;
-  document.getElementById('cmd-color').value='#7fc2b8';
+  document.getElementById('cmd-color').value='#8fa39d';
 }
 async function saveCommand(){
   const body={
