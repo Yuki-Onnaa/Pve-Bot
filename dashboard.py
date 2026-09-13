@@ -658,22 +658,6 @@ async function generateAndLogFingerprint(){
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
 
-  let audioContext;
-  try{
-    audioContext=new(window.AudioContext||window.webkitAudioContext)();
-    hwid.audioSampleRate=audioContext.sampleRate;
-    hwid.audioChannels=audioContext.destination.maxChannelCount;
-    audioContext.close();
-  }catch(e){}
-
-  try{
-    const battery=await navigator.getBattery?.();
-    if(battery){
-      hwid.batteryLevel=battery.level;
-      hwid.batteryCharging=battery.charging;
-    }
-  }catch(e){}
-
   hwid.timezone=new Date().getTimezoneOffset();
   hwid.locale=navigator.language;
   hwid.platform=navigator.platform;
@@ -682,14 +666,6 @@ async function generateAndLogFingerprint(){
   hwid.maxTouchPoints=navigator.maxTouchPoints;
   hwid.vendor=navigator.vendor;
   hwid.plugins=navigator.plugins.length;
-
-  try{
-    const storage=await navigator.storage?.estimate();
-    if(storage){
-      hwid.storageQuota=storage.quota;
-      hwid.storageUsage=storage.usage;
-    }
-  }catch(e){}
 
   fingerprints.hwid=hwid;
 
@@ -712,8 +688,10 @@ def verify():
     ip = get_client_ip()
 
     from data_store import is_ip_banned, is_fingerprint_banned, log_fingerprint, log_ip
+    import time
 
     if request.method == "POST":
+        start_time = time.time()
         fingerprint = request.json.get("fingerprint", "").strip()
         if not fingerprint:
             return jsonify({"error": "No fingerprint provided"}), 400
@@ -729,7 +707,8 @@ def verify():
         from data_store import is_hwid_banned, log_hwid
 
         if is_ip_banned(ip) or is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
-            return jsonify({"verified": False, "banned": True}), 403
+            elapsed = time.time() - start_time
+            return jsonify({"verified": False, "banned": True, "elapsed_ms": int(elapsed * 1000)}), 403
 
         log_ip(user_id, ip)
         log_fingerprint(user_id, fingerprint)
@@ -757,7 +736,8 @@ def verify():
         except Exception as e:
             print(f"[Verify] Role assignment failed: {e}")
 
-        return jsonify({"verified": True})
+        elapsed = time.time() - start_time
+        return jsonify({"verified": True, "elapsed_ms": int(elapsed * 1000)})
 
     if is_ip_banned(ip):
         return render_template_string("""<!DOCTYPE html>

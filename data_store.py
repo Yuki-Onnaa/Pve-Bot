@@ -12,6 +12,7 @@ guarding the file.
 import json
 import os
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -20,6 +21,10 @@ DATA_FILE = os.environ.get("DATA_FILE", "/data/vouches.json")
 # Reentrant so a thread already holding it (e.g. inside a data_txn) can safely
 # call load_data()/save_data() again without deadlocking itself.
 _lock = threading.RLock()
+
+# Ban check cache (TTL: 60 seconds) to avoid repeated lookups for same identifiers
+_ban_cache = {}
+_ban_cache_ttl = 60
 
 
 def load_data():
@@ -35,6 +40,25 @@ def save_data(data):
         os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
         with open(DATA_FILE, "w") as f:
             json.dump(data, f, indent=2)
+
+
+def _cache_get(key):
+    if key in _ban_cache:
+        cached_time, cached_result = _ban_cache[key]
+        if time.time() - cached_time < _ban_cache_ttl:
+            return cached_result
+        else:
+            del _ban_cache[key]
+    return None
+
+
+def _cache_set(key, result):
+    _ban_cache[key] = (time.time(), result)
+
+
+def _cache_clear_key(key):
+    if key in _ban_cache:
+        del _ban_cache[key]
 
 
 @contextmanager
@@ -58,16 +82,23 @@ def data_txn():
 
 
 def is_ip_banned(ip):
+    cached = _cache_get(f"ip:{ip}")
+    if cached is not None:
+        return cached
+
     data = load_data()
     banned_ips = data.get("_ip_bans", {})
     if ip not in banned_ips:
+        _cache_set(f"ip:{ip}", False)
         return False
     ban_record = banned_ips[ip]
     if "expires_at" in ban_record:
         expiry = datetime.fromisoformat(ban_record["expires_at"])
         if datetime.now() > expiry:
             unban_ip(ip)
+            _cache_set(f"ip:{ip}", False)
             return False
+    _cache_set(f"ip:{ip}", True)
     return True
 
 
@@ -79,12 +110,14 @@ def ban_ip(ip, user_id, expires_at=None):
         if expires_at:
             ban_record["expires_at"] = expires_at
         data["_ip_bans"][ip] = ban_record
+    _cache_clear_key(f"ip:{ip}")
 
 
 def unban_ip(ip):
     with data_txn() as data:
         if "_ip_bans" in data and ip in data["_ip_bans"]:
             del data["_ip_bans"][ip]
+    _cache_clear_key(f"ip:{ip}")
 
 
 def log_ip(user_id, ip):
@@ -109,16 +142,23 @@ def get_users_for_ip(ip):
 
 
 def is_fingerprint_banned(fingerprint):
+    cached = _cache_get(f"fp:{fingerprint}")
+    if cached is not None:
+        return cached
+
     data = load_data()
     banned_fingerprints = data.get("_fingerprint_bans", {})
     if fingerprint not in banned_fingerprints:
+        _cache_set(f"fp:{fingerprint}", False)
         return False
     ban_record = banned_fingerprints[fingerprint]
     if "expires_at" in ban_record:
         expiry = datetime.fromisoformat(ban_record["expires_at"])
         if datetime.now() > expiry:
             unban_fingerprint(fingerprint)
+            _cache_set(f"fp:{fingerprint}", False)
             return False
+    _cache_set(f"fp:{fingerprint}", True)
     return True
 
 
@@ -130,12 +170,14 @@ def ban_fingerprint(fingerprint, user_id, expires_at=None):
         if expires_at:
             ban_record["expires_at"] = expires_at
         data["_fingerprint_bans"][fingerprint] = ban_record
+    _cache_clear_key(f"fp:{fingerprint}")
 
 
 def unban_fingerprint(fingerprint):
     with data_txn() as data:
         if "_fingerprint_bans" in data and fingerprint in data["_fingerprint_bans"]:
             del data["_fingerprint_bans"][fingerprint]
+    _cache_clear_key(f"fp:{fingerprint}")
 
 
 def log_fingerprint(user_id, fingerprint_json):
@@ -160,16 +202,23 @@ def get_users_for_fingerprint(fingerprint):
 
 
 def is_hwid_banned(hwid):
+    cached = _cache_get(f"hwid:{hwid}")
+    if cached is not None:
+        return cached
+
     data = load_data()
     banned_hwids = data.get("_hwid_bans", {})
     if hwid not in banned_hwids:
+        _cache_set(f"hwid:{hwid}", False)
         return False
     ban_record = banned_hwids[hwid]
     if "expires_at" in ban_record:
         expiry = datetime.fromisoformat(ban_record["expires_at"])
         if datetime.now() > expiry:
             unban_hwid(hwid)
+            _cache_set(f"hwid:{hwid}", False)
             return False
+    _cache_set(f"hwid:{hwid}", True)
     return True
 
 
@@ -181,12 +230,14 @@ def ban_hwid(hwid, user_id, expires_at=None):
         if expires_at:
             ban_record["expires_at"] = expires_at
         data["_hwid_bans"][hwid] = ban_record
+    _cache_clear_key(f"hwid:{hwid}")
 
 
 def unban_hwid(hwid):
     with data_txn() as data:
         if "_hwid_bans" in data and hwid in data["_hwid_bans"]:
             del data["_hwid_bans"][hwid]
+    _cache_clear_key(f"hwid:{hwid}")
 
 
 def log_hwid(user_id, hwid):
