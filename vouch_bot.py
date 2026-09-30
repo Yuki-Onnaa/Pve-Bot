@@ -6,6 +6,7 @@ import random
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Union
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -1975,6 +1976,34 @@ def clear_stage_tracking(host_uid):
             record["last_host"]["ended"] = True
 
 
+def find_host_for_voice(channel_id):
+    """Which user is currently hosting in this voice channel, if any. Voice channels
+    have no stage instance / topic to match against, so a live VC session is simply a
+    last_host that points at the channel and hasn't been ended (/end or /takeover)."""
+    data = load_data()
+    for uid, record in data.items():
+        if not uid.isdigit():
+            continue
+        last_host = record.get("last_host") or {}
+        if last_host.get("ended"):
+            continue
+        if str(last_host.get("stage_channel_id")) == str(channel_id):
+            return uid
+    return None
+
+
+def hosted_channel_is_live(channel, last_host):
+    """Whether a host's tracked channel is still running their event. Stages are live
+    while their stage instance carries the host's topic; voice channels have no
+    instance, so they're live until the host is marked ended."""
+    if isinstance(channel, discord.StageChannel):
+        expected_topic = last_host.get("stage_topic") or last_host.get("event")
+        return bool(channel.instance and channel.instance.topic == expected_topic)
+    if isinstance(channel, discord.VoiceChannel):
+        return not last_host.get("ended") and str(last_host.get("stage_channel_id")) == str(channel.id)
+    return False
+
+
 def reset_stale_live_tracking():
     """One-time cleanup for the new dashboard "Live now" page: clears every
     existing last_host's live-stage link so nothing carried over from before
@@ -2022,7 +2051,7 @@ async def announce_event_ended(guild, host_uid, last_host):
 
 
 def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes,
-                        guild=None, test=False):
+                        guild=None, test=False, channel_label="Stage"):
     title = "TEST - Host Announcement" if test else "Host Announcement"
     co_hosts = co_hosts or []
     vouch_targets = " ".join([host.mention] + [c.mention for c in co_hosts])
@@ -2043,7 +2072,7 @@ def build_host_message(host, co_hosts, region, security_region, event, event_dis
         f"**Region:** {region}\n"
         f"**Security Region:** {security_region}\n"
         f"**Event Type:** {event_display}\n"
-        f"**Stage:** {stage}\n"
+        f"**{channel_label}:** {stage}\n"
         f"**Notes:** {notes_prefix}{notes}\n"
         f"**vouches:** vouch {vouch_targets} {event.lower()}"
     )
@@ -4238,13 +4267,15 @@ async def slash_leavepanel_error(interaction: discord.Interaction, error):
     co_host="Who's co-hosting with you",
     co_host2="Another co-host (optional)",
     co_host3="Another co-host (optional)",
-    stage="Which stage channel this event is in - starts it and grants you Stage Perms",
+    stage="Stage or voice channel this event is in - a stage gets started, either way you get Stage Perms",
     notes="Anything hosts should know (apply-for-event and event-rules are added automatically)",
 )
+@app_commands.rename(stage="channel")
 @app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
                        security_region=HOST_SECURITY_REGION_CHOICES)
 async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
-                      stage: discord.StageChannel, notes: str, co_host: discord.Member = None,
+                      stage: Union[discord.StageChannel, discord.VoiceChannel], notes: str,
+                      co_host: discord.Member = None,
                       co_host2: discord.Member = None, co_host3: discord.Member = None):
     co_hosts = []
     for c in (co_host, co_host2, co_host3):
@@ -4264,9 +4295,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
     if last_host and last_host.get("stage_channel_id"):
         prev_stage = guild.get_channel(int(last_host["stage_channel_id"]))
-        expected_topic = last_host.get("stage_topic") or last_host.get("event")
-        if (isinstance(prev_stage, discord.StageChannel) and prev_stage.instance
-                and prev_stage.instance.topic == expected_topic):
+        if hosted_channel_is_live(prev_stage, last_host):
             await interaction.followup.send(
                 f"You still have an active hosted event (**{last_host.get('event')}**) on "
                 f"{prev_stage.mention}. Run /end to close it first, or /takeover if someone "
@@ -4274,7 +4303,19 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
                 ephemeral=True)
             return
 
-    if stage.instance:
+    is_stage = isinstance(stage, discord.StageChannel)
+    if not is_stage:
+        other_host_id = find_host_for_voice(stage.id)
+        if other_host_id:
+            other_member = guild.get_member(int(other_host_id))
+            mention = other_member.mention if other_member else f"<@{other_host_id}>"
+            await interaction.followup.send(
+                f"{stage.mention} is already being used for a hosted event by {mention}. "
+                f"Use /takeover if you're picking it up, or choose a different channel.",
+                ephemeral=True)
+            return
+
+    if is_stage and stage.instance:
         other_host_id = find_host_for_stage(stage.id, stage.instance.topic)
         if other_host_id and str(other_host_id) != str(interaction.user.id):
             other_member = guild.get_member(int(other_host_id))
@@ -4321,7 +4362,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
 
     message = build_host_message(
         interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes,
-        guild=guild)
+        guild=guild, channel_label="Stage" if is_stage else "VC")
     sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}\n-----",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
@@ -4337,14 +4378,15 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
 
     granted = await grant_stage_perms(guild, interaction.user, reason=f"Hosting {event} via /host")
     stage_started = False
-    try:
-        await stage.create_instance(topic=stage_topic, reason=f"Hosted by {interaction.user}")
-        stage_started = True
-    except discord.HTTPException:
-        pass
+    if is_stage:
+        try:
+            await stage.create_instance(topic=stage_topic, reason=f"Hosted by {interaction.user}")
+            stage_started = True
+        except discord.HTTPException:
+            pass
 
     notice = f"Posted in {channel.mention}."
-    if not stage_started:
+    if is_stage and not stage_started:
         notice += " Couldn't start the stage (it may already be live, or I'm missing permission)."
     if not granted:
         notice += f" Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and my role sits above it."
@@ -4634,17 +4676,18 @@ async def slash_changeevent(interaction: discord.Interaction, event: app_command
     new_topic = build_stage_topic(new_event, region)
     stage_channel_id = last_host.get("stage_channel_id")
     stage_channel = guild.get_channel(int(stage_channel_id)) if stage_channel_id else None
-    if not (isinstance(stage_channel, discord.StageChannel) and stage_channel.instance
-            and stage_channel.instance.topic == old_topic):
+    if not hosted_channel_is_live(stage_channel, last_host):
         await interaction.followup.send(
-            "Your event's Stage isn't live anymore, so there's nothing to change.", ephemeral=True)
+            "Your event's channel isn't live anymore, so there's nothing to change.", ephemeral=True)
         return
 
-    try:
-        await stage_channel.instance.edit(topic=new_topic)
-    except discord.HTTPException as e:
-        await interaction.followup.send(f"Couldn't update the Stage topic: {e}", ephemeral=True)
-        return
+    # Only stages have a topic to keep in sync; a voice channel has nothing to edit.
+    if isinstance(stage_channel, discord.StageChannel):
+        try:
+            await stage_channel.instance.edit(topic=new_topic)
+        except discord.HTTPException as e:
+            await interaction.followup.send(f"Couldn't update the Stage topic: {e}", ephemeral=True)
+            return
 
     event_role = event_role_for(guild, new_event)
     event_display = event_role.mention if event_role else f"**{new_event}**"
@@ -4716,12 +4759,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
 
     stage_channel_id = last_host.get("stage_channel_id")
     stage_channel = guild.get_channel(int(stage_channel_id)) if stage_channel_id else None
-    expected_topic = last_host.get("stage_topic") or last_host.get("event")
-    stage_live = (
-        isinstance(stage_channel, discord.StageChannel)
-        and stage_channel.instance
-        and stage_channel.instance.topic == expected_topic
-    )
+    stage_live = hosted_channel_is_live(stage_channel, last_host)
     if not stage_live:
         await interaction.followup.send(
             f"{current_host.mention}'s last hosted event isn't live anymore, so there's nothing to take over.",
