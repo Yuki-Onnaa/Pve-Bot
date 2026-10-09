@@ -4737,6 +4737,16 @@ tr:hover td{background:rgba(255,255,255,.02)}
         </div>
       </div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">Server transfer backup</div>
+      <p style="font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:12px">
+        Downloads the full data store: users, vouches, rankings, balances, IP bans and logs,
+        fingerprint and HWID bans and logs, and settings. Use it to move this bot to a new host.
+        The file contains personal data. Store it encrypted and delete it after import.</p>
+      <a class="btn btn-primary" href="/api/admin/export-data"
+         onclick="return confirm('This file contains IP addresses, fingerprints and HWIDs. Download it?')">Export all data</a>
+      <a class="btn btn-soft" href="/api/admin/import-data" style="margin-left:8px">Import on new host</a>
+    </div>
   </section>
 
 </main>
