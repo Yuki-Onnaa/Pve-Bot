@@ -1,9 +1,9 @@
 import asyncio
-import threading
 import json
 import os
 import random
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Union
@@ -14,7 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from data_store import DATA_FILE, load_data, save_data, data_txn
+from data_store import DATA_FILE, data_txn, load_data, save_data
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -107,12 +107,14 @@ def get_memories():
 def add_memory(text, added_by):
     with data_txn() as data:
         memories = data.get("_memories", [])
-        memories.append({
-            "id": uuid.uuid4().hex[:8],
-            "text": text,
-            "added_by": added_by,
-            "time": datetime.now(timezone.utc).isoformat(),
-        })
+        memories.append(
+            {
+                "id": uuid.uuid4().hex[:8],
+                "text": text,
+                "added_by": added_by,
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         memories = memories[-50:]  # cap so the system prompt doesn't balloon forever
         data["_memories"] = memories
 
@@ -181,20 +183,72 @@ EVENT_PING_TZ = ZoneInfo("Africa/Tripoli")  # Libya (Sabha) - UTC+2, no DST
 # the SAME NAME as the event (e.g. a role literally called "Carnival of Hearts").
 EVENT_PING_SCHEDULE = {
     "Carnival of Hearts": [
-        "07:00", "08:30", "10:00", "11:30", "13:00", "14:30", "16:00", "17:30",
-        "19:00", "20:30", "22:00", "23:30", "01:00", "02:30", "04:00", "05:30",
+        "07:00",
+        "08:30",
+        "10:00",
+        "11:30",
+        "13:00",
+        "14:30",
+        "16:00",
+        "17:30",
+        "19:00",
+        "20:30",
+        "22:00",
+        "23:30",
+        "01:00",
+        "02:30",
+        "04:00",
+        "05:30",
     ],
     "Interluminary Parasol": [
-        "07:30", "09:00", "10:30", "12:00", "13:30", "15:00", "16:30", "18:00",
-        "19:30", "21:00", "22:30", "00:00", "01:30", "03:00", "04:30", "06:00",
+        "07:30",
+        "09:00",
+        "10:30",
+        "12:00",
+        "13:30",
+        "15:00",
+        "16:30",
+        "18:00",
+        "19:30",
+        "21:00",
+        "22:30",
+        "00:00",
+        "01:30",
+        "03:00",
+        "04:30",
+        "06:00",
     ],
     "Battle Royale": [
-        "08:00", "09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30",
-        "20:00", "21:30", "23:00", "00:30", "02:00", "03:30", "05:00", "06:30",
+        "08:00",
+        "09:30",
+        "11:00",
+        "12:30",
+        "14:00",
+        "15:30",
+        "17:00",
+        "18:30",
+        "20:00",
+        "21:30",
+        "23:00",
+        "00:30",
+        "02:00",
+        "03:30",
+        "05:00",
+        "06:30",
     ],
     "Doom of Caeranthil": [
-        "07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00", "21:00",
-        "23:00", "01:00", "03:00", "05:00",
+        "07:00",
+        "09:00",
+        "11:00",
+        "13:00",
+        "15:00",
+        "17:00",
+        "19:00",
+        "21:00",
+        "23:00",
+        "01:00",
+        "03:00",
+        "05:00",
     ],
 }
 
@@ -330,9 +384,7 @@ PHRASE_ALIASES = {
 }
 _SORTED_PHRASES = sorted(PHRASE_ALIASES.keys(), key=len, reverse=True)
 _PHRASE_PATTERN = "|".join(re.escape(p) for p in _SORTED_PHRASES)
-PHRASE_VOUCH_PATTERN = re.compile(
-    rf"^\s*({_PHRASE_PATTERN})\s+((?:<@!?\d+>\s*)+)$", re.IGNORECASE
-)
+PHRASE_VOUCH_PATTERN = re.compile(rf"^\s*({_PHRASE_PATTERN})\s+((?:<@!?\d+>\s*)+)$", re.IGNORECASE)
 
 PVE_VOUCH_PATTERN = re.compile(r"^\s*vouch\s+((?:<@!?\d+>\s*)+)(.+)$", re.IGNORECASE)
 MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
@@ -342,6 +394,7 @@ MENTION_PATTERN = re.compile(r"<@!?(\d+)>")
 # The dashboard can override event points and rank ladders. Anything it has
 # not overridden falls back to the constants above.
 # ─────────────────────────────────────────────────────────────
+
 
 def get_events(category, data=None):
     """{event name: {points, cooldown}} for a category, with dashboard overrides applied."""
@@ -451,6 +504,7 @@ def user_records(data):
 # PARSING HELPERS
 # ─────────────────────────────────────────────────────────────
 
+
 def normalize(text):
     return re.sub(r"\s+", " ", text.strip().lower())
 
@@ -462,6 +516,7 @@ def parse_pve_event(text):
 # ─────────────────────────────────────────────────────────────
 # CORE VOUCH RECORDING (shared by live messages + sync + backfill)
 # ─────────────────────────────────────────────────────────────
+
 
 def record_vouch(data, target_ids, author_id, category, event_name, when=None, author_name=None):
     """
@@ -512,15 +567,17 @@ def record_vouch(data, target_ids, author_id, category, event_name, when=None, a
         record["cooldowns"][cooldown_key] = when.isoformat()
         if category == "pve":
             record["cooldowns"][any_key] = when.isoformat()
-        record["log"].append({
-            "id": uuid.uuid4().hex[:8],
-            "by": str(author_id),
-            "by_name": author_name or "",
-            "event": event_name,
-            "points": points,
-            "count": 1,
-            "time": when.isoformat(),
-        })
+        record["log"].append(
+            {
+                "id": uuid.uuid4().hex[:8],
+                "by": str(author_id),
+                "by_name": author_name or "",
+                "event": event_name,
+                "points": points,
+                "count": 1,
+                "time": when.isoformat(),
+            }
+        )
         recorded_ids.append(target_id)
 
     return recorded_ids, cooldown_ids, self_dropped
@@ -543,13 +600,14 @@ def remember_message_vouch_targets(data, message_id, recorded_ids):
     existing.update(str(t) for t in recorded_ids)
     store[key] = list(existing)
     if len(store) > 2000:  # bound growth - drop the oldest tracked messages
-        for old_key in list(store.keys())[:len(store) - 2000]:
+        for old_key in list(store.keys())[: len(store) - 2000]:
             del store[old_key]
 
 
 # ─────────────────────────────────────────────────────────────
 # LIVE LEADERBOARDS
 # ─────────────────────────────────────────────────────────────
+
 
 def build_leaderboard_lines(data, category, n=10):
     ranked = sorted(
@@ -633,6 +691,7 @@ async def _refresh_live_leaderboards_inner():
 # AUDIT LOG
 # ─────────────────────────────────────────────────────────────
 
+
 async def log_audit(text):
     channel = bot.get_channel(AUDIT_LOG_CHANNEL_ID)
     if channel is None:
@@ -648,6 +707,7 @@ async def log_audit(text):
 # ─────────────────────────────────────────────────────────────
 # ROLE LADDER
 # ─────────────────────────────────────────────────────────────
+
 
 async def send_rank_up_dm(member, old_rank, new_rank):
     """DMs a member when they climb to a new rank role."""
@@ -709,14 +769,17 @@ async def update_role_for_user(guild, user_id, category, notify=True):
     if is_gated and not member_has_gate_role(member, category):
         stale = [r for r in member.roles if r.name in category_role_names]
         if stale:
-            gate_label = (f"<@&{HOSTER_GATE_ROLE_ID}>" if category == HOSTER_GATE_CATEGORY
-                          else CATEGORY_GATE_ROLE_NAMES.get(category, ""))
+            gate_label = (
+                f"<@&{HOSTER_GATE_ROLE_ID}>"
+                if category == HOSTER_GATE_CATEGORY
+                else CATEGORY_GATE_ROLE_NAMES.get(category, "")
+            )
             try:
                 await member.remove_roles(
-                    *stale, reason=f"Missing the required role for {CATEGORY_NAMES.get(category, category)} ranks")
+                    *stale, reason=f"Missing the required role for {CATEGORY_NAMES.get(category, category)} ranks"
+                )
                 await log_audit(
-                    f"Removed {', '.join(r.name for r in stale)} from {member.mention} "
-                    f"(missing {gate_label})"
+                    f"Removed {', '.join(r.name for r in stale)} from {member.mention} " f"(missing {gate_label})"
                 )
             except discord.Forbidden:
                 print(f"[Roles] Missing permission to strip {category} ranks from {member.id}")
@@ -747,9 +810,7 @@ async def update_role_for_user(guild, user_id, category, notify=True):
             if notify and promoted and not data.get(str(user_id), {}).get("rank_up_dm_opt_out"):
                 sent = await send_rank_up_dm(member, old_rank, achieved_role_name)
                 if not sent:
-                    await log_audit(
-                        f"{member.mention} reached **{achieved_role_name}** but has DMs closed."
-                    )
+                    await log_audit(f"{member.mention} reached **{achieved_role_name}** but has DMs closed.")
     except discord.Forbidden:
         await log_audit(
             f"Couldn't update rank role for <@{user_id}> - check the bot's role is above "
@@ -811,6 +872,7 @@ def member_has_gate_role(member, category):
     if gate_name:
         return any(r.name == gate_name for r in member.roles)
     return True  # not gated
+
 
 TOP_VOUCHER_ROLE = os.environ.get("TOP_VOUCHER_ROLE", "Top Voucher")
 TOP_VOUCHER_COUNT = int(os.environ.get("TOP_VOUCHER_COUNT", "2"))
@@ -893,8 +955,7 @@ async def update_top_voucher_roles(announce=True):
         window = "all time" if TOP_VOUCHER_DAYS <= 0 else f"last {TOP_VOUCHER_DAYS} days"
         parts = []
         if added:
-            parts.append(", ".join(
-                f"{m.mention} ({counts.get(str(m.id), 0)} Host vouches)" for m in added))
+            parts.append(", ".join(f"{m.mention} ({counts.get(str(m.id), 0)} Host vouches)" for m in added))
         line = f"**{TOP_VOUCHER_ROLE}** update ({window})"
         if parts:
             line += f"\nNow held by: {parts[0]}"
@@ -923,6 +984,7 @@ async def before_top_voucher_loop():
 # Checks hourly and DMs anyone whose /host streak (rolling 24h since
 # their last /host run) is about to lapse.
 # ─────────────────────────────────────────────────────────────
+
 
 @tasks.loop(hours=1)
 async def warn_expiring_streaks():
@@ -1002,6 +1064,7 @@ async def before_streak_warnings():
 # CUSTOM ?COMMANDS (created from the dashboard)
 # ─────────────────────────────────────────────────────────────
 
+
 def get_custom_commands():
     return load_data().get("_commands", [])
 
@@ -1015,10 +1078,11 @@ def _bump_command_uses(name):
 
 
 def _fill_placeholders(text, message):
-    return (text
-            .replace("{user}", message.author.mention)
-            .replace("{name}", message.author.display_name)
-            .replace("{server}", message.guild.name if message.guild else "this server"))
+    return (
+        text.replace("{user}", message.author.mention)
+        .replace("{name}", message.author.display_name)
+        .replace("{server}", message.guild.name if message.guild else "this server")
+    )
 
 
 async def try_custom_command(message):
@@ -1093,11 +1157,15 @@ async def call_llm(history, system_prompt=None):
                 if status != 200:
                     print(f"[NVIDIA API] HTTP {status}: {text[:500]}")
                     if status == 404:
-                        return ("⚠️ The AI provider rejected the request (HTTP 404). This usually means "
-                                "the account is missing API access rather than anything being wrong here. "
-                                "An admin can run `/aitest` for the details.")
+                        return (
+                            "⚠️ The AI provider rejected the request (HTTP 404). This usually means "
+                            "the account is missing API access rather than anything being wrong here. "
+                            "An admin can run `/aitest` for the details."
+                        )
                     if status in (401, 403):
-                        return "⚠️ The AI provider rejected the API key (HTTP {}). Check `NVIDIA_API_KEY`.".format(status)
+                        return "⚠️ The AI provider rejected the API key (HTTP {}). Check `NVIDIA_API_KEY`.".format(
+                            status
+                        )
                     if status == 429:
                         return "⚠️ Rate limited by the AI provider. Try again in a minute."
                     return f"⚠️ Chat API returned an error (HTTP {status}). Check Railway logs for details."
@@ -1209,10 +1277,18 @@ def wikitext_to_plaintext(text):
 
 async def _wiki_page_text(session, title):
     """Raw wikitext for a title, cleaned to plain prose. Empty string on failure."""
-    data = await _wiki_get(session, {
-        "action": "query", "prop": "revisions", "rvprop": "content",
-        "titles": title, "format": "json", "redirects": 1,
-    }, timeout=14)
+    data = await _wiki_get(
+        session,
+        {
+            "action": "query",
+            "prop": "revisions",
+            "rvprop": "content",
+            "titles": title,
+            "format": "json",
+            "redirects": 1,
+        },
+        timeout=14,
+    )
     if not data:
         return ""
     pages = data.get("query", {}).get("pages", {})
@@ -1224,19 +1300,34 @@ async def _wiki_page_text(session, title):
 
 async def _wiki_search_titles(session, cleaned, raw_query):
     """Full text search, falling back to opensearch which is more forgiving."""
-    data = await _wiki_get(session, {
-        "action": "query", "list": "search", "srsearch": cleaned,
-        "format": "json", "srlimit": 5, "srnamespace": 0,
-    }, timeout=10)
+    data = await _wiki_get(
+        session,
+        {
+            "action": "query",
+            "list": "search",
+            "srsearch": cleaned,
+            "format": "json",
+            "srlimit": 5,
+            "srnamespace": 0,
+        },
+        timeout=10,
+    )
     titles = [r["title"] for r in (data or {}).get("query", {}).get("search", [])]
     if titles:
         return titles
 
     # opensearch handles partial and misspelled names better than full text search
-    data = await _wiki_get(session, {
-        "action": "opensearch", "search": cleaned or raw_query,
-        "limit": 5, "namespace": 0, "format": "json",
-    }, timeout=10)
+    data = await _wiki_get(
+        session,
+        {
+            "action": "opensearch",
+            "search": cleaned or raw_query,
+            "limit": 5,
+            "namespace": 0,
+            "format": "json",
+        },
+        timeout=10,
+    )
     if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list):
         return data[1]
     return []
@@ -1278,10 +1369,10 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
             squashed_title = _squash(title)
             squashed_query = _squash(query)
             title_is_match = (
-                squashed_query and squashed_title
+                squashed_query
+                and squashed_title
                 and (squashed_query in squashed_title or squashed_title in squashed_query)
-            ) or any(_squash(t) and _squash(t) in squashed_title
-                     for t in search_terms if len(t) > 3)
+            ) or any(_squash(t) and _squash(t) in squashed_title for t in search_terms if len(t) > 3)
 
             match_pos = -1
             for term in sorted(search_terms, key=len, reverse=True):
@@ -1319,11 +1410,13 @@ async def fetch_wiki_context(query, max_chars=900, max_sources=3):
         if not results and candidates:
             intro = await _wiki_page_text(session, candidates[0])
             if intro:
-                results.append({
-                    "title": candidates[0],
-                    "snippet": intro[:max_chars] + ("..." if len(intro) > max_chars else ""),
-                    "url": WIKI_BASE_URL + candidates[0].replace(" ", "_"),
-                })
+                results.append(
+                    {
+                        "title": candidates[0],
+                        "snippet": intro[:max_chars] + ("..." if len(intro) > max_chars else ""),
+                        "url": WIKI_BASE_URL + candidates[0].replace(" ", "_"),
+                    }
+                )
 
     return results
 
@@ -1556,8 +1649,7 @@ async def create_ticket_channel(guild, opener, ticket_type, name_prefix):
         guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
     }
     for role in staff_ticket_roles(guild):
-        overwrites[role] = discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True)
+        overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
 
     category = guild.get_channel(TICKET_CATEGORY_ID) if TICKET_CATEGORY_ID else None
     if not isinstance(category, discord.CategoryChannel):
@@ -1581,18 +1673,19 @@ class TicketPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Host Request", style=discord.ButtonStyle.green,
-                        custom_id="ticket_panel_host_request")
+    @discord.ui.button(label="Host Request", style=discord.ButtonStyle.green, custom_id="ticket_panel_host_request")
     async def open_host_request(self, interaction: discord.Interaction, button: discord.ui.Button):
         if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
             await interaction.response.send_message(
-                "You need the Host role to open a Host Request ticket.", ephemeral=True)
+                "You need the Host role to open a Host Request ticket.", ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         channel, created = await create_ticket_channel(
-            guild, interaction.user, HOST_REQUEST_TICKET_TYPE, "host-request")
+            guild, interaction.user, HOST_REQUEST_TICKET_TYPE, "host-request"
+        )
 
         if created:
             stage_role = discord.utils.get(guild.roles, name=STAGE_PERMS_ROLE_NAME)
@@ -1604,10 +1697,17 @@ class TicketPanelView(discord.ui.View):
                 except discord.Forbidden:
                     pass
 
-            note = (f"You've been given **{STAGE_PERMS_ROLE_NAME}** for this session - it's removed "
-                     f"once staff closes this ticket after you host.") if granted else (
-                     f"⚠️ Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and the "
-                     f"bot's role sits above it.")
+            note = (
+                (
+                    f"You've been given **{STAGE_PERMS_ROLE_NAME}** for this session - it's removed "
+                    f"once staff closes this ticket after you host."
+                )
+                if granted
+                else (
+                    f"⚠️ Couldn't grant **{STAGE_PERMS_ROLE_NAME}** - check the role exists and the "
+                    f"bot's role sits above it."
+                )
+            )
             embed = discord.Embed(
                 title="Host Request",
                 description=f"{interaction.user.mention} opened a Host Request ticket.\n{note}",
@@ -1617,11 +1717,15 @@ class TicketPanelView(discord.ui.View):
             mod_roles = [r for r in guild.roles if r.name in mod_role_names]
             ping = " ".join([interaction.user.mention] + [r.mention for r in mod_roles])
             await channel.send(
-                content=ping, embed=embed, view=HostTicketCloseView(),
-                allowed_mentions=discord.AllowedMentions(users=True, roles=True))
+                content=ping,
+                embed=embed,
+                view=HostTicketCloseView(),
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+            )
             await log_audit(
                 f"{interaction.user.mention} opened a Host Request ticket ({channel.mention})"
-                + (f" - granted **{STAGE_PERMS_ROLE_NAME}**." if granted else "."))
+                + (f" - granted **{STAGE_PERMS_ROLE_NAME}**." if granted else ".")
+            )
 
         await interaction.followup.send(f"Your ticket: {channel.mention}", ephemeral=True)
 
@@ -1630,14 +1734,16 @@ class HostTicketCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Close Ticket (after host)", style=discord.ButtonStyle.red,
-                        custom_id="ticket_close_host_request")
+    @discord.ui.button(
+        label="Close Ticket (after host)", style=discord.ButtonStyle.red, custom_id="ticket_close_host_request"
+    )
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket_peek = get_tickets().get(str(interaction.channel.id))
         is_opener = ticket_peek is not None and interaction.user.id == ticket_peek.get("user_id")
         if not is_opener and not is_ticket_staff(interaction.user):
             await interaction.response.send_message(
-                "Only the ticket opener or ticket staff can close this ticket.", ephemeral=True)
+                "Only the ticket opener or ticket staff can close this ticket.", ephemeral=True
+            )
             return
 
         await interaction.response.defer()
@@ -1656,8 +1762,12 @@ class HostTicketCloseView(discord.ui.View):
                     pass
             await log_audit(
                 f"Host Request ticket closed by {interaction.user.mention}"
-                + (f" - removed **{STAGE_PERMS_ROLE_NAME}** from <@{ticket['user_id']}>."
-                   if removed else f" for <@{ticket['user_id']}>."))
+                + (
+                    f" - removed **{STAGE_PERMS_ROLE_NAME}** from <@{ticket['user_id']}>."
+                    if removed
+                    else f" for <@{ticket['user_id']}>."
+                )
+            )
 
         await interaction.channel.send("Closing this ticket in 5 seconds...")
         await asyncio.sleep(5)
@@ -1692,30 +1802,34 @@ def record_leave_log(entry):
 
 
 async def post_leave_log(guild, member, action, reason=None, duration=None, note=None):
-    record_leave_log({
-        "user_id": str(member.id),
-        "username": str(member),
-        "action": action,
-        "reason": reason,
-        "duration": duration,
-        "note": note,
-        "time": datetime.now(timezone.utc).isoformat(),
-    })
+    record_leave_log(
+        {
+            "user_id": str(member.id),
+            "username": str(member),
+            "action": action,
+            "reason": reason,
+            "duration": duration,
+            "note": note,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
     _, log_channel_id = get_leave_config()
     channel = bot.get_channel(int(log_channel_id)) if log_channel_id else None
     if channel is None:
         return
     if action == "start":
-        embed = discord.Embed(title="On Leave", color=discord.Color.orange(),
-                               description=f"{member.mention} is now on leave.")
+        embed = discord.Embed(
+            title="On Leave", color=discord.Color.orange(), description=f"{member.mention} is now on leave."
+        )
         embed.add_field(name="Reason", value=reason or "-", inline=False)
         embed.add_field(name="Duration", value=duration or "-", inline=False)
         if note:
             embed.add_field(name="Note", value=note, inline=False)
     else:
-        embed = discord.Embed(title="Back from Leave", color=discord.Color.green(),
-                               description=f"{member.mention} is back from leave.")
+        embed = discord.Embed(
+            title="Back from Leave", color=discord.Color.green(), description=f"{member.mention} is back from leave."
+        )
     embed.timestamp = datetime.now(timezone.utc)
     embed.set_footer(text=str(member.id))
     try:
@@ -1727,8 +1841,9 @@ async def post_leave_log(guild, member, action, reason=None, duration=None, note
 class OnLeaveModal(discord.ui.Modal, title="Going On Leave"):
     reason = discord.ui.TextInput(label="Reason", placeholder="Exams", max_length=200)
     duration = discord.ui.TextInput(label="Duration", placeholder="2-3 Weeks", max_length=100)
-    note = discord.ui.TextInput(label="Note (optional)", required=False,
-                                 style=discord.TextStyle.paragraph, max_length=500)
+    note = discord.ui.TextInput(
+        label="Note (optional)", required=False, style=discord.TextStyle.paragraph, max_length=500
+    )
 
     def __init__(self, role):
         super().__init__()
@@ -1739,29 +1854,34 @@ class OnLeaveModal(discord.ui.Modal, title="Going On Leave"):
             await interaction.user.add_roles(self.role, reason="Went on leave")
         except discord.Forbidden:
             await interaction.response.send_message(
-                f"Couldn't give you **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.",
-                ephemeral=True)
+                f"Couldn't give you **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.", ephemeral=True
+            )
             return
         await post_leave_log(
-            interaction.guild, interaction.user, "start",
-            reason=str(self.reason), duration=str(self.duration),
-            note=str(self.note) or None)
+            interaction.guild,
+            interaction.user,
+            "start",
+            reason=str(self.reason),
+            duration=str(self.duration),
+            note=str(self.note) or None,
+        )
         await interaction.response.send_message(
-            "You're marked as on leave. Click the button again when you're back.", ephemeral=True)
+            "You're marked as on leave. Click the button again when you're back.", ephemeral=True
+        )
 
 
 class OnLeaveButtonView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="On Leave", style=discord.ButtonStyle.blurple,
-                        custom_id="on_leave_toggle_button")
+    @discord.ui.button(label="On Leave", style=discord.ButtonStyle.blurple, custom_id="on_leave_toggle_button")
     async def toggle_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
         role = discord.utils.get(guild.roles, name=ON_LEAVE_ROLE_NAME)
         if role is None:
             await interaction.response.send_message(
-                f"No role named **{ON_LEAVE_ROLE_NAME}** exists - ask an admin to create it.", ephemeral=True)
+                f"No role named **{ON_LEAVE_ROLE_NAME}** exists - ask an admin to create it.", ephemeral=True
+            )
             return
 
         if role in interaction.user.roles:
@@ -1769,8 +1889,8 @@ class OnLeaveButtonView(discord.ui.View):
                 await interaction.user.remove_roles(role, reason="Returned from leave")
             except discord.Forbidden:
                 await interaction.response.send_message(
-                    f"Couldn't remove **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.",
-                    ephemeral=True)
+                    f"Couldn't remove **{ON_LEAVE_ROLE_NAME}** - the bot's role needs to sit above it.", ephemeral=True
+                )
                 return
             await post_leave_log(guild, interaction.user, "end")
             await interaction.response.send_message("Welcome back! On-leave removed.", ephemeral=True)
@@ -1878,8 +1998,16 @@ def security_role_for_region(guild, region):
     return discord.utils.get(guild.roles, name=name) if name else None
 
 
-def record_host_run(user_id, event, message_id=None, channel_id=None, co_host_ids=None, stage_channel_id=None,
-                     region=None, stage_topic=None):
+def record_host_run(
+    user_id,
+    event,
+    message_id=None,
+    channel_id=None,
+    co_host_ids=None,
+    stage_channel_id=None,
+    region=None,
+    stage_topic=None,
+):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
     event hosted plus the posted message/stage, so /reping and /end know what to act on."""
     with data_txn() as data:
@@ -1905,8 +2033,9 @@ def no_active_event_message(last_host, action):
     'never hosted', 'already ended', and 'someone took over' instead of lumping them all
     into a generic 'you haven't run /host yet', which is misleading after a takeover."""
     if last_host and last_host.get("ended") and last_host.get("taken_over_by"):
-        return (f"<@{last_host['taken_over_by']}> took over hosting that event, "
-                f"so there's nothing for you to {action}.")
+        return (
+            f"<@{last_host['taken_over_by']}> took over hosting that event, " f"so there's nothing for you to {action}."
+        )
     if last_host and last_host.get("ended"):
         return f"That event's already been marked as ended, so there's nothing for you to {action}."
     return f"You haven't run /host yet, so there's nothing to {action}."
@@ -2050,8 +2179,19 @@ async def announce_event_ended(guild, host_uid, last_host):
     return True
 
 
-def build_host_message(host, co_hosts, region, security_region, event, event_display, stage, notes,
-                        guild=None, test=False, channel_label="Stage"):
+def build_host_message(
+    host,
+    co_hosts,
+    region,
+    security_region,
+    event,
+    event_display,
+    stage,
+    notes,
+    guild=None,
+    test=False,
+    channel_label="Stage",
+):
     title = "TEST - Host Announcement" if test else "Host Announcement"
     co_hosts = co_hosts or []
     vouch_targets = " ".join([host.mention] + [c.mention for c in co_hosts])
@@ -2165,14 +2305,17 @@ BOT_MANAGER_ROLE_NAME = os.environ.get("BOT_MANAGER_ROLE_NAME", "Bot Manager")
 # Extra role IDs treated the same as the Bot Manager role above, comma separated,
 # for roles you want trusted without renaming them to match BOT_MANAGER_ROLE_NAME.
 BOT_MANAGER_ROLE_IDS = {
-    int(r) for r in (os.environ.get("BOT_MANAGER_ROLE_IDS", "1481379874366292008").split(","))
-    if r.strip()
+    int(r) for r in (os.environ.get("BOT_MANAGER_ROLE_IDS", "1481379874366292008").split(",")) if r.strip()
 }
 ANTINUKE_WINDOW_SECONDS = int(os.environ.get("ANTINUKE_WINDOW_SECONDS", "12"))
 ANTINUKE_THRESHOLD = int(os.environ.get("ANTINUKE_THRESHOLD", "3"))
 ANTINUKE_DANGEROUS_PERMS = (
-    "administrator", "manage_channels", "manage_roles", "manage_guild",
-    "ban_members", "kick_members",
+    "administrator",
+    "manage_channels",
+    "manage_roles",
+    "manage_guild",
+    "ban_members",
+    "kick_members",
 )
 
 _destructive_action_log = {}  # user_id -> [datetime, ...], in-memory only
@@ -2187,6 +2330,7 @@ def is_owner_or_bot_manager(member, guild):
 def antinuke_check():
     async def predicate(interaction: discord.Interaction) -> bool:
         return interaction.guild is not None and is_owner_or_bot_manager(interaction.user, interaction.guild)
+
     return app_commands.check(predicate)
 
 
@@ -2217,13 +2361,18 @@ def snapshot_channel(ch):
     overwrites = []
     for target, ow in ch.overwrites.items():
         allow, deny = ow.pair()
-        overwrites.append({
-            "target_id": str(target.id),
-            "target_type": "role" if isinstance(target, discord.Role) else "member",
-            "allow": allow.value, "deny": deny.value,
-        })
+        overwrites.append(
+            {
+                "target_id": str(target.id),
+                "target_type": "role" if isinstance(target, discord.Role) else "member",
+                "allow": allow.value,
+                "deny": deny.value,
+            }
+        )
     return {
-        "id": str(ch.id), "kind": kind, "name": ch.name,
+        "id": str(ch.id),
+        "kind": kind,
+        "name": ch.name,
         "category_id": str(ch.category_id) if ch.category_id else None,
         "position": ch.position,
         "topic": getattr(ch, "topic", None),
@@ -2240,9 +2389,13 @@ def snapshot_role(role):
     if role.is_default():
         return None
     return {
-        "id": str(role.id), "name": role.name, "color": role.color.value,
-        "permissions": role.permissions.value, "position": role.position,
-        "hoist": role.hoist, "mentionable": role.mentionable,
+        "id": str(role.id),
+        "name": role.name,
+        "color": role.color.value,
+        "permissions": role.permissions.value,
+        "position": role.position,
+        "hoist": role.hoist,
+        "mentionable": role.mentionable,
     }
 
 
@@ -2305,9 +2458,11 @@ async def restore_missing(guild, snapshot):
             continue
         try:
             new_role = await guild.create_role(
-                name=r["name"], colour=discord.Colour(r["color"]),
+                name=r["name"],
+                colour=discord.Colour(r["color"]),
                 permissions=discord.Permissions(r["permissions"]),
-                hoist=r["hoist"], mentionable=r["mentionable"],
+                hoist=r["hoist"],
+                mentionable=r["mentionable"],
                 reason="Anti-nuke restore - recreated a missing role",
             )
             role_id_map[r["id"]] = new_role
@@ -2355,20 +2510,28 @@ async def restore_missing(guild, snapshot):
         try:
             if c["kind"] == "text":
                 await guild.create_text_channel(
-                    c["name"], category=parent, overwrites=overwrites,
-                    topic=c.get("topic"), nsfw=c.get("nsfw", False),
+                    c["name"],
+                    category=parent,
+                    overwrites=overwrites,
+                    topic=c.get("topic"),
+                    nsfw=c.get("nsfw", False),
                     slowmode_delay=c.get("slowmode_delay", 0),
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             elif c["kind"] == "voice":
                 await guild.create_voice_channel(
-                    c["name"], category=parent, overwrites=overwrites,
-                    bitrate=c.get("bitrate") or 64000, user_limit=c.get("user_limit") or 0,
+                    c["name"],
+                    category=parent,
+                    overwrites=overwrites,
+                    bitrate=c.get("bitrate") or 64000,
+                    user_limit=c.get("user_limit") or 0,
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             elif c["kind"] == "stage":
                 await guild.create_stage_channel(
-                    c["name"], category=parent, overwrites=overwrites,
+                    c["name"],
+                    category=parent,
+                    overwrites=overwrites,
                     reason="Anti-nuke restore - recreated a missing channel",
                 )
             created_channels += 1
@@ -2398,7 +2561,8 @@ async def handle_suspected_nuke(guild, user):
     stripped = []
     if member is not None and guild.me is not None:
         dangerous = [
-            r for r in member.roles
+            r
+            for r in member.roles
             if not r.is_default() and any(getattr(r.permissions, p) for p in ANTINUKE_DANGEROUS_PERMS)
         ]
         removable = [r for r in dangerous if r < guild.me.top_role]
@@ -2417,7 +2581,11 @@ async def handle_suspected_nuke(guild, user):
     warning = (
         f"🚨 **Anti-nuke triggered** for {user.mention} (`{user.id}`)\n"
         f"{ANTINUKE_THRESHOLD}+ channel/role deletions within {ANTINUKE_WINDOW_SECONDS}s.\n"
-        + (f"Stripped: {', '.join(stripped)}\n" if stripped else "Couldn't strip any roles (none removable, or they left).\n")
+        + (
+            f"Stripped: {', '.join(stripped)}\n"
+            if stripped
+            else "Couldn't strip any roles (none removable, or they left).\n"
+        )
         + f"Auto-restored {restored_channels} channel(s) and {restored_roles} role(s) from the last backup"
         + (f", and gave {restored_members} member(s) their role(s) back." if restored_members else ".")
     )
@@ -2531,14 +2699,17 @@ async def before_backup_snapshot_loop():
     await bot.wait_until_ready()
 
 
-@bot.tree.command(name="restore", description="Recreate any channels/roles missing since the last backup (owner / Bot Manager only)")
+@bot.tree.command(
+    name="restore", description="Recreate any channels/roles missing since the last backup (owner / Bot Manager only)"
+)
 @antinuke_check()
 async def slash_restore(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     snapshot = load_data().get("_backup_snapshot")
     if not snapshot:
         await interaction.followup.send(
-            "No backup exists yet - one is taken automatically every hour, or run /backupnow first.", ephemeral=True)
+            "No backup exists yet - one is taken automatically every hour, or run /backupnow first.", ephemeral=True
+        )
         return
     channels, roles, members = await restore_missing(interaction.guild, snapshot)
     if channels == 0 and roles == 0:
@@ -2548,23 +2719,26 @@ async def slash_restore(interaction: discord.Interaction):
             f"regularly, or note that channels/roles are now also saved the moment they're created."
         )
     else:
-        msg = (
-            f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}"
-            + (f", and gave {members} member(s) their role(s) back." if members else ".")
+        msg = f"Restored {channels} channel(s) and {roles} role(s) from the backup taken {snapshot['taken_at']}" + (
+            f", and gave {members} member(s) their role(s) back." if members else "."
         )
     await interaction.followup.send(msg, ephemeral=True)
     await log_audit(
         f"{interaction.user.mention} ran /restore - recreated {channels} channel(s), {roles} role(s), "
-        f"restored {members} member role assignment(s).")
+        f"restored {members} member role assignment(s)."
+    )
 
 
-@bot.tree.command(name="backupnow", description="Take an immediate snapshot of channels and roles (owner / Bot Manager only)")
+@bot.tree.command(
+    name="backupnow", description="Take an immediate snapshot of channels and roles (owner / Bot Manager only)"
+)
 @antinuke_check()
 async def slash_backupnow(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     snap = await take_backup_snapshot(interaction.guild)
     await interaction.followup.send(
-        f"Backup taken: {len(snap['channels'])} channel(s), {len(snap['roles'])} role(s).", ephemeral=True)
+        f"Backup taken: {len(snap['channels'])} channel(s), {len(snap['roles'])} role(s).", ephemeral=True
+    )
 
 
 @bot.tree.command(name="antinuke", description="Check or toggle anti-nuke auto-response (owner / Bot Manager only)")
@@ -2580,7 +2754,8 @@ async def slash_antinuke(interaction: discord.Interaction, enabled: bool = None)
         return
     set_antinuke_enabled(enabled)
     await interaction.followup.send(
-        f"Anti-nuke auto-response is now **{'enabled' if enabled else 'disabled'}**.", ephemeral=True)
+        f"Anti-nuke auto-response is now **{'enabled' if enabled else 'disabled'}**.", ephemeral=True
+    )
     await log_audit(f"{interaction.user.mention} {'enabled' if enabled else 'disabled'} anti-nuke auto-response.")
 
 
@@ -2635,6 +2810,7 @@ async def on_ready():
     # Start the web dashboard in a background thread
     try:
         import dashboard
+
         dashboard.set_bot(
             bot,
             loop=asyncio.get_running_loop(),
@@ -2701,10 +2877,7 @@ async def on_voice_state_update(member, before, after):
         user_data = data.get(str(member.id), {})
         for cat in CATEGORY_EVENTS:
             if user_data.get(cat, {}).get("total_vouches", 0) > 0:
-                activity = discord.Activity(
-                    type=discord.ActivityType.playing,
-                    name="Hosting In Matzys"
-                )
+                activity = discord.Activity(type=discord.ActivityType.playing, name="Hosting In Matzys")
                 try:
                     await bot.change_presence(activity=activity)
                 except Exception as e:
@@ -2751,16 +2924,18 @@ async def maybe_chime_in(message):
     recent_lines.reverse()
     context_text = "\n".join(recent_lines) if recent_lines else "(no recent messages)"
 
-    prompt_messages = [{
-        "role": "user",
-        "content": (
-            f"Recent chat in this channel:\n{context_text}\n\n"
-            "Jump into this conversation naturally with a short, casual message - like a "
-            "regular server member randomly deciding to say something. Don't summarize the "
-            "conversation and don't address it like an assistant would. Just react or "
-            "contribute like a person casually chiming in. One or two sentences max."
-        ),
-    }]
+    prompt_messages = [
+        {
+            "role": "user",
+            "content": (
+                f"Recent chat in this channel:\n{context_text}\n\n"
+                "Jump into this conversation naturally with a short, casual message - like a "
+                "regular server member randomly deciding to say something. Don't summarize the "
+                "conversation and don't address it like an assistant would. Just react or "
+                "contribute like a person casually chiming in. One or two sentences max."
+            ),
+        }
+    ]
 
     try:
         reply_text = await call_llm(prompt_messages, system_prompt=build_system_prompt(get_active_persona()))
@@ -2823,8 +2998,7 @@ async def on_message(message):
         # lock. The actual record+save has to happen atomically together though.
         with data_txn() as data:
             recorded_ids, cooldown_ids, self_dropped = record_vouch(
-                data, target_ids, message.author.id, category, event_name,
-                author_name=message.author.display_name
+                data, target_ids, message.author.id, category, event_name, author_name=message.author.display_name
             )
             remember_message_vouch_targets(data, message.id, recorded_ids)
 
@@ -2875,8 +3049,7 @@ async def on_message_edit(before, after):
         match = PVE_VOUCH_PATTERN.match(after.content)
         if match:
             handled = True
-            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(1))
-                          if uid not in already_credited]
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(1)) if uid not in already_credited]
             event_name = parse_pve_event(match.group(2))
             if event_name is None:
                 await after.add_reaction("❌")
@@ -2887,16 +3060,14 @@ async def on_message_edit(before, after):
             handled = True
             phrase = normalize(match.group(1))
             category, event_name = PHRASE_ALIASES[phrase]
-            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))
-                          if uid not in already_credited]
+            target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2)) if uid not in already_credited]
 
     if not handled:
         return
 
     with data_txn() as data:
         recorded_ids, cooldown_ids, self_dropped = record_vouch(
-            data, target_ids, after.author.id, category, event_name,
-            author_name=after.author.display_name
+            data, target_ids, after.author.id, category, event_name, author_name=after.author.display_name
         )
         remember_message_vouch_targets(data, after.id, recorded_ids)
 
@@ -2923,6 +3094,7 @@ async def on_message_edit(before, after):
 # ─────────────────────────────────────────────────────────────
 # RANK PROGRESS HELPERS
 # ─────────────────────────────────────────────────────────────
+
 
 def get_rank_progress(points, thresholds):
     """Returns (current_role, current_threshold, next_role, next_threshold). current_role is None if below the lowest threshold."""
@@ -2957,6 +3129,7 @@ def progress_bar(points, current_threshold, next_threshold, length=10):
 # COMMANDS
 # ─────────────────────────────────────────────────────────────
 
+
 async def send_leaderboard(ctx, category, top_n=10):
     data = load_data()
     lines = build_leaderboard_lines(data, category, top_n)
@@ -2974,7 +3147,9 @@ async def send_leaderboard(ctx, category, top_n=10):
 async def shutdown_cmd(ctx):
     """Turns off the @mention chat feature. Vouch tracking keeps working normally."""
     set_chat_enabled(False)
-    await ctx.send("💤 Chat is now off. @mentioning me won't get a reply until `?awake` is run. Vouch tracking still works as normal.")
+    await ctx.send(
+        "💤 Chat is now off. @mentioning me won't get a reply until `?awake` is run. Vouch tracking still works as normal."
+    )
 
 
 @shutdown_cmd.error
@@ -3086,29 +3261,47 @@ async def cleanleaderboards_error(ctx, error):
 
 
 @bot.tree.command(name="ban", description="Ban a user by IP, HWID, and fingerprint")
-@app_commands.describe(member="The user to ban", duration="Optional duration (e.g. 1h, 30m, 2d, or leave empty for permanent)")
+@app_commands.describe(
+    member="The user to ban", duration="Optional duration (e.g. 1h, 30m, 2d, or leave empty for permanent)"
+)
 @app_commands.checks.has_permissions(ban_members=True)
 async def ban_user(interaction: discord.Interaction, member: discord.User, duration: str = None):
     """Ban a user by IP, HWID, and fingerprint."""
-    from data_store import ban_ip, ban_hwid, ban_fingerprint, get_ips_for_user, get_hwids_for_user, get_fingerprints_for_user
-    from datetime import datetime, timedelta
     import re
+    from datetime import datetime, timedelta
+
+    from data_store import (
+        ban_fingerprint,
+        ban_hwid,
+        ban_ip,
+        get_fingerprints_for_user,
+        get_hwids_for_user,
+        get_ips_for_user,
+    )
 
     ips = get_ips_for_user(member.id)
     hwids = get_hwids_for_user(member.id)
     fingerprints = get_fingerprints_for_user(member.id)
 
     if not ips and not hwids and not fingerprints:
-        await interaction.response.send_message(f"⚠️ No data found for {member.display_name}. They may not have accessed the dashboard yet.")
+        await interaction.response.send_message(
+            f"⚠️ No data found for {member.display_name}. They may not have accessed the dashboard yet."
+        )
         return
 
     expiry = None
     duration_display = "permanent"
     if duration:
-        match = re.match(r'(\d+)([mhd])', duration.lower())
+        match = re.match(r"(\d+)([mhd])", duration.lower())
         if match:
             amount, unit = int(match.group(1)), match.group(2)
-            delta = timedelta(minutes=amount) if unit == 'm' else timedelta(hours=amount) if unit == 'h' else timedelta(days=amount)
+            delta = (
+                timedelta(minutes=amount)
+                if unit == "m"
+                else timedelta(hours=amount)
+                if unit == "h"
+                else timedelta(days=amount)
+            )
             expiry = (datetime.now() + delta).isoformat()
             duration_display = f"{duration} ({expiry.split('T')[0]})"
 
@@ -3119,7 +3312,9 @@ async def ban_user(interaction: discord.Interaction, member: discord.User, durat
     for fp in fingerprints:
         ban_fingerprint(fp, member.id, expiry)
 
-    await interaction.response.send_message(f"🚫 Banned {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}\nDuration: {duration_display}")
+    await interaction.response.send_message(
+        f"🚫 Banned {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}\nDuration: {duration_display}"
+    )
 
 
 @bot.tree.command(name="unban", description="Unban an IP")
@@ -3127,7 +3322,7 @@ async def ban_user(interaction: discord.Interaction, member: discord.User, durat
 @app_commands.checks.has_permissions(ban_members=True)
 async def unban_user(interaction: discord.Interaction, ip: str):
     """Unban an IP."""
-    from data_store import unban_ip, get_users_for_ip
+    from data_store import get_users_for_ip, unban_ip
 
     users = get_users_for_ip(ip)
     unban_ip(ip)
@@ -3139,14 +3334,16 @@ async def unban_user(interaction: discord.Interaction, ip: str):
 @app_commands.checks.has_permissions(ban_members=True)
 async def report_raider(interaction: discord.Interaction, member: discord.User):
     """Report a raider with full device fingerprinting evidence."""
-    from data_store import get_ips_for_user, get_fingerprints_for_user, get_hwids_for_user
+    from data_store import get_fingerprints_for_user, get_hwids_for_user, get_ips_for_user
 
     ips = get_ips_for_user(member.id)
     fingerprints = get_fingerprints_for_user(member.id)
     hwids = get_hwids_for_user(member.id)
 
     if not ips and not fingerprints and not hwids:
-        await interaction.response.send_message(f"⚠️ No device data found for {member.display_name}. They may not have accessed the dashboard.")
+        await interaction.response.send_message(
+            f"⚠️ No device data found for {member.display_name}. They may not have accessed the dashboard."
+        )
         return
 
     evidence = f"**Raider Report: {member.display_name}** ({member.id})\n\n"
@@ -3164,7 +3361,9 @@ async def report_raider(interaction: discord.Interaction, member: discord.User):
             except Exception as e:
                 print(f"[Report] Failed to log to channel: {e}")
 
-    await interaction.response.send_message(f"🚨 Reported {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}")
+    await interaction.response.send_message(
+        f"🚨 Reported {member.display_name}\nIPs: {len(ips)} | HWIDs: {len(hwids)} | Fingerprints: {len(fingerprints)}"
+    )
 
 
 @bot.tree.command(name="verify", description="Verify your access to server events")
@@ -3176,16 +3375,11 @@ async def verify_access(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🔐 Verify Access",
         description="Click the button below to verify your access to server events.",
-        color=discord.Color.green()
+        color=discord.Color.green(),
     )
 
     view = discord.ui.View()
-    view.add_item(discord.ui.Button(
-        style=discord.ButtonStyle.link,
-        label="Verify Access",
-        url=verify_link,
-        emoji="✅"
-    ))
+    view.add_item(discord.ui.Button(style=discord.ButtonStyle.link, label="Verify Access", url=verify_link, emoji="✅"))
 
     await interaction.response.send_message(embed=embed, view=view)
 
@@ -3238,7 +3432,7 @@ async def addmemory(ctx, *, text: str = None):
         await ctx.send("⚠️ Usage: `?addmemory <text>` - e.g. `?addmemory Our server was founded in 2024`")
         return
     add_memory(text, ctx.author.id)
-    await ctx.send(f"🧠 Got it, I'll remember: \"{text}\"")
+    await ctx.send(f'🧠 Got it, I\'ll remember: "{text}"')
 
 
 @addmemory.error
@@ -3318,20 +3512,14 @@ async def info_cmd(ctx):
     """Show bot info and legal documents."""
     dashboard_url = os.environ.get("DASHBOARD_URL", "https://matzys.up.railway.app")
     embed = discord.Embed(
-        title="Pve-Bot",
-        description="Community threat scoring and vouch tracking bot",
-        color=0x7fc2b8
+        title="Pve-Bot", description="Community threat scoring and vouch tracking bot", color=0x7FC2B8
     )
     embed.add_field(
         name="Legal",
         value=f"[Terms of Service]({dashboard_url}/terms)\n[Privacy Policy]({dashboard_url}/privacy)",
-        inline=False
+        inline=False,
     )
-    embed.add_field(
-        name="Repository",
-        value="[Pve-Bot on GitHub](https://github.com/Yuki-Onnaa/Pve-Bot)",
-        inline=False
-    )
+    embed.add_field(name="Repository", value="[Pve-Bot on GitHub](https://github.com/Yuki-Onnaa/Pve-Bot)", inline=False)
     await ctx.send(embed=embed)
 
 
@@ -3371,12 +3559,12 @@ async def vouches(ctx, member: discord.Member = None, category: str = None):
             return
         lines = [
             f"  {e}: {c} × {get_event_points(category, e)} = {c * get_event_points(category, e)} pts"
-            for e, c in record["events"].items() if c
+            for e, c in record["events"].items()
+            if c
         ]
         await ctx.send(
             f"**{member.display_name}** - {CATEGORY_NAMES[category]}\n"
-            f"Total: {record['total_points']} pts across {record['total_vouches']} vouches\n"
-            + "\n".join(lines)
+            f"Total: {record['total_points']} pts across {record['total_vouches']} vouches\n" + "\n".join(lines)
         )
         return
 
@@ -3434,12 +3622,17 @@ async def addvouch(ctx, category: str, member: discord.Member, *, event_and_coun
         record["total_points"] += points * count
         record["total_vouches"] += count
         record["events"][event_name] += count
-        record["log"].append({
-            "id": uuid.uuid4().hex[:8],
-            "by": ctx.author.id, "event": event_name, "points": points * count,
-            "count": count, "backfilled": True,
-            "time": datetime.now(timezone.utc).isoformat(),
-        })
+        record["log"].append(
+            {
+                "id": uuid.uuid4().hex[:8],
+                "by": ctx.author.id,
+                "event": event_name,
+                "points": points * count,
+                "count": count,
+                "backfilled": True,
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+        )
     await refresh_live_leaderboards()
     await update_role_for_user(ctx.guild, member.id, category)
 
@@ -3491,9 +3684,7 @@ async def backfillhistory(ctx, category: str, member: discord.Member):
         await ctx.send(f"{member.display_name} has no {CATEGORY_NAMES[category]} backfill entries.")
         return
 
-    await ctx.send(
-        f"**Recent {CATEGORY_NAMES[category]} backfills for {member.display_name}**\n" + "\n".join(lines)
-    )
+    await ctx.send(f"**Recent {CATEGORY_NAMES[category]} backfills for {member.display_name}**\n" + "\n".join(lines))
 
 
 @backfillhistory.error
@@ -3534,7 +3725,9 @@ async def revertbackfill(ctx, category: str, member: discord.Member, log_id: str
             await ctx.send(f"⚠️ Couldn't find a log entry with id `{log_id}` for {member.display_name}.")
             return
         if not entry.get("backfilled"):
-            await ctx.send("⚠️ That entry wasn't a backfill - only backfilled entries can be reverted with this command.")
+            await ctx.send(
+                "⚠️ That entry wasn't a backfill - only backfilled entries can be reverted with this command."
+            )
             return
     else:
         for i in range(len(record["log"]) - 1, -1, -1):
@@ -3594,8 +3787,11 @@ async def syncvouches(ctx):
 
     status = await ctx.send(
         "🔄 Scanning all vouch channels for history... this may take a bit.\n"
-        + (f"Backed up the current data to `{os.path.basename(backup_path)}` first."
-           if backup_path else "⚠️ Could not write a backup first.")
+        + (
+            f"Backed up the current data to `{os.path.basename(backup_path)}` first."
+            if backup_path
+            else "⚠️ Could not write a backup first."
+        )
     )
 
     new_data = {}
@@ -3620,8 +3816,9 @@ async def syncvouches(ctx):
                 event_name = parse_pve_event(match.group(2))
                 if event_name is None:
                     continue
-                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, "pve", event_name, when,
-                                                  author_name=msg.author.display_name)
+                recorded_ids, _, _ = record_vouch(
+                    new_data, target_ids, msg.author.id, "pve", event_name, when, author_name=msg.author.display_name
+                )
                 recorded_total += len(recorded_ids)
             else:
                 match = PHRASE_VOUCH_PATTERN.match(msg.content)
@@ -3630,8 +3827,15 @@ async def syncvouches(ctx):
                 phrase = normalize(match.group(1))
                 evt_category, event_name = PHRASE_ALIASES[phrase]
                 target_ids = [int(uid) for uid in MENTION_PATTERN.findall(match.group(2))]
-                recorded_ids, _, _ = record_vouch(new_data, target_ids, msg.author.id, evt_category, event_name, when,
-                                                  author_name=msg.author.display_name)
+                recorded_ids, _, _ = record_vouch(
+                    new_data,
+                    target_ids,
+                    msg.author.id,
+                    evt_category,
+                    event_name,
+                    when,
+                    author_name=msg.author.display_name,
+                )
                 recorded_total += len(recorded_ids)
 
     # Carry over everything that is not vouch data: settings, channel config,
@@ -3670,14 +3874,18 @@ async def syncvouches(ctx):
 
     await update_top_voucher_roles(announce=False)
 
-    summary = (f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches "
-               f"across {sum(1 for k in new_data if k.isdigit())} users, "
-               f"given by {len(vouchers)} voucher(s).")
+    summary = (
+        f"✅ Sync complete. Scanned {scanned} messages, recorded {recorded_total} vouches "
+        f"across {sum(1 for k in new_data if k.isdigit())} users, "
+        f"given by {len(vouchers)} voucher(s)."
+    )
     if manual_before:
-        summary += (f"\n⚠️ {manual_before} manually added vouch(es) were not in channel history and "
-                    f"are gone. Restore from `{os.path.basename(backup_path)}` if you need them."
-                    if backup_path else
-                    f"\n⚠️ {manual_before} manually added vouch(es) could not be recovered by a rescan.")
+        summary += (
+            f"\n⚠️ {manual_before} manually added vouch(es) were not in channel history and "
+            f"are gone. Restore from `{os.path.basename(backup_path)}` if you need them."
+            if backup_path
+            else f"\n⚠️ {manual_before} manually added vouch(es) could not be recovered by a rescan."
+        )
     summary += "\nSettings, custom commands and rank config were kept."
     await status.edit(content=summary)
 
@@ -3727,9 +3935,7 @@ async def event_autocomplete(interaction: discord.Interaction, current: str):
 @bot.tree.command(name="leaderboard", description="Show the top members for a category")
 @app_commands.describe(category="Which leaderboard to show", top="How many places to list (1-25)")
 @app_commands.choices(category=CATEGORY_CHOICES)
-async def slash_leaderboard(interaction: discord.Interaction,
-                            category: app_commands.Choice[str] = None,
-                            top: int = 10):
+async def slash_leaderboard(interaction: discord.Interaction, category: app_commands.Choice[str] = None, top: int = 10):
     cat = category.value if category else "pve"
     top = max(1, min(25, top))
     data = load_data()
@@ -3827,11 +4033,40 @@ async def slash_ask(interaction: discord.Interaction, question: str):
 
 # Model families that serve chat completions, and the ones that never do.
 _CHAT_HINTS = ("instruct", "chat", "nemotron", "-it")
-_NOT_CHAT = ("bge", "embed", "rerank", "retriever", "starcoder", "codegen", "fuyu",
-             "clip", "vila", "stable-diffusion", "sdxl", "riva", "parakeet", "whisper",
-             "molmo", "esm", "diffdock", "protein", "genmol", "ocr", "paddle", "nvclip",
-             "reward", "parse", "-vl", "guard", "safety", "moderation", "judge",
-             "reranking", "asr", "tts")
+_NOT_CHAT = (
+    "bge",
+    "embed",
+    "rerank",
+    "retriever",
+    "starcoder",
+    "codegen",
+    "fuyu",
+    "clip",
+    "vila",
+    "stable-diffusion",
+    "sdxl",
+    "riva",
+    "parakeet",
+    "whisper",
+    "molmo",
+    "esm",
+    "diffdock",
+    "protein",
+    "genmol",
+    "ocr",
+    "paddle",
+    "nvclip",
+    "reward",
+    "parse",
+    "-vl",
+    "guard",
+    "safety",
+    "moderation",
+    "judge",
+    "reranking",
+    "asr",
+    "tts",
+)
 
 
 def pick_chat_models(ids, limit=12):
@@ -3882,8 +4117,7 @@ async def slash_aimodels(interaction: discord.Interaction, search: str = ""):
     await interaction.response.defer(ephemeral=True)
     ids = await fetch_model_ids()
     if ids is None:
-        await interaction.followup.send(
-            "Could not list models. Run `/aitest` to see why.", ephemeral=True)
+        await interaction.followup.send("Could not list models. Run `/aitest` to see why.", ephemeral=True)
         return
 
     if search:
@@ -3896,13 +4130,12 @@ async def slash_aimodels(interaction: discord.Interaction, search: str = ""):
 
     if not shown:
         await interaction.followup.send(
-            f"Nothing matched `{search}`. Try a shorter word, or run `/aimodels` with no filter.",
-            ephemeral=True)
+            f"Nothing matched `{search}`. Try a shorter word, or run `/aimodels` with no filter.", ephemeral=True
+        )
         return
 
     body = "\n".join(f"`{m}`" for m in shown)
-    footer = ("\n\nSet one of these as `NVIDIA_MODEL` in Railway, then redeploy."
-              if not search else "")
+    footer = "\n\nSet one of these as `NVIDIA_MODEL` in Railway, then redeploy." if not search else ""
     await interaction.followup.send(f"**{title}**\n{body}{footer}"[:1900], ephemeral=True)
 
 
@@ -3913,7 +4146,8 @@ async def slash_aitest(interaction: discord.Interaction):
 
     if not NVIDIA_API_KEY:
         await interaction.followup.send(
-            "No `NVIDIA_API_KEY` is set in Railway. That is the whole problem.", ephemeral=True)
+            "No `NVIDIA_API_KEY` is set in Railway. That is the whole problem.", ephemeral=True
+        )
         return
 
     headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"}
@@ -3950,9 +4184,12 @@ async def slash_aitest(interaction: discord.Interaction):
     # step 2: an actual tiny completion, which is what really matters
     chat_status = None
     try:
-        payload = {"model": NVIDIA_MODEL,
-                   "messages": [{"role": "user", "content": "ping"}],
-                   "max_tokens": 5, "temperature": 0}
+        payload = {
+            "model": NVIDIA_MODEL,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5,
+            "temperature": 0,
+        }
         async with aiohttp.ClientSession() as session:
             async with session.post(NVIDIA_API_URL, json=payload, headers=headers, timeout=30) as resp:
                 chat_status = resp.status
@@ -3969,14 +4206,18 @@ async def slash_aitest(interaction: discord.Interaction):
     if chat_status == 200:
         verdict = "Everything works."
     elif models_ok and chat_status == 404 and model_listed:
-        verdict = ("Your key works and the model exists, but completions 404. This is an account "
-                   "permission problem: the org is missing **Public API Endpoints** access. "
-                   "Ask for it on the NVIDIA developer forums, or point `NVIDIA_API_BASE` at another "
-                   "OpenAI compatible provider.")
+        verdict = (
+            "Your key works and the model exists, but completions 404. This is an account "
+            "permission problem: the org is missing **Public API Endpoints** access. "
+            "Ask for it on the NVIDIA developer forums, or point `NVIDIA_API_BASE` at another "
+            "OpenAI compatible provider."
+        )
     elif models_ok and not model_listed:
-        verdict = ("`" + NVIDIA_MODEL + "` is not in the catalogue any more, which is why every "
-                   "request 404s. Set `NVIDIA_MODEL` in Railway to one of the ids above and redeploy. "
-                   "Use `/aimodels` to browse or search the rest.")
+        verdict = (
+            "`" + NVIDIA_MODEL + "` is not in the catalogue any more, which is why every "
+            "request 404s. Set `NVIDIA_MODEL` in Railway to one of the ids above and redeploy. "
+            "Use `/aimodels` to browse or search the rest."
+        )
     elif not models_ok:
         verdict = "Even listing models failed, so the key or the endpoint is wrong."
     else:
@@ -3993,11 +4234,13 @@ async def slash_wikitest(interaction: discord.Interaction):
     if sources:
         lines = "\n".join(f"- {s['title']} ({len(s['snippet'])} chars)" for s in sources)
         await interaction.followup.send(
-            f"Wiki is reachable. Searching for 'Talents' returned:\n{lines}", ephemeral=True)
+            f"Wiki is reachable. Searching for 'Talents' returned:\n{lines}", ephemeral=True
+        )
     else:
         await interaction.followup.send(
-            f"Wiki lookup failed. Reason: `{WIKI_LAST_ERROR or 'no results'}`\n"
-            f"API URL: `{WIKI_API_URL}`", ephemeral=True)
+            f"Wiki lookup failed. Reason: `{WIKI_LAST_ERROR or 'no results'}`\n" f"API URL: `{WIKI_API_URL}`",
+            ephemeral=True,
+        )
 
 
 @bot.tree.command(name="topvouchers", description="Who is handing out the most Host vouches")
@@ -4028,7 +4271,8 @@ async def slash_commands(interaction: discord.Interaction):
     entries = [c for c in get_custom_commands() if c.get("enabled", True)]
     if not entries:
         await interaction.response.send_message(
-            "No custom commands yet - an admin can create them on the dashboard.", ephemeral=True)
+            "No custom commands yet - an admin can create them on the dashboard.", ephemeral=True
+        )
         return
     listing = "\n".join(f"`?{c['name']}`" + (f" - {c['title']}" if c.get("title") else "") for c in entries)
     embed = discord.Embed(title="Custom commands", description=listing, color=discord.Color.blue())
@@ -4036,16 +4280,19 @@ async def slash_commands(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="addvouch", description="Manually add a vouch (admin only)")
-@app_commands.describe(category="Which category", member="Who gets the vouch",
-                       event="Which event", count="How many times (default 1)")
+@app_commands.describe(
+    category="Which category", member="Who gets the vouch", event="Which event", count="How many times (default 1)"
+)
 @app_commands.choices(category=CATEGORY_CHOICES)
 @app_commands.autocomplete(event=event_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
-async def slash_addvouch(interaction: discord.Interaction,
-                         category: app_commands.Choice[str],
-                         member: discord.Member,
-                         event: str,
-                         count: int = 1):
+async def slash_addvouch(
+    interaction: discord.Interaction,
+    category: app_commands.Choice[str],
+    member: discord.Member,
+    event: str,
+    count: int = 1,
+):
     cat = category.value
     if event not in get_events(cat):
         await interaction.response.send_message(f"`{event}` isn't a {CATEGORY_NAMES[cat]} event.", ephemeral=True)
@@ -4059,16 +4306,18 @@ async def slash_addvouch(interaction: discord.Interaction,
         record["total_points"] += points * count
         record["total_vouches"] += count
         record["events"][event] = record["events"].get(event, 0) + count
-        record["log"].append({
-            "id": uuid.uuid4().hex[:8],
-            "by": interaction.user.id,
-            "by_name": interaction.user.display_name,
-            "event": event,
-            "points": points * count,
-            "count": count,
-            "backfilled": True,
-            "time": datetime.now(timezone.utc).isoformat(),
-        })
+        record["log"].append(
+            {
+                "id": uuid.uuid4().hex[:8],
+                "by": interaction.user.id,
+                "by_name": interaction.user.display_name,
+                "event": event,
+                "points": points * count,
+                "count": count,
+                "backfilled": True,
+                "time": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     await log_audit(
         f"**{CATEGORY_NAMES[cat]} - {event}** (+{points * count} pts) added by "
@@ -4088,11 +4337,13 @@ async def slash_resyncroles(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     result = await resync_all_roles()
     await interaction.followup.send(
-        f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True)
+        f"Resync done - {result['updated']} member(s) updated of {result['checked']} checked.", ephemeral=True
+    )
 
 
-@bot.tree.command(name="backfillhostbadges",
-                   description="Seed host badge progress from existing /host history (admin only)")
+@bot.tree.command(
+    name="backfillhostbadges", description="Seed host badge progress from existing /host history (admin only)"
+)
 @app_commands.checks.has_permissions(administrator=True)
 async def slash_backfillhostbadges(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -4107,21 +4358,26 @@ async def slash_backfillhostbadges(interaction: discord.Interaction):
         f"Backfilled host badge progress for {updated} member(s) from their existing /host history. "
         f"Note: this only counts each person's last 100 /host runs (the same cap the streak tracker uses), "
         f"so anyone who's hosted more than that will show a lower count than reality.",
-        ephemeral=True)
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="giverole", description="Toggle roles you're whitelisted to grant")
-@app_commands.describe(member="Who to toggle the role for", role="Which role to toggle (optional if you can only grant one)")
+@app_commands.describe(
+    member="Who to toggle the role for", role="Which role to toggle (optional if you can only grant one)"
+)
 async def slash_giverole(interaction: discord.Interaction, member: discord.Member, role: str = None):
     from data_store import load_data
+
     data = load_data()
     user_role_names = {r.name.lower() for r in interaction.user.roles}
     user_grants = [g for g in data.get("_role_grants", []) if g["granter_role_name"].lower() in user_role_names]
 
     if not user_grants:
         await interaction.response.send_message(
-            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
-            "Role Grants tab.", ephemeral=True)
+            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's " "Role Grants tab.",
+            ephemeral=True,
+        )
         return
 
     if not role:
@@ -4130,26 +4386,30 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
         else:
             roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
             await interaction.response.send_message(
-                f"You can grant multiple roles: {roles_text}. Specify which one: `/giverole {member} role:<role>`", ephemeral=True)
+                f"You can grant multiple roles: {roles_text}. Specify which one: `/giverole {member} role:<role>`",
+                ephemeral=True,
+            )
             return
     else:
         matching_grants = [g for g in user_grants if g["role_name"].lower() == role.lower()]
         if not matching_grants:
             roles_text = ", ".join([f"**{g['role_name']}**" for g in user_grants])
             await interaction.response.send_message(
-                f"You can't grant **{role}**. You can grant: {roles_text}", ephemeral=True)
+                f"You can't grant **{role}**. You can grant: {roles_text}", ephemeral=True
+            )
             return
         role_name = matching_grants[0]["role_name"]
 
     role = discord.utils.get(interaction.guild.roles, name=role_name)
     if role is None:
         await interaction.response.send_message(
-            f"No role named **{role_name}** exists anymore - ask an admin to check the Role Grants tab.",
-            ephemeral=True)
+            f"No role named **{role_name}** exists anymore - ask an admin to check the Role Grants tab.", ephemeral=True
+        )
         return
     if role >= interaction.guild.me.top_role:
         await interaction.response.send_message(
-            f"Can't manage **{role_name}** - it sits above my own top role.", ephemeral=True)
+            f"Can't manage **{role_name}** - it sits above my own top role.", ephemeral=True
+        )
         return
 
     try:
@@ -4162,8 +4422,9 @@ async def slash_giverole(interaction: discord.Interaction, member: discord.Membe
             await interaction.response.send_message(f"Gave {member.mention} **{role_name}**.", ephemeral=True)
             await log_audit(f"{interaction.user.mention} gave **{role_name}** to {member.mention} (/giverole)")
     except discord.Forbidden:
-        await interaction.response.send_message(f"Couldn't manage **{role_name}** - missing permissions.",
-                                                  ephemeral=True)
+        await interaction.response.send_message(
+            f"Couldn't manage **{role_name}** - missing permissions.", ephemeral=True
+        )
 
 
 @bot.tree.command(name="takerole", description="Remove the one role you're whitelisted to grant")
@@ -4172,8 +4433,9 @@ async def slash_takerole(interaction: discord.Interaction, member: discord.Membe
     role_name = get_role_grant(interaction.user)
     if not role_name:
         await interaction.response.send_message(
-            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's "
-            "Role Grants tab.", ephemeral=True)
+            "You aren't whitelisted to grant any role - ask an admin to add you in the dashboard's " "Role Grants tab.",
+            ephemeral=True,
+        )
         return
 
     role = discord.utils.get(interaction.guild.roles, name=role_name)
@@ -4184,8 +4446,9 @@ async def slash_takerole(interaction: discord.Interaction, member: discord.Membe
     try:
         await member.remove_roles(role, reason=f"/takerole by {interaction.user}")
     except discord.Forbidden:
-        await interaction.response.send_message(f"Couldn't remove **{role_name}** - missing permissions.",
-                                                  ephemeral=True)
+        await interaction.response.send_message(
+            f"Couldn't remove **{role_name}** - missing permissions.", ephemeral=True
+        )
         return
     await interaction.response.send_message(f"Removed **{role_name}** from {member.mention}.", ephemeral=True)
     await log_audit(f"{interaction.user.mention} removed **{role_name}** from {member.mention} (/takerole)")
@@ -4271,12 +4534,20 @@ async def slash_leavepanel_error(interaction: discord.Interaction, error):
     notes="Anything hosts should know (apply-for-event and event-rules are added automatically)",
 )
 @app_commands.rename(stage="channel")
-@app_commands.choices(event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES,
-                       security_region=HOST_SECURITY_REGION_CHOICES)
-async def slash_host(interaction: discord.Interaction, event: str, region: str, security_region: str,
-                      stage: Union[discord.StageChannel, discord.VoiceChannel], notes: str,
-                      co_host: discord.Member = None,
-                      co_host2: discord.Member = None, co_host3: discord.Member = None):
+@app_commands.choices(
+    event=HOST_EVENT_CHOICES, region=HOST_REGION_CHOICES, security_region=HOST_SECURITY_REGION_CHOICES
+)
+async def slash_host(
+    interaction: discord.Interaction,
+    event: str,
+    region: str,
+    security_region: str,
+    stage: Union[discord.StageChannel, discord.VoiceChannel],
+    notes: str,
+    co_host: discord.Member = None,
+    co_host2: discord.Member = None,
+    co_host3: discord.Member = None,
+):
     co_hosts = []
     for c in (co_host, co_host2, co_host3):
         if c and c.id != interaction.user.id and c.id not in {h.id for h in co_hosts}:
@@ -4288,8 +4559,7 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.followup.send(
-            "You need the Host role to use this.", ephemeral=True)
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
@@ -4300,7 +4570,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
                 f"You still have an active hosted event (**{last_host.get('event')}**) on "
                 f"{prev_stage.mention}. Run /end to close it first, or /takeover if someone "
                 f"else is picking it up.",
-                ephemeral=True)
+                ephemeral=True,
+            )
             return
 
     is_stage = isinstance(stage, discord.StageChannel)
@@ -4312,7 +4583,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
             await interaction.followup.send(
                 f"{stage.mention} is already being used for a hosted event by {mention}. "
                 f"Use /takeover if you're picking it up, or choose a different channel.",
-                ephemeral=True)
+                ephemeral=True,
+            )
             return
 
     if is_stage and stage.instance:
@@ -4323,13 +4595,15 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
             await interaction.followup.send(
                 f"{stage.mention} is already live with **{stage.instance.topic}**, hosted by {mention}. "
                 f"Use /takeover if you're picking it up, or choose a different stage.",
-                ephemeral=True)
+                ephemeral=True,
+            )
             return
         else:
             await interaction.followup.send(
                 f"{stage.mention} already has a live stage instance (**{stage.instance.topic}**). "
                 f"End it first or choose a different stage.",
-                ephemeral=True)
+                ephemeral=True,
+            )
             return
 
     host_runs = load_data().get(str(interaction.user.id), {}).get("host_runs", [])
@@ -4338,8 +4612,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         if elapsed < HOST_COOLDOWN_SECONDS:
             remaining = int((HOST_COOLDOWN_SECONDS - elapsed) // 60) + 1
             await interaction.followup.send(
-                f"You can run /host again in about {remaining} minute{'s' if remaining != 1 else ''}.",
-                ephemeral=True)
+                f"You can run /host again in about {remaining} minute{'s' if remaining != 1 else ''}.", ephemeral=True
+            )
             return
 
     channel = bot.get_channel(HOST_ANNOUNCE_CHANNEL_ID)
@@ -4361,19 +4635,31 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
         ping_parts.append(event_role.mention)
 
     message = build_host_message(
-        interaction.user, co_hosts, region, security_region, event, event_display, stage.mention, notes,
-        guild=guild, channel_label="Stage" if is_stage else "VC")
+        interaction.user,
+        co_hosts,
+        region,
+        security_region,
+        event,
+        event_display,
+        stage.mention,
+        notes,
+        guild=guild,
+        channel_label="Stage" if is_stage else "VC",
+    )
     sent_message = await channel.send(
         content=f"{' '.join(ping_parts)}\n{message}\n-----",
         allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
     stage_topic = build_stage_topic(event, region)
     record_host_run(
-        interaction.user.id, event,
-        message_id=sent_message.id, channel_id=channel.id,
+        interaction.user.id,
+        event,
+        message_id=sent_message.id,
+        channel_id=channel.id,
         co_host_ids=[c.id for c in co_hosts],
         stage_channel_id=stage.id,
-        region=region, stage_topic=stage_topic,
+        region=region,
+        stage_topic=stage_topic,
     )
 
     granted = await grant_stage_perms(guild, interaction.user, reason=f"Hosting {event} via /host")
@@ -4395,7 +4681,8 @@ async def slash_host(interaction: discord.Interaction, event: str, region: str, 
     co_host_note = f", co-hosts {', '.join(c.mention for c in co_hosts)}" if co_hosts else ""
     await log_audit(
         f"{interaction.user.mention} hosted **{event}** in {stage.mention} "
-        f"(region: {region}, security region: {security_region}{co_host_note})")
+        f"(region: {region}, security region: {security_region}{co_host_note})"
+    )
 
 
 @slash_host.error
@@ -4417,8 +4704,7 @@ async def slash_reping(interaction: discord.Interaction):
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.followup.send(
-            "You need the Host role to use this.", ephemeral=True)
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
@@ -4436,7 +4722,8 @@ async def slash_reping(interaction: discord.Interaction):
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
-            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True
+        )
         return
 
     event = last_host.get("event", "")
@@ -4470,8 +4757,7 @@ async def slash_end(interaction: discord.Interaction):
         return
 
     if HOSTER_GATE_ROLE_ID and not any(r.id == HOSTER_GATE_ROLE_ID for r in interaction.user.roles):
-        await interaction.followup.send(
-            "You need the Host role to use this.", ephemeral=True)
+        await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
         return
 
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
@@ -4489,7 +4775,8 @@ async def slash_end(interaction: discord.Interaction):
         await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
-            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True
+        )
         return
 
     stage_ended = False
@@ -4526,15 +4813,19 @@ async def slash_end(interaction: discord.Interaction):
     if stage_ended:
         notice += " Stage ended."
     elif stage_delete_failed:
-        notice += (" I couldn't actually end the Stage though - check my permissions there "
-                   "and end it manually if it's still live.")
+        notice += (
+            " I couldn't actually end the Stage though - check my permissions there "
+            "and end it manually if it's still live."
+        )
     elif stage_skipped:
         notice += " Didn't touch the stage - someone else has a different event live on it now."
     if revoked:
         notice += f" **{STAGE_PERMS_ROLE_NAME}** removed."
     await interaction.followup.send(notice, ephemeral=True)
-    await log_audit(f"{interaction.user.mention} ended their hosted event"
-                     + (" (couldn't end the Stage - check bot permissions)" if stage_delete_failed else ""))
+    await log_audit(
+        f"{interaction.user.mention} ended their hosted event"
+        + (" (couldn't end the Stage - check bot permissions)" if stage_delete_failed else "")
+    )
 
 
 @slash_end.error
@@ -4553,8 +4844,12 @@ async def slash_end_error(interaction: discord.Interaction, error):
     co_host2="Another co-host (optional)",
     co_host3="Another co-host (optional)",
 )
-async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member = None,
-                        co_host2: discord.Member = None, co_host3: discord.Member = None):
+async def slash_cohost(
+    interaction: discord.Interaction,
+    co_host: discord.Member = None,
+    co_host2: discord.Member = None,
+    co_host3: discord.Member = None,
+):
     co_hosts = []
     for c in (co_host, co_host2, co_host3):
         if c and c.id != interaction.user.id and c.id not in {h.id for h in co_hosts}:
@@ -4584,7 +4879,8 @@ async def slash_cohost(interaction: discord.Interaction, co_host: discord.Member
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
-            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True
+        )
         return
 
     event = last_host.get("event", "")
@@ -4663,7 +4959,8 @@ async def slash_changeevent(interaction: discord.Interaction, event: app_command
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
-            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True)
+            "Couldn't find your last /host message - it may have been deleted.", ephemeral=True
+        )
         return
 
     # Keep the live Stage's topic in sync with last_host["event"] - /end, /takeover,
@@ -4678,7 +4975,8 @@ async def slash_changeevent(interaction: discord.Interaction, event: app_command
     stage_channel = guild.get_channel(int(stage_channel_id)) if stage_channel_id else None
     if not hosted_channel_is_live(stage_channel, last_host):
         await interaction.followup.send(
-            "Your event's channel isn't live anymore, so there's nothing to change.", ephemeral=True)
+            "Your event's channel isn't live anymore, so there's nothing to change.", ephemeral=True
+        )
         return
 
     # Only stages have a topic to keep in sync; a voice channel has nothing to edit.
@@ -4777,7 +5075,8 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         original = await channel.fetch_message(int(last_host["message_id"]))
     except (discord.NotFound, discord.HTTPException, ValueError):
         await interaction.followup.send(
-            "Couldn't find that host's /host message - it may have been deleted.", ephemeral=True)
+            "Couldn't find that host's /host message - it may have been deleted.", ephemeral=True
+        )
         return
 
     event = last_host.get("event", "")
@@ -4830,18 +5129,28 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         stage_channel = guild.get_channel(int(stage_channel_id))
         if isinstance(stage_channel, discord.StageChannel):
             try:
-                if current_host.voice and current_host.voice.channel and current_host.voice.channel.id == stage_channel.id:
+                if (
+                    current_host.voice
+                    and current_host.voice.channel
+                    and current_host.voice.channel.id == stage_channel.id
+                ):
                     await current_host.edit(suppress=True)
             except discord.HTTPException:
                 pass
             try:
-                if interaction.user.voice and interaction.user.voice.channel and interaction.user.voice.channel.id == stage_channel.id:
+                if (
+                    interaction.user.voice
+                    and interaction.user.voice.channel
+                    and interaction.user.voice.channel.id == stage_channel.id
+                ):
                     await interaction.user.edit(suppress=False)
                 elif interaction.user.voice:
                     await interaction.user.move_to(stage_channel)
                     await interaction.user.edit(suppress=False)
                 else:
-                    speaker_note = " Join the stage yourself to be promoted to speaker - I can't pull you in from outside voice."
+                    speaker_note = (
+                        " Join the stage yourself to be promoted to speaker - I can't pull you in from outside voice."
+                    )
             except discord.HTTPException:
                 speaker_note = " Couldn't update your speaker status on the stage - do it manually if needed."
 
@@ -4863,7 +5172,9 @@ async def slash_takeover_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)")
+@bot.tree.command(
+    name="hosttest", description="Send a test host announcement to check the channel/role setup (Manage Server only)"
+)
 @app_commands.describe(event="Event to test the role lookup with (optional)")
 @app_commands.choices(event=HOST_EVENT_CHOICES)
 @app_commands.checks.has_permissions(manage_guild=True)
@@ -4877,7 +5188,8 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
     channel = bot.get_channel(HOST_TEST_CHANNEL_ID)
     if channel is None:
         await interaction.followup.send(
-            f"Couldn't find the test channel (ID `{HOST_TEST_CHANNEL_ID}`).", ephemeral=True)
+            f"Couldn't find the test channel (ID `{HOST_TEST_CHANNEL_ID}`).", ephemeral=True
+        )
         return
 
     region = "EU/NA/Asia (test)"
@@ -4896,15 +5208,28 @@ async def slash_hosttest(interaction: discord.Interaction, event: str = "Test Ev
     security_found, security_missing = check_roles(SECURITY_REGION_ROLE_NAME)
 
     message = build_host_message(
-        interaction.user, [interaction.user], region, security_region, event, event_display,
-        "Test stage - ignore", "This is a test post from /hosttest. Ignore it.", guild=guild, test=True)
+        interaction.user,
+        [interaction.user],
+        region,
+        security_region,
+        event,
+        event_display,
+        "Test stage - ignore",
+        "This is a test post from /hosttest. Ignore it.",
+        guild=guild,
+        test=True,
+    )
     await channel.send(content=message, allowed_mentions=discord.AllowedMentions.none())
     await interaction.followup.send(
         f"Test posted in {channel.mention} (nobody was pinged).\n"
-        f"Support roles found: " + (", ".join(support_found) or "none")
-        + (f". Missing: {', '.join(support_missing)}" if support_missing else "") + "\n"
-        f"Security roles found: " + (", ".join(security_found) or "none")
-        + (f". Missing: {', '.join(security_missing)}" if security_missing else "") + "\n"
+        f"Support roles found: "
+        + (", ".join(support_found) or "none")
+        + (f". Missing: {', '.join(support_missing)}" if support_missing else "")
+        + "\n"
+        f"Security roles found: "
+        + (", ".join(security_found) or "none")
+        + (f". Missing: {', '.join(security_missing)}" if security_missing else "")
+        + "\n"
         + (f"Event role: **{event_role.name}**" if event_role else f"No role found named '{event}'."),
         ephemeral=True,
     )
