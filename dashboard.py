@@ -715,29 +715,35 @@ def verify():
         if hwid_str:
             log_hwid(user_id, hwid_str)
 
-        try:
-            guild = bot.get_guild(GUILD_ID)
-            if guild:
-                member = guild.get_member(int(user_id))
-                if member:
-                    event_access_role = discord.utils.get(guild.roles, name="event access")
-                    no_access_role = discord.utils.get(guild.roles, name="no access")
-
-                    if event_access_role:
-                        asyncio.run_coroutine_threadsafe(
-                            member.add_roles(event_access_role),
-                            bot.loop
-                        )
-                    if no_access_role:
-                        asyncio.run_coroutine_threadsafe(
-                            member.remove_roles(no_access_role),
-                            bot.loop
-                        )
-        except Exception as e:
-            print(f"[Verify] Role assignment failed: {e}")
-
         elapsed = time.time() - start_time
-        return jsonify({"verified": True, "elapsed_ms": int(elapsed * 1000)})
+        response_data = {"verified": True, "elapsed_ms": int(elapsed * 1000)}
+
+        def assign_roles_async():
+            try:
+                guild = bot.get_guild(GUILD_ID)
+                if guild:
+                    member = guild.get_member(int(user_id))
+                    if member:
+                        event_access_role = discord.utils.get(guild.roles, name="event access")
+                        no_access_role = discord.utils.get(guild.roles, name="no access")
+
+                        if event_access_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.add_roles(event_access_role),
+                                bot.loop
+                            )
+                        if no_access_role:
+                            asyncio.run_coroutine_threadsafe(
+                                member.remove_roles(no_access_role),
+                                bot.loop
+                            )
+            except Exception as e:
+                print(f"[Verify] Role assignment failed: {e}")
+
+        import threading
+        threading.Thread(target=assign_roles_async, daemon=True).start()
+
+        return jsonify(response_data)
 
     if is_ip_banned(ip):
         return render_template_string("""<!DOCTYPE html>
