@@ -785,7 +785,7 @@ def verify():
             elapsed = time.time() - start_time
             return jsonify({"verified": False, "banned": True, "elapsed_ms": int(elapsed * 1000)}), 403
 
-        log_device(user_id, ip, fingerprint, hwid_str)
+        log_device(user_id, fingerprint=fingerprint, hwid=hwid_str)
 
         role_error = None
         future = run_on_bot(_apply_verified_roles(int(user_id)))
@@ -927,11 +927,11 @@ generateFingerprint().then(async fp=>{
       document.querySelector('.verify-icon').textContent='✅';
       document.querySelector('h1').textContent='Verified!';
       document.querySelector('p').textContent='Your access has been verified successfully.';
-      document.querySelector('.verify-container').innerHTML+='<p>You\'ve been granted access to server events and assigned the event access role.</p><a href="/" class="button">Return to Dashboard</a>';
+      document.querySelector('.verify-container').innerHTML+='<p>You have been granted access to server events and assigned the event access role.</p><a href="/" class="button">Return to Dashboard</a>';
     }else if(res.ok){
       document.querySelector('.verify-icon').textContent='⚠️';
       document.querySelector('h1').textContent='Almost there';
-      document.querySelector('p').textContent=data.role_error||'Couldn\'t give you the role.';
+      document.querySelector('p').textContent=data.role_error||'Could not give you the role.';
       document.querySelector('.verify-container').innerHTML+='<a href="/verify" class="button">Try Again</a>';
     }else if(res.status===403){
       document.querySelector('.verify-icon').textContent='🚫';
