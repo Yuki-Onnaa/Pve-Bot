@@ -818,8 +818,25 @@ async function generateFingerprint(){
   fingerprints.timezone=Intl.DateTimeFormat().resolvedOptions().timeZone;
   fingerprints.screen=`${screen.width}x${screen.height}`;
   fingerprints.colorDepth=screen.colorDepth;
-  fingerprints.cores=navigator.hardwareConcurrency;
-  fingerprints.memory=navigator.deviceMemory;
+
+  const hwid={};
+  hwid.cores=navigator.hardwareConcurrency;
+  hwid.memory=navigator.deviceMemory;
+
+  const webglCanvas=document.createElement('canvas');
+  const gl=webglCanvas.getContext('webgl')||webglCanvas.getContext('experimental-webgl');
+  if(gl){
+    hwid.gpu=gl.getParameter(gl.RENDERER);
+    hwid.vendor=gl.getParameter(gl.VENDOR);
+    hwid.version=gl.getParameter(gl.VERSION);
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    if(ext){
+      hwid.unmaskedGpu=gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+      hwid.unmaskedVendor=gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+    }
+    hwid.maxTexture=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    hwid.maxViewport=gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  }
 
   const canvas=document.createElement('canvas');
   const ctx=canvas.getContext('2d');
@@ -828,14 +845,16 @@ async function generateFingerprint(){
   ctx.fillText('🔐',10,10);
   fingerprints.canvas=canvas.toDataURL().substring(0,50);
 
-  let webglRenderer='';
-  const gl=canvas.getContext('webgl')||canvas.getContext('experimental-webgl');
-  if(gl){
-    webglRenderer=gl.getParameter(gl.RENDERER);
-    fingerprints.webgl=webglRenderer;
-  }
+  hwid.timezone=new Date().getTimezoneOffset();
+  hwid.locale=navigator.language;
+  hwid.platform=navigator.platform;
+  hwid.hardwareConcurrency=navigator.hardwareConcurrency;
+  hwid.deviceMemory=navigator.deviceMemory;
+  hwid.maxTouchPoints=navigator.maxTouchPoints;
+  hwid.vendor=navigator.vendor;
+  hwid.plugins=navigator.plugins.length;
 
-  fingerprints.hwid={cores:navigator.hardwareConcurrency,memory:navigator.deviceMemory,gpu:webglRenderer};
+  fingerprints.hwid=hwid;
   return JSON.stringify(fingerprints);
 }
 
@@ -856,6 +875,7 @@ generateFingerprint().then(async fp=>{
     document.querySelector('.verify-icon').textContent='❌';
     document.querySelector('h1').textContent='Error';
     document.querySelector('p').textContent='An error occurred during verification.';
+    console.error('Verification error:',e);
   }
 });
 </script>
