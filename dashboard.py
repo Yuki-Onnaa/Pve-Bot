@@ -369,6 +369,49 @@ def run_on_bot(coro):
     return asyncio.run_coroutine_threadsafe(coro, loop)
 
 
+VERIFIED_ROLE_ID = int(os.environ.get("VERIFIED_ROLE_ID", "1528880198597218444"))
+UNVERIFIED_ROLE_ID = int(os.environ.get("UNVERIFIED_ROLE_ID", "1528880267173957863"))
+
+
+def _verify_guilds():
+    bot = _bridge["bot"]
+    if bot is None:
+        return []
+    if REQUIRED_GUILD_ID:
+        guild = bot.get_guild(int(REQUIRED_GUILD_ID))
+        return [guild] if guild else []
+    return [g for g in bot.guilds if g.get_role(VERIFIED_ROLE_ID)]
+
+
+async def _apply_verified_roles(user_id):
+    """Returns None on success, otherwise a user-facing error string."""
+    guilds = _verify_guilds()
+    if not guilds:
+        return "The bot can't find the server. Contact staff."
+    for guild in guilds:
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.NotFound:
+                continue
+        add_role = guild.get_role(VERIFIED_ROLE_ID)
+        remove_role = guild.get_role(UNVERIFIED_ROLE_ID)
+        if add_role is None:
+            print(f"[Verify] Verified role {VERIFIED_ROLE_ID} not found in {guild.name}")
+            return "The verified role is missing. Contact staff."
+        try:
+            if add_role not in member.roles:
+                await member.add_roles(add_role, reason="Dashboard verification")
+            if remove_role is not None and remove_role in member.roles:
+                await member.remove_roles(remove_role, reason="Dashboard verification")
+        except discord.Forbidden:
+            print(f"[Verify] Missing permissions to edit roles in {guild.name} - bot needs Manage Roles and its role above both roles")
+            return "The bot doesn't have permission to give you the role. Contact staff."
+        return None
+    return "You're not in the server yet. Join the server, then verify again."
+
+
 async def _get_channel(channel_id):
     bot = _bridge["bot"]
     channel = bot.get_channel(channel_id)
@@ -446,6 +489,32 @@ def is_admin_guild(guild):
         return (int(guild.get("permissions", 0)) & PERM_ADMINISTRATOR) == PERM_ADMINISTRATOR
     except (ValueError, TypeError):
         return False
+
+def join_user_to_guild(user_id, access_token):
+    """Adds the user to the server via the guilds.join scope. Returns True if they're in it now."""
+    guild_ids = [REQUIRED_GUILD_ID] if REQUIRED_GUILD_ID else [str(g.id) for g in _verify_guilds()]
+    bot_token = os.environ.get("DISCORD_TOKEN", "")
+    if not guild_ids or not bot_token:
+        return False
+    req = urllib.request.Request(
+        f"{API_BASE}/guilds/{guild_ids[0]}/members/{user_id}",
+        data=json.dumps({"access_token": access_token}).encode(),
+        method="PUT",
+        headers={
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "MatzysOverseer (dashboard, 1.0)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            return res.status in (200, 201, 204)
+    except urllib.error.HTTPError as e:
+        print(f"[Dashboard] Auto-join failed {e.code}: {e.read()[:300]}")
+    except (urllib.error.URLError, TimeoutError) as e:
+        print(f"[Dashboard] Auto-join failed: {e}")
+    return False
+
 
 def discord_get(path, token):
     req = urllib.request.Request(
@@ -682,7 +751,10 @@ generateAndLogFingerprint();
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     if not session.get("user"):
-        return redirect("/login")
+        if request.method == "POST":
+            return jsonify({"error": "Not logged in"}), 401
+        session["next"] = "/verify"
+        return redirect("/login/discord")
 
     user_id = session.get("user", {}).get("id")
     ip = get_client_ip()
@@ -715,35 +787,24 @@ def verify():
         if hwid_str:
             log_hwid(user_id, hwid_str)
 
-        elapsed = time.time() - start_time
-        response_data = {"verified": True, "elapsed_ms": int(elapsed * 1000)}
-
-        def assign_roles_async():
+        role_error = None
+        future = run_on_bot(_apply_verified_roles(int(user_id)))
+        if future is None:
+            role_error = "The bot isn't connected right now. Try again in a minute."
+        else:
             try:
-                guild = bot.get_guild(GUILD_ID)
-                if guild:
-                    member = guild.get_member(int(user_id))
-                    if member:
-                        event_access_role = discord.utils.get(guild.roles, name="event access")
-                        no_access_role = discord.utils.get(guild.roles, name="no access")
-
-                        if event_access_role:
-                            asyncio.run_coroutine_threadsafe(
-                                member.add_roles(event_access_role),
-                                bot.loop
-                            )
-                        if no_access_role:
-                            asyncio.run_coroutine_threadsafe(
-                                member.remove_roles(no_access_role),
-                                bot.loop
-                            )
+                role_error = future.result(timeout=15)
             except Exception as e:
-                print(f"[Verify] Role assignment failed: {e}")
+                print(f"[Verify] Role assignment failed for {user_id}: {e!r}")
+                role_error = "Couldn't give you the role. Try again or contact staff."
 
-        import threading
-        threading.Thread(target=assign_roles_async, daemon=True).start()
-
-        return jsonify(response_data)
+        elapsed = time.time() - start_time
+        return jsonify({
+            "verified": True,
+            "role_assigned": role_error is None,
+            "role_error": role_error,
+            "elapsed_ms": int(elapsed * 1000),
+        })
 
     if is_ip_banned(ip):
         return render_template_string("""<!DOCTYPE html>
@@ -861,15 +922,26 @@ async function generateFingerprint(){
 generateFingerprint().then(async fp=>{
   try{
     const res=await fetch('/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:fp})});
-    if(res.ok){
+    const data=await res.json().catch(()=>({}));
+    if(res.ok && data.role_assigned){
       document.querySelector('.verify-icon').textContent='✅';
       document.querySelector('h1').textContent='Verified!';
       document.querySelector('p').textContent='Your access has been verified successfully.';
       document.querySelector('.verify-container').innerHTML+='<p>You\'ve been granted access to server events and assigned the event access role.</p><a href="/" class="button">Return to Dashboard</a>';
-    }else{
+    }else if(res.ok){
+      document.querySelector('.verify-icon').textContent='⚠️';
+      document.querySelector('h1').textContent='Almost there';
+      document.querySelector('p').textContent=data.role_error||'Couldn\'t give you the role.';
+      document.querySelector('.verify-container').innerHTML+='<a href="/verify" class="button">Try Again</a>';
+    }else if(res.status===403){
       document.querySelector('.verify-icon').textContent='🚫';
       document.querySelector('h1').textContent='Access Denied';
       document.querySelector('p').textContent='Your device has been banned from accessing this server.';
+    }else{
+      document.querySelector('.verify-icon').textContent='❌';
+      document.querySelector('h1').textContent='Error';
+      document.querySelector('p').textContent='Verification failed ('+res.status+'). Try again.';
+      document.querySelector('.verify-container').innerHTML+='<a href="/verify" class="button">Try Again</a>';
     }
   }catch(e){
     document.querySelector('.verify-icon').textContent='❌';
@@ -1155,6 +1227,9 @@ def oauth_callback():
     if ALLOWED_USER_IDS and str(user["id"]) not in ALLOWED_USER_IDS:
         admin_guilds = []  # allowlist gates admin access only, not member access
 
+    if not in_server:
+        in_server = join_user_to_guild(str(user["id"]), access_token)
+
     if not admin_guilds and not in_server:
         return fail("You are not in the bot's server, so there is nothing here for you yet.")
 
@@ -1170,6 +1245,8 @@ def oauth_callback():
         for g in sorted(admin_guilds, key=lambda g: g["name"].lower())
     ]
     session.permanent = True
+    if session.pop("next", None) == "/verify":
+        return redirect("/verify")
     return redirect("/fingerprint-check" if session["role"] == "admin" else "/profile")
 
 @app.route("/fingerprint-check")
@@ -3595,15 +3672,7 @@ function showTab(tab, el){
 function openDrawer(){ document.getElementById('sidebar').classList.add('open'); document.getElementById('overlay').classList.add('show'); }
 function closeDrawer(){ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
 
-async function verifyIP(){
-  try {
-    const res = await fetch('/verify', {method: 'POST'});
-    if(res.status === 403){ alert('🚫 Your IP is banned. Contact an administrator.'); return; }
-    if(!res.ok){ alert('⚠️ Verification failed'); return; }
-    const data = await res.json();
-    if(data.verified){ alert('✅ Access verified! Your IP has been logged and you have the event access role.'); }
-  } catch(e){ alert('❌ Error: ' + e.message); }
-}
+function verifyIP(){ window.location.href = '/verify'; }
 
 /* ── Announcements ── */
 async function loadAnnouncements(){
