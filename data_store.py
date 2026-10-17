@@ -249,6 +249,44 @@ def log_hwid(user_id, hwid):
         data["_hwid_logs"][hwid][str(user_id)] = datetime.now().isoformat()
 
 
+def log_device(user_id, ip=None, fingerprint=None, hwid=None):
+    """Logs IP, fingerprint and HWID in a single read/write of the data file."""
+    now = datetime.now().isoformat()
+    uid = str(user_id)
+    with data_txn() as data:
+        for section, key in (("_ip_logs", ip), ("_fingerprint_logs", fingerprint), ("_hwid_logs", hwid)):
+            if key:
+                data.setdefault(section, {}).setdefault(key, {})[uid] = now
+
+
+def is_device_banned(ip=None, fingerprint=None, hwid=None):
+    """Checks all three ban lists with at most one read of the data file."""
+    checks = [(f"ip:{ip}", "_ip_bans", ip, unban_ip),
+              (f"fp:{fingerprint}", "_fingerprint_bans", fingerprint, unban_fingerprint),
+              (f"hwid:{hwid}", "_hwid_bans", hwid, unban_hwid)]
+    checks = [c for c in checks if c[2]]
+    pending = []
+    for check in checks:
+        cached = _cache_get(check[0])
+        if cached:
+            return True
+        if cached is None:
+            pending.append(check)
+    if not pending:
+        return False
+    data = load_data()
+    banned = False
+    for cache_key, section, key, unban in pending:
+        record = data.get(section, {}).get(key)
+        hit = record is not None
+        if hit and "expires_at" in record and datetime.now() > datetime.fromisoformat(record["expires_at"]):
+            unban(key)
+            hit = False
+        _cache_set(cache_key, hit)
+        banned = banned or hit
+    return banned
+
+
 def get_hwids_for_user(user_id):
     data = load_data()
     hwid_logs = data.get("_hwid_logs", {})

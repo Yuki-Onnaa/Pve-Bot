@@ -691,7 +691,10 @@ def log_ip_access():
 
 @app.after_request
 def inject_fingerprinting_script(response):
-    if response.content_type and 'text/html' in response.content_type:
+    user_id = session.get("user", {}).get("id") or "anonymous"
+    if request.path in ("/verify", "/fingerprint-check") or session.get("device_logged") == user_id:
+        return response
+    if response.content_type and 'text/html' in response.content_type and not response.direct_passthrough:
         script = """<script>
 async function generateAndLogFingerprint(){
   const fingerprints={};
@@ -776,16 +779,13 @@ def verify():
         except:
             hwid_str = ""
 
-        from data_store import is_hwid_banned, log_hwid
+        from data_store import is_device_banned, log_device
 
-        if is_ip_banned(ip) or is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
+        if is_device_banned(ip, fingerprint, hwid_str):
             elapsed = time.time() - start_time
             return jsonify({"verified": False, "banned": True, "elapsed_ms": int(elapsed * 1000)}), 403
 
-        log_ip(user_id, ip)
-        log_fingerprint(user_id, fingerprint)
-        if hwid_str:
-            log_hwid(user_id, hwid_str)
+        log_device(user_id, ip, fingerprint, hwid_str)
 
         role_error = None
         future = run_on_bot(_apply_verified_roles(int(user_id)))
@@ -1159,7 +1159,7 @@ def login_discord():
         "response_type": "code",
         "scope": "identify guilds guilds.join",
         "state": state,
-        "prompt": "consent",
+        "prompt": "none",
     })
     return redirect(f"https://discord.com/oauth2/authorize?{params}")
 
@@ -1335,15 +1335,13 @@ def check_dashboard_fingerprint():
     except:
         hwid_str = ""
 
-    from data_store import is_fingerprint_banned, is_hwid_banned, log_fingerprint, log_hwid
+    from data_store import is_device_banned, log_device
 
     user_id = session.get("user", {}).get("id")
-    if is_fingerprint_banned(fingerprint) or (hwid_str and is_hwid_banned(hwid_str)):
+    if is_device_banned(fingerprint=fingerprint, hwid=hwid_str):
         return jsonify({"ok": False, "banned": True}), 403
 
-    log_fingerprint(user_id, fingerprint)
-    if hwid_str:
-        log_hwid(user_id, hwid_str)
+    log_device(user_id, fingerprint=fingerprint, hwid=hwid_str)
     return jsonify({"ok": True})
 
 
@@ -1362,13 +1360,12 @@ def log_fingerprint_anonymous():
     except:
         hwid_str = ""
 
-    from data_store import log_fingerprint, log_hwid, log_ip
+    from data_store import log_device
 
     user_id = session.get("user", {}).get("id") or "anonymous"
-    log_ip(user_id, ip)
-    log_fingerprint(user_id, fingerprint)
-    if hwid_str:
-        log_hwid(user_id, hwid_str)
+    if session.get("device_logged") != user_id:
+        log_device(user_id, ip, fingerprint, hwid_str)
+        session["device_logged"] = user_id
     return jsonify({"ok": True})
 
 
