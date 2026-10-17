@@ -369,7 +369,8 @@ def run_on_bot(coro):
     return asyncio.run_coroutine_threadsafe(coro, loop)
 
 
-VERIFIED_ROLE_ID = int(os.environ.get("VERIFIED_ROLE_ID", "1528880198597218444"))
+VERIFIED_ROLE_IDS = [int(r) for r in os.environ.get(
+    "VERIFIED_ROLE_IDS", "1528880198597218444,1478411238009471151").split(",") if r.strip()]
 UNVERIFIED_ROLE_ID = int(os.environ.get("UNVERIFIED_ROLE_ID", "1528880267173957863"))
 
 
@@ -380,7 +381,7 @@ def _verify_guilds():
     if REQUIRED_GUILD_ID:
         guild = bot.get_guild(int(REQUIRED_GUILD_ID))
         return [guild] if guild else []
-    return [g for g in bot.guilds if g.get_role(VERIFIED_ROLE_ID)]
+    return [g for g in bot.guilds if g.get_role(VERIFIED_ROLE_IDS[0])]
 
 
 async def _apply_verified_roles(user_id):
@@ -395,14 +396,16 @@ async def _apply_verified_roles(user_id):
                 member = await guild.fetch_member(user_id)
             except discord.NotFound:
                 continue
-        add_role = guild.get_role(VERIFIED_ROLE_ID)
+        add_roles = [guild.get_role(rid) for rid in VERIFIED_ROLE_IDS]
         remove_role = guild.get_role(UNVERIFIED_ROLE_ID)
-        if add_role is None:
-            print(f"[Verify] Verified role {VERIFIED_ROLE_ID} not found in {guild.name}")
-            return "The verified role is missing. Contact staff."
+        missing = [rid for rid, role in zip(VERIFIED_ROLE_IDS, add_roles) if role is None]
+        if missing:
+            print(f"[Verify] Verified role(s) {missing} not found in {guild.name}")
+            return "A verified role is missing. Contact staff."
         try:
-            if add_role not in member.roles:
-                await member.add_roles(add_role, reason="Dashboard verification")
+            to_add = [r for r in add_roles if r not in member.roles]
+            if to_add:
+                await member.add_roles(*to_add, reason="Dashboard verification")
             if remove_role is not None and remove_role in member.roles:
                 await member.remove_roles(remove_role, reason="Dashboard verification")
         except discord.Forbidden:
