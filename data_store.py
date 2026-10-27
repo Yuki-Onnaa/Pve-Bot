@@ -1,16 +1,23 @@
-"""Shared JSON data store for vouch_bot.py and dashboard.py.
+"""Shared data store for vouch_bot.py and dashboard.py.
 
-Both processes/threads touch the exact same file - vouch_bot.py's asyncio
-event loop and dashboard.py's Flask app run in the same OS process but on
-different threads (dashboard runs in a background thread started by
-vouch_bot.py). A lock defined separately in each file protects nothing
-against the other file's reads/writes, which is how a dashboard admin edit
-and a live /host command could silently clobber each other. Both files now
-import load_data/save_data/data_txn from here so there is exactly one lock
-guarding the file.
+Both run in the same OS process on different threads (the dashboard runs in a
+background thread started by vouch_bot.py), so everything here is guarded by a
+single lock - a dashboard admin edit and a live /host command can't clobber
+each other.
+
+Storage is SQLite. load_data()/save_data()/data_txn() still hand out the whole
+top-level dict so callers didn't have to change, but each top-level key is its
+own row and save_data() only rewrites the rows that actually changed. The
+device logs (IPs, fingerprints, HWIDs), which grow without bound, live in their
+own indexed table and are never part of that dict.
+
+On first start, an existing JSON data file is imported automatically and
+renamed to <name>.json.migrated.
 """
 import json
 import os
+import sqlite3
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -26,39 +33,119 @@ _lock = threading.RLock()
 _ban_cache = {}
 _ban_cache_ttl = 60
 
+# Top-level keys the old JSON format kept device logs under -> device_logs.kind
+LOG_SECTIONS = {"_ip_logs": "ip", "_fingerprint_logs": "fingerprint", "_hwid_logs": "hwid"}
+
+_conn = None
+_conn_path = None
+
+
+def db_path():
+    return os.environ.get("DB_FILE") or os.path.splitext(DATA_FILE)[0] + ".db"
+
+
+def _db():
+    """The shared connection, (re)opened if the configured path changed. Callers hold _lock."""
+    global _conn, _conn_path
+    path = db_path()
+    if _conn is not None and _conn_path == path:
+        return _conn
+    if _conn is not None:
+        _conn.close()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS device_logs ("
+        " kind TEXT NOT NULL, value TEXT NOT NULL, user_id TEXT NOT NULL, seen_at TEXT NOT NULL,"
+        " PRIMARY KEY (kind, value, user_id))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS device_logs_by_user ON device_logs (kind, user_id)")
+    try:
+        _migrate_json_file(conn)
+    except BaseException:
+        conn.close()
+        raise
+    _conn, _conn_path = conn, path
+    return conn
+
+
+def _migrate_json_file(conn):
+    if not os.path.exists(DATA_FILE):
+        return
+    if conn.execute("SELECT 1 FROM kv LIMIT 1").fetchone():
+        return
+    with open(DATA_FILE, "r") as f:
+        data = json.load(f)
+    _replace_all(conn, data)
+    os.replace(DATA_FILE, DATA_FILE + ".migrated")
+    print(f"[DataStore] Migrated {DATA_FILE} into {db_path()} ({len(data)} top-level keys)")
+
+
+@contextmanager
+def _write(conn):
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
+def _insert_logs(conn, kind, section):
+    conn.executemany(
+        "INSERT INTO device_logs (kind, value, user_id, seen_at) VALUES (?, ?, ?, ?)"
+        " ON CONFLICT (kind, value, user_id) DO UPDATE SET seen_at = excluded.seen_at",
+        [(kind, value, str(uid), seen) for value, users in (section or {}).items() for uid, seen in users.items()],
+    )
+
+
+def _replace_all(conn, data):
+    with _write(conn):
+        conn.execute("DELETE FROM kv")
+        conn.execute("DELETE FROM device_logs")
+        for key, value in data.items():
+            if key in LOG_SECTIONS:
+                _insert_logs(conn, LOG_SECTIONS[key], value)
+            else:
+                conn.execute("INSERT INTO kv (key, value) VALUES (?, ?)", (key, _dumps(value)))
+
+
+def _dumps(value):
+    return json.dumps(value, separators=(",", ":"))
+
 
 def load_data():
     with _lock:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
-        return {}
+        rows = _db().execute("SELECT key, value FROM kv").fetchall()
+        return {key: json.loads(value) for key, value in rows}
 
 
 def save_data(data):
+    """Persists the top-level dict, writing only rows that changed and deleting
+    keys that were removed. Device-log sections (only present when restoring an
+    old JSON backup) are merged into the device log table."""
     with _lock:
-        os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
-        with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-
-
-def _cache_get(key):
-    if key in _ban_cache:
-        cached_time, cached_result = _ban_cache[key]
-        if time.time() - cached_time < _ban_cache_ttl:
-            return cached_result
-        else:
-            del _ban_cache[key]
-    return None
-
-
-def _cache_set(key, result):
-    _ban_cache[key] = (time.time(), result)
-
-
-def _cache_clear_key(key):
-    if key in _ban_cache:
-        del _ban_cache[key]
+        conn = _db()
+        existing = dict(conn.execute("SELECT key, value FROM kv").fetchall())
+        with _write(conn):
+            for key, value in data.items():
+                if key in LOG_SECTIONS:
+                    _insert_logs(conn, LOG_SECTIONS[key], value)
+                    continue
+                encoded = _dumps(value)
+                if existing.get(key) != encoded:
+                    conn.execute(
+                        "INSERT INTO kv (key, value) VALUES (?, ?)"
+                        " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                        (key, encoded),
+                    )
+            removed = [(key,) for key in existing if key not in data]
+            if removed:
+                conn.executemany("DELETE FROM kv WHERE key = ?", removed)
 
 
 @contextmanager
@@ -80,6 +167,132 @@ def data_txn():
         yield data
         save_data(data)
 
+
+def export_all():
+    """Everything, device logs included, in the original single-JSON format."""
+    with _lock:
+        data = load_data()
+        for section, kind in LOG_SECTIONS.items():
+            data[section] = get_log_section(kind)
+        return data
+
+
+def import_all(data):
+    """Replaces the entire store (device logs included) with an export_all()-style dict."""
+    with _lock:
+        _replace_all(_db(), data)
+        _ban_cache.clear()
+
+
+def _cache_get(key):
+    if key in _ban_cache:
+        cached_time, cached_result = _ban_cache[key]
+        if time.time() - cached_time < _ban_cache_ttl:
+            return cached_result
+        else:
+            del _ban_cache[key]
+    return None
+
+
+def _cache_set(key, result):
+    _ban_cache[key] = (time.time(), result)
+
+
+def _cache_clear_key(key):
+    if key in _ban_cache:
+        del _ban_cache[key]
+
+
+# ── Device logs ──
+
+def _log(kind, user_id, value):
+    with _lock:
+        conn = _db()
+        with _write(conn):
+            _insert_logs(conn, kind, {value: {str(user_id): datetime.now().isoformat()}})
+
+
+def log_device(user_id, ip=None, fingerprint=None, hwid=None):
+    """Logs IP, fingerprint and HWID in a single transaction."""
+    now = datetime.now().isoformat()
+    with _lock:
+        conn = _db()
+        with _write(conn):
+            for kind, value in (("ip", ip), ("fingerprint", fingerprint), ("hwid", hwid)):
+                if value:
+                    _insert_logs(conn, kind, {value: {str(user_id): now}})
+
+
+def get_log_section(kind):
+    """{value: {user_id: last_seen}} for one kind - the shape the old JSON sections had."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT value, user_id, seen_at FROM device_logs WHERE kind = ?", (kind,)
+        ).fetchall()
+    section = {}
+    for value, uid, seen in rows:
+        section.setdefault(value, {})[uid] = seen
+    return section
+
+
+def get_user_logs(kind, user_id):
+    """{value: last_seen} for everything of one kind logged against a user."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT value, seen_at FROM device_logs WHERE kind = ? AND user_id = ?", (kind, str(user_id))
+        ).fetchall()
+    return dict(rows)
+
+
+def _values_for_user(kind, user_id):
+    return list(get_user_logs(kind, user_id))
+
+
+def _users_for_value(kind, value):
+    with _lock:
+        rows = _db().execute(
+            "SELECT user_id FROM device_logs WHERE kind = ? AND value = ?", (kind, value)
+        ).fetchall()
+    return [uid for (uid,) in rows]
+
+
+def log_ip(user_id, ip):
+    _log("ip", user_id, ip)
+
+
+def log_fingerprint(user_id, fingerprint_json):
+    _log("fingerprint", user_id, fingerprint_json)
+
+
+def log_hwid(user_id, hwid):
+    _log("hwid", user_id, hwid)
+
+
+def get_ips_for_user(user_id):
+    return _values_for_user("ip", user_id)
+
+
+def get_users_for_ip(ip):
+    return _users_for_value("ip", ip)
+
+
+def get_fingerprints_for_user(user_id):
+    return _values_for_user("fingerprint", user_id)
+
+
+def get_users_for_fingerprint(fingerprint):
+    return _users_for_value("fingerprint", fingerprint)
+
+
+def get_hwids_for_user(user_id):
+    return _values_for_user("hwid", user_id)
+
+
+def get_users_for_hwid(hwid):
+    return _users_for_value("hwid", hwid)
+
+
+# ── Bans ──
 
 def is_ip_banned(ip):
     cached = _cache_get(f"ip:{ip}")
@@ -118,27 +331,6 @@ def unban_ip(ip):
         if "_ip_bans" in data and ip in data["_ip_bans"]:
             del data["_ip_bans"][ip]
     _cache_clear_key(f"ip:{ip}")
-
-
-def log_ip(user_id, ip):
-    with data_txn() as data:
-        if "_ip_logs" not in data:
-            data["_ip_logs"] = {}
-        if ip not in data["_ip_logs"]:
-            data["_ip_logs"][ip] = {}
-        data["_ip_logs"][ip][str(user_id)] = datetime.now().isoformat()
-
-
-def get_ips_for_user(user_id):
-    data = load_data()
-    ip_logs = data.get("_ip_logs", {})
-    return [ip for ip, users in ip_logs.items() if str(user_id) in users]
-
-
-def get_users_for_ip(ip):
-    data = load_data()
-    ip_logs = data.get("_ip_logs", {})
-    return list(ip_logs.get(ip, {}).keys())
 
 
 def is_fingerprint_banned(fingerprint):
@@ -180,27 +372,6 @@ def unban_fingerprint(fingerprint):
     _cache_clear_key(f"fp:{fingerprint}")
 
 
-def log_fingerprint(user_id, fingerprint_json):
-    with data_txn() as data:
-        if "_fingerprint_logs" not in data:
-            data["_fingerprint_logs"] = {}
-        if fingerprint_json not in data["_fingerprint_logs"]:
-            data["_fingerprint_logs"][fingerprint_json] = {}
-        data["_fingerprint_logs"][fingerprint_json][str(user_id)] = datetime.now().isoformat()
-
-
-def get_fingerprints_for_user(user_id):
-    data = load_data()
-    fingerprint_logs = data.get("_fingerprint_logs", {})
-    return [fp for fp, users in fingerprint_logs.items() if str(user_id) in users]
-
-
-def get_users_for_fingerprint(fingerprint):
-    data = load_data()
-    fingerprint_logs = data.get("_fingerprint_logs", {})
-    return list(fingerprint_logs.get(fingerprint, {}).keys())
-
-
 def is_hwid_banned(hwid):
     cached = _cache_get(f"hwid:{hwid}")
     if cached is not None:
@@ -240,27 +411,8 @@ def unban_hwid(hwid):
     _cache_clear_key(f"hwid:{hwid}")
 
 
-def log_hwid(user_id, hwid):
-    with data_txn() as data:
-        if "_hwid_logs" not in data:
-            data["_hwid_logs"] = {}
-        if hwid not in data["_hwid_logs"]:
-            data["_hwid_logs"][hwid] = {}
-        data["_hwid_logs"][hwid][str(user_id)] = datetime.now().isoformat()
-
-
-def log_device(user_id, ip=None, fingerprint=None, hwid=None):
-    """Logs IP, fingerprint and HWID in a single read/write of the data file."""
-    now = datetime.now().isoformat()
-    uid = str(user_id)
-    with data_txn() as data:
-        for section, key in (("_ip_logs", ip), ("_fingerprint_logs", fingerprint), ("_hwid_logs", hwid)):
-            if key:
-                data.setdefault(section, {}).setdefault(key, {})[uid] = now
-
-
 def is_device_banned(ip=None, fingerprint=None, hwid=None):
-    """Checks all three ban lists with at most one read of the data file."""
+    """Checks all three ban lists with at most one read of the store."""
     checks = [(f"ip:{ip}", "_ip_bans", ip, unban_ip),
               (f"fp:{fingerprint}", "_fingerprint_bans", fingerprint, unban_fingerprint),
               (f"hwid:{hwid}", "_hwid_bans", hwid, unban_hwid)]
@@ -287,13 +439,15 @@ def is_device_banned(ip=None, fingerprint=None, hwid=None):
     return banned
 
 
-def get_hwids_for_user(user_id):
-    data = load_data()
-    hwid_logs = data.get("_hwid_logs", {})
-    return [hwid for hwid, users in hwid_logs.items() if str(user_id) in users]
-
-
-def get_users_for_hwid(hwid):
-    data = load_data()
-    hwid_logs = data.get("_hwid_logs", {})
-    return list(hwid_logs.get(hwid, {}).keys())
+if __name__ == "__main__":
+    # python3 data_store.py export <file.json>  |  python3 data_store.py import <file.json>
+    if len(sys.argv) != 3 or sys.argv[1] not in ("export", "import"):
+        raise SystemExit("usage: data_store.py export|import <file.json>")
+    command, path = sys.argv[1], sys.argv[2]
+    if command == "export":
+        with open(path, "w") as f:
+            json.dump(export_all(), f, indent=2)
+    else:
+        with open(path) as f:
+            import_all(json.load(f))
+    print(f"{command}ed {path} ({db_path()})")

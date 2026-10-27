@@ -17,7 +17,7 @@ import urllib.request
 import discord
 from flask import Flask, Response, session, redirect, request, jsonify, render_template_string
 
-from data_store import DATA_FILE, load_data, save_data, data_txn
+from data_store import DATA_FILE, load_data, save_data, data_txn, export_all, import_all
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -627,7 +627,7 @@ def member_required(f):
 @admin_required
 def export_data():
     """Raw dump of the shared data store, for backing up/migrating off a host."""
-    payload = json.dumps(load_data(), indent=2)
+    payload = json.dumps(export_all(), indent=2)
     return Response(
         payload,
         mimetype="application/json",
@@ -662,7 +662,7 @@ uploaded file. Cannot be undone.</p>
         return jsonify({"error": "File is not valid JSON"}), 400
     if not isinstance(data, dict):
         return jsonify({"error": "Expected a JSON object at the top level"}), 400
-    save_data(data)
+    import_all(data)
     return jsonify({"ok": True, "top_level_keys": list(data.keys())})
 
 
@@ -968,11 +968,10 @@ def admin_ips():
     if int(user_id) != 1387930623766827140:
         return jsonify({"error": "Access denied"}), 403
 
-    from data_store import load_data
+    from data_store import get_log_section
 
-    data = load_data()
-    ip_logs = data.get("_ip_logs", {})
-    ip_bans = data.get("_ip_bans", {})
+    ip_logs = get_log_section("ip")
+    ip_bans = load_data().get("_ip_bans", {})
 
     ips_info = []
     for ip, users in ip_logs.items():
@@ -1092,42 +1091,19 @@ def api_user_details():
     if not query_user_id:
         return jsonify({"error": "No user_id provided"}), 400
 
-    from data_store import load_data
+    from data_store import get_user_logs
 
     data = load_data()
-    ip_logs = data.get("_ip_logs", {})
     ip_bans = data.get("_ip_bans", {})
-    fingerprint_logs = data.get("_fingerprint_logs", {})
     fingerprint_bans = data.get("_fingerprint_bans", {})
-    hwid_logs = data.get("_hwid_logs", {})
     hwid_bans = data.get("_hwid_bans", {})
 
-    ips = []
-    for ip, users in ip_logs.items():
-        if query_user_id in users:
-            ips.append({
-                "ip": ip,
-                "last_seen": users.get(query_user_id, "N/A"),
-                "banned": ip in ip_bans
-            })
-
-    fingerprints = []
-    for fp, users in fingerprint_logs.items():
-        if query_user_id in users:
-            fingerprints.append({
-                "fingerprint": fp,
-                "last_seen": users.get(query_user_id, "N/A"),
-                "banned": fp in fingerprint_bans
-            })
-
-    hwids = []
-    for hwid, users in hwid_logs.items():
-        if query_user_id in users:
-            hwids.append({
-                "hwid": hwid,
-                "last_seen": users.get(query_user_id, "N/A"),
-                "banned": hwid in hwid_bans
-            })
+    ips = [{"ip": ip, "last_seen": seen, "banned": ip in ip_bans}
+           for ip, seen in get_user_logs("ip", query_user_id).items()]
+    fingerprints = [{"fingerprint": fp, "last_seen": seen, "banned": fp in fingerprint_bans}
+                    for fp, seen in get_user_logs("fingerprint", query_user_id).items()]
+    hwids = [{"hwid": hwid, "last_seen": seen, "banned": hwid in hwid_bans}
+             for hwid, seen in get_user_logs("hwid", query_user_id).items()]
 
     if not ips and not fingerprints and not hwids:
         return jsonify({"error": "User not found"}), 404
@@ -1819,6 +1795,7 @@ def build_profile(uid, own=True):
         "has_data": bool(record),
         "chart": {"labels": labels, "series": series},
         "streak": host_streak_stats(record),
+        "hosting": hosting_stats(record),
         "badges": host_badges(record),
         "streak_dm_opt_out": bool(record.get("streak_dm_opt_out")) if own else None,
         "rank_up_dm_opt_out": bool(record.get("rank_up_dm_opt_out")) if own else None,
@@ -1829,6 +1806,22 @@ def build_profile(uid, own=True):
             "first_seen": first_seen[:10],
             "total_vouches": sum(c["vouches"] for c in categories),
         },
+    }
+
+
+def hosting_stats(record):
+    """Event length and attendance across a host's finished sessions, or None if they have none."""
+    stats = record.get("host_stats") or {}
+    events = stats.get("events", 0)
+    if not events:
+        return None
+    return {
+        "events": events,
+        "hours": round(stats.get("minutes", 0) / 60, 1),
+        "avg_minutes": round(stats.get("minutes", 0) / events),
+        "avg_peak": round(stats.get("peak_total", 0) / events, 1),
+        "best_peak": stats.get("best_peak", 0),
+        "recent": list(reversed((record.get("host_sessions") or [])[-5:])),
     }
 
 
@@ -2203,6 +2196,12 @@ def api_leaderboard():
              **resolve_user(uid)}
             for uid, rec in ranked
         ]
+    hosts = [(uid, hosting_stats(rec)) for uid, rec in user_records(data)]
+    hosts = sorted((h for h in hosts if h[1]), key=lambda h: h[1]["hours"], reverse=True)[:25]
+    result["hosting"] = [
+        {"uid": uid, **{k: v for k, v in stats.items() if k != "recent"}, **resolve_user(uid)}
+        for uid, stats in hosts
+    ]
     return jsonify(result)
 
 # ── API: Users ──
@@ -3395,6 +3394,10 @@ tr.me td{background:rgba(127,194,184,.07)}
 .cat-stats{display:flex;gap:22px;margin-top:16px;flex-wrap:wrap}
 .cat-stats div{font-size:12.5px;color:var(--muted)}
 .cat-stats b{display:block;font-family:var(--mono);font-size:18px;color:var(--text);font-weight:600;margin-bottom:2px}
+.host-sessions{margin-top:16px;border-top:1px solid var(--border);padding-top:10px}
+.host-session{font-size:12.5px;color:var(--muted);padding:5px 0;display:flex;gap:4px;flex-wrap:wrap}
+.host-session b{color:var(--text);font-weight:600}
+.host-session span{margin-left:auto;font-family:var(--mono);font-size:11.5px}
 .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px}
 .chip{background:var(--card-2);border:1px solid var(--border);border-radius:8px;padding:5px 11px;font-size:12px;color:var(--muted)}
 .chip b{color:var(--text);font-family:var(--mono)}
@@ -3527,6 +3530,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <button class="tab" data-cat="security" onclick="switchLbTab('security',this)">Security</button>
         <button class="tab" data-cat="support" onclick="switchLbTab('support',this)">Support</button>
         <button class="tab" data-cat="givers" onclick="switchLbTab('givers',this)">Vouchers</button>
+        <button class="tab" data-cat="hosting" onclick="switchLbTab('hosting',this)">Hosting</button>
       </div>
       <div class="controls" id="lb-giver-range" style="display:none">
         <select id="lb-days" onchange="loadGiverBoard()">
@@ -3583,6 +3587,7 @@ a.rival:hover{border-color:var(--border-2);color:var(--text)}
         <div class="stat"><div class="val" id="s-vouches">-</div><div class="lbl">Total vouches</div></div>
       </div>
       <div class="card" id="streak-card"></div>
+      <div class="card" id="hosting-card" style="display:none"></div>
       <div class="card"><div class="bests" id="bests"></div></div>
       <div id="cats"></div>
       <h2 style="font-family:var(--serif);font-size:18px;font-weight:500;margin:22px 0 12px" id="activity-heading">Your activity</h2>
@@ -3708,7 +3713,19 @@ function switchLbTab(cat, el){
   el.classList.add('active');
   const isGivers = cat === 'givers';
   document.getElementById('lb-giver-range').style.display = isGivers ? 'flex' : 'none';
-  if(isGivers) loadGiverBoard(); else renderLbTable(cat);
+  if(isGivers) loadGiverBoard(); else if(cat === 'hosting') renderHostingBoard(); else renderLbTable(cat);
+}
+function renderHostingBoard(){
+  const rows = lbData.hosting || [];
+  const wrap = document.getElementById('lb-table');
+  if(!rows.length){ wrap.innerHTML = '<div class="empty">No finished hosted events recorded yet.</div>'; return; }
+  wrap.innerHTML = '<table><thead><tr><th></th><th>Host</th><th style="text-align:right">Hours</th><th style="text-align:right">Events</th>' +
+    '<th style="text-align:right">Avg length</th><th style="text-align:right">Avg peak</th><th style="text-align:right">Best peak</th></tr></thead><tbody>' +
+    rows.map(function(r,i){ return '<tr' + (r.uid===MY_ID?' class="me"':'') + '><td class="pos">' + (i+1) + '</td><td>' + memberCell(r) +
+      '</td><td class="num">' + fmt(r.hours) + '</td><td class="num" style="color:var(--muted)">' + r.events +
+      '</td><td class="num" style="color:var(--muted)">' + fmtDur(r.avg_minutes) + '</td><td class="num">' + fmt(r.avg_peak) +
+      '</td><td class="num" style="color:var(--muted)">' + r.best_peak + '</td></tr>'; }).join('') +
+    '</tbody></table>';
 }
 function memberCell(m){
   const pic = m.avatar ? '<img alt="" src="' + m.avatar + '">' : '<span class="ph">' + esc((m.name||'?').slice(0,1).toUpperCase()) + '</span>';
@@ -3883,6 +3900,24 @@ function renderStreak(s, dmOptedOut){
     '<span class="streak-best">best ' + s.longest + ' · ' + s.total_runs + ' total /host runs</span></div>' +
     '<div class="streak-msg' + (s.at_risk?' warn':'') + '">' + msg + '</div>';
 }
+function fmtDur(mins){
+  mins = Math.round(mins || 0);
+  return mins < 60 ? mins + 'm' : Math.floor(mins/60) + 'h ' + (mins%60) + 'm';
+}
+function renderHosting(h){
+  const el = document.getElementById('hosting-card');
+  if(!h){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const recent = (h.recent || []).map(function(s){
+    return '<div class="host-session"><b>' + esc(s.event || 'Event') + '</b> · ' + fmtDur(s.minutes) +
+      ' · peak ' + s.peak + '<span>' + timeAgo(s.started_at) + '</span></div>';
+  }).join('');
+  el.innerHTML = '<div class="cat-head"><span class="cat-name">Hosting</span></div>' +
+    '<div class="cat-stats"><div><b>' + h.events + '</b>events</div><div><b>' + fmt(h.hours) + 'h</b>hosted</div>' +
+    '<div><b>' + fmtDur(h.avg_minutes) + '</b>avg length</div><div><b>' + fmt(h.avg_peak) + '</b>avg peak</div>' +
+    '<div><b>' + h.best_peak + '</b>best peak</div></div>' +
+    (recent ? '<div class="host-sessions">' + recent + '</div>' : '');
+}
 function rivalsHTML(r){
   if(!r || (!r.above && !r.below)) return '';
   let out = '<div class="rivals">';
@@ -3921,6 +3956,7 @@ async function loadProfile(){
     if(d.error){
       document.getElementById('cats').innerHTML = '<div class="card"><div class="empty">' + esc(d.error) + '</div></div>';
       document.getElementById('streak-card').style.display = 'none';
+      document.getElementById('hosting-card').style.display = 'none';
       return;
     }
   } catch(e){ return; }
@@ -3952,6 +3988,7 @@ async function loadProfile(){
   }).join('');
 
   renderStreak(d.streak, d.streak_dm_opt_out);
+  renderHosting(d.hosting);
   renderBadges(d.badges);
   if(!viewing){
     document.getElementById('pref-streak').checked = !d.streak_dm_opt_out;

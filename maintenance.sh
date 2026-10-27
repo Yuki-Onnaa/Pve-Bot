@@ -47,8 +47,7 @@ backup_data() {
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_file="$BACKUP_DIR/vouches_${timestamp}.json"
 
-    if [ -f "$DATA_DIR/vouches.json" ]; then
-        cp "$DATA_DIR/vouches.json" "$backup_file"
+    if DATA_FILE="$DATA_DIR/vouches.json" python3 data_store.py export "$backup_file"; then
         gzip "$backup_file"
         log_success "Backup created: ${backup_file}.gz"
 
@@ -56,7 +55,7 @@ backup_data() {
         find "$BACKUP_DIR" -name "vouches_*.json.gz" -mtime +30 -delete
         log_info "Old backups cleaned (>30 days)"
     else
-        log_error "No vouches.json found at $DATA_DIR/vouches.json"
+        log_error "Export from $DATA_DIR/vouches.db failed"
         return 1
     fi
 }
@@ -84,19 +83,17 @@ restore_backup() {
 
     log_warning "Restoring from backup: $backup_file"
 
-    # Create safety backup of current file
-    if [ -f "$DATA_DIR/vouches.json" ]; then
-        cp "$DATA_DIR/vouches.json" "$DATA_DIR/vouches_pre_restore.json"
-    fi
+    export DATA_FILE="$DATA_DIR/vouches.json"
+    python3 data_store.py export "$DATA_DIR/vouches_pre_restore.json"
 
-    # Restore
+    local restore_file="$backup_file"
     if [[ "$backup_file" == *.gz ]]; then
-        gunzip -c "$backup_file" > "$DATA_DIR/vouches.json"
-    else
-        cp "$backup_file" "$DATA_DIR/vouches.json"
+        restore_file=$(mktemp)
+        gunzip -c "$backup_file" > "$restore_file"
     fi
+    python3 data_store.py import "$restore_file"
 
-    log_success "Restored from backup. Previous file saved as vouches_pre_restore.json"
+    log_success "Restored from backup. Previous data saved as vouches_pre_restore.json"
 }
 
 # ============================================================================

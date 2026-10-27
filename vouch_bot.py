@@ -4,6 +4,7 @@ import os
 import random
 import re
 import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Union
@@ -14,7 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from data_store import DATA_FILE, data_txn, load_data, save_data
+from data_store import DATA_FILE, data_txn, export_all, load_data, save_data
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -436,15 +437,16 @@ def get_all_role_names(category, data=None):
 
 
 def backup_data(tag="backup"):
-    """Copy the current data file aside before anything destructive. Returns the path."""
-    if not os.path.exists(DATA_FILE):
+    """Write a JSON snapshot of the data store aside before anything destructive. Returns the path."""
+    snapshot = export_all()
+    if not snapshot:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     folder = os.path.dirname(DATA_FILE) or "."
     path = os.path.join(folder, f"vouches-{tag}-{stamp}.json")
     try:
-        with open(DATA_FILE, "r") as source, open(path, "w") as dest:
-            dest.write(source.read())
+        with open(path, "w") as dest:
+            json.dump(snapshot, dest)
     except OSError as e:
         print(f"[Backup] Failed: {e}")
         return None
@@ -2010,13 +2012,15 @@ def record_host_run(
 ):
     """Logs a /host run for the host streak (rolling 24h window) and remembers the
     event hosted plus the posted message/stage, so /reping and /end know what to act on."""
+    now = datetime.now(timezone.utc).isoformat()
     with data_txn() as data:
         record = data.setdefault(str(user_id), {})
         runs = record.get("host_runs", [])
-        runs.append(datetime.now(timezone.utc).isoformat())
+        runs.append(now)
         record["host_runs"] = runs[-100:]
         record["host_runs_total"] = record.get("host_runs_total", 0) + 1
         record["last_host_event"] = event
+        close_host_session(record)
         record["last_host"] = {
             "event": event,
             "region": region,
@@ -2025,7 +2029,84 @@ def record_host_run(
             "channel_id": str(channel_id) if channel_id else None,
             "co_host_ids": [str(c) for c in co_host_ids] if co_host_ids else [],
             "stage_channel_id": str(stage_channel_id) if stage_channel_id else None,
+            "started_at": now,
+            "peak": 0,
         }
+    invalidate_live_channels()
+
+
+def close_host_session(record, ended_at=None):
+    """Rolls a host's current session into their hosting stats (event length and
+    peak attendance). Call before marking last_host ended; a no-op for sessions
+    already ended or started before stats were tracked."""
+    last_host = record.get("last_host") or {}
+    if last_host.get("ended") or not last_host.get("started_at"):
+        return
+    try:
+        started = datetime.fromisoformat(last_host["started_at"])
+        ended = datetime.fromisoformat(ended_at) if ended_at else datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        return
+    minutes = max(0, round((ended - started).total_seconds() / 60))
+    peak = int(last_host.get("peak") or 0)
+    sessions = record.get("host_sessions", [])
+    sessions.append({
+        "event": last_host.get("event"),
+        "started_at": last_host["started_at"],
+        "minutes": minutes,
+        "peak": peak,
+    })
+    record["host_sessions"] = sessions[-100:]
+    stats = record.setdefault("host_stats", {})
+    stats["events"] = stats.get("events", 0) + 1
+    stats["minutes"] = stats.get("minutes", 0) + minutes
+    stats["peak_total"] = stats.get("peak_total", 0) + peak
+    stats["best_peak"] = max(stats.get("best_peak", 0), peak)
+
+
+# channel_id -> {"uid", "peak"} for every live tracked session, refreshed every 30s
+# so voice updates don't have to scan the store each time.
+_live_channel_cache = {"at": 0.0, "map": {}}
+
+
+def invalidate_live_channels():
+    _live_channel_cache["at"] = 0.0
+
+
+def live_host_channels():
+    if time.monotonic() - _live_channel_cache["at"] > 30:
+        live = {}
+        for uid, rec in load_data().items():
+            if not uid.isdigit() or not isinstance(rec, dict):
+                continue
+            last_host = rec.get("last_host") or {}
+            if last_host.get("ended") or not last_host.get("stage_channel_id") or not last_host.get("started_at"):
+                continue
+            live[str(last_host["stage_channel_id"])] = {"uid": uid, "peak": int(last_host.get("peak") or 0)}
+        _live_channel_cache.update(at=time.monotonic(), map=live)
+    return _live_channel_cache["map"]
+
+
+def track_host_attendance(*channels):
+    """Records a new peak (non-bot members) for any live hosted channel among
+    `channels`, or when it last emptied - only writes when one of those changes."""
+    live = live_host_channels()
+    for channel in channels:
+        entry = live.get(str(channel.id)) if channel is not None else None
+        if entry is None:
+            continue
+        count = sum(1 for m in channel.members if not m.bot)
+        if count <= entry["peak"] and count > 0:
+            continue
+        with data_txn() as data:
+            last_host = (data.get(entry["uid"]) or {}).get("last_host") or {}
+            if last_host.get("ended") or str(last_host.get("stage_channel_id")) != str(channel.id):
+                invalidate_live_channels()
+                continue
+            if count > entry["peak"]:
+                last_host["peak"] = entry["peak"] = count
+            else:
+                last_host["emptied_at"] = datetime.now(timezone.utc).isoformat()
 
 
 def no_active_event_message(last_host, action):
@@ -2092,7 +2173,7 @@ def find_host_for_stage(channel_id, topic):
     return None
 
 
-def clear_stage_tracking(host_uid):
+def clear_stage_tracking(host_uid, ended_at=None):
     """Unlinks a host's last_host from the stage it was on once that stage ends.
     Without this, a host's stale record keeps matching on (stage_channel_id, event)
     after they're done, so if anyone else later hosts the same event type on the
@@ -2101,8 +2182,10 @@ def clear_stage_tracking(host_uid):
     with data_txn() as data:
         record = data.get(str(host_uid))
         if record and record.get("last_host"):
+            close_host_session(record, ended_at)
             record["last_host"]["stage_channel_id"] = None
             record["last_host"]["ended"] = True
+    invalidate_live_channels()
 
 
 def find_host_for_voice(channel_id):
@@ -2195,7 +2278,8 @@ async def end_stale_host_sessions(guild):
              for reason in [host_session_stale_reason(guild, rec)] if reason]
     for uid, rec, reason in stale:
         last_host = rec.get("last_host") or {}
-        clear_stage_tracking(uid)
+        # It really ended when the channel last emptied, not when the sweep noticed.
+        clear_stage_tracking(uid, ended_at=last_host.get("emptied_at"))
         await announce_event_ended(guild, uid, last_host)
         member = guild.get_member(int(uid))
         if member is not None:
@@ -2935,6 +3019,11 @@ async def on_ready():
 async def on_voice_state_update(member, before, after):
     if before.channel == after.channel:
         return
+
+    try:
+        track_host_attendance(before.channel, after.channel)
+    except Exception as e:
+        print(f"[HostStats] Attendance tracking failed: {e!r}")
 
     if after.channel is not None:
         data = load_data()
@@ -4726,6 +4815,7 @@ async def slash_host(
         region=region,
         stage_topic=stage_topic,
     )
+    track_host_attendance(stage)
 
     granted = await grant_stage_perms(guild, interaction.user, reason=f"Hosting {event} via /host")
     stage_started = False
@@ -5166,6 +5256,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
     with data_txn() as data:
         old_record = data.setdefault(str(current_host.id), {})
         if old_record.get("last_host"):
+            close_host_session(old_record)
             old_record["last_host"]["ended"] = True
             old_record["last_host"]["stage_channel_id"] = None
             old_record["last_host"]["taken_over_by"] = str(interaction.user.id)
@@ -5175,6 +5266,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
         new_record["host_runs"] = runs[-100:]
         new_record["host_runs_total"] = new_record.get("host_runs_total", 0) + 1
         new_record["last_host_event"] = event
+        close_host_session(new_record)
         new_record["last_host"] = {
             "event": event,
             "region": last_host.get("region"),
@@ -5183,7 +5275,12 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
             "channel_id": last_host.get("channel_id"),
             "co_host_ids": co_host_ids,
             "stage_channel_id": last_host.get("stage_channel_id"),
+            "started_at": runs[-1],
+            "peak": 0,
         }
+    invalidate_live_channels()
+    if last_host.get("stage_channel_id"):
+        track_host_attendance(guild.get_channel(int(last_host["stage_channel_id"])))
 
     await revoke_stage_perms(guild, current_host, reason=f"Handed off hosting to {interaction.user}")
     granted = await grant_stage_perms(guild, interaction.user, reason=f"Took over hosting from {current_host}")
