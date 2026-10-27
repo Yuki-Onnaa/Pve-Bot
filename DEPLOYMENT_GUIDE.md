@@ -12,7 +12,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/Yuki-Onnaa/Pve-Bot.git
+git clone <repository-url> Pve-Bot
 cd Pve-Bot
 
 # Install dependencies

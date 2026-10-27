@@ -3672,7 +3672,6 @@ async def info_cmd(ctx):
         value=f"[Terms of Service]({dashboard_url}/terms)\n[Privacy Policy]({dashboard_url}/privacy)",
         inline=False,
     )
-    embed.add_field(name="Repository", value="[Pve-Bot on GitHub](https://github.com/Yuki-Onnaa/Pve-Bot)", inline=False)
     await ctx.send(embed=embed)
 
 

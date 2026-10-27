@@ -1,8 +1,6 @@
 site_name: Pve-Bot Documentation
 site_description: Enterprise Discord Member Management Platform
 site_author: Pve-Bot Team
-repo_url: https://github.com/Yuki-Onnaa/Pve-Bot
-repo_name: Pve-Bot
 
 theme:
   name: material
