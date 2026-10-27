@@ -12,7 +12,7 @@
 
 **Do not open public issues for security vulnerabilities.**
 
-Please report security issues to: **security@pvebot.dev**
+Please report security issues privately to **dkvonn** on Discord.
 
 Include:
 - Description of the vulnerability
@@ -93,6 +93,4 @@ Strict-Transport-Security: max-age=31536000; includeSubDomains
 
 ## Contact
 
-- **Security Issues:** security@pvebot.dev
-- **Bug Reports:** GitHub Issues
-- **Questions:** GitHub Discussions
+Contact **dkvonn** on Discord for security issues, bug reports, and questions.

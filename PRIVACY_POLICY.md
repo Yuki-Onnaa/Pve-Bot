@@ -140,11 +140,6 @@ If you want your data deleted:
 - Railway has access to server files
 - See Railway's Privacy Policy for their practices
 
-### GitHub
-- Code and version history is on GitHub
-- User data is NOT on GitHub
-- See GitHub's Privacy Policy
-
 ## 10. Children's Privacy
 
 This bot is not intended for children under 13. We don't knowingly collect data from children. If you're under 13, don't use this bot without parent permission.
