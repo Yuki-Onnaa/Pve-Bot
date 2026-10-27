@@ -369,6 +369,8 @@ def run_on_bot(coro):
     return asyncio.run_coroutine_threadsafe(coro, loop)
 
 
+HOST_MAX_LIVE_HOURS = float(os.environ.get("HOST_MAX_LIVE_HOURS", "12"))
+
 VERIFIED_ROLE_IDS = [int(r) for r in os.environ.get(
     "VERIFIED_ROLE_IDS", "1528880198597218444,1478411238009471151").split(",") if r.strip()]
 UNVERIFIED_ROLE_ID = int(os.environ.get("UNVERIFIED_ROLE_ID", "1528880267173957863"))
@@ -2157,6 +2159,12 @@ def api_live_now():
         if not last_host or last_host.get("ended") or not last_host.get("stage_channel_id"):
             continue
         host_runs = rec.get("host_runs") or []
+        try:
+            started = datetime.fromisoformat(host_runs[-1]) if host_runs else None
+        except ValueError:
+            started = None
+        if started and datetime.now(timezone.utc) - started > timedelta(hours=HOST_MAX_LIVE_HOURS):
+            continue
         stage_name = None
         if bot is not None:
             try:

@@ -2152,6 +2152,66 @@ def reset_stale_live_tracking():
         data["_live_tracking_reset"] = True
 
 
+HOST_MAX_LIVE_HOURS = float(os.environ.get("HOST_MAX_LIVE_HOURS", "12"))
+EMPTY_VC_GRACE_MINUTES = 15
+
+
+def host_session_stale_reason(guild, record):
+    """Why a host's tracked session should be treated as over, or None if it's still live.
+    Covers what /end and on_stage_instance_delete can miss: a forgotten /end on a voice
+    channel, or a stage that ended while the bot was offline."""
+    last_host = record.get("last_host") or {}
+    if last_host.get("ended") or not last_host.get("stage_channel_id"):
+        return None
+    runs = record.get("host_runs") or []
+    try:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(runs[-1]) if runs else None
+    except ValueError:
+        age = None
+    if age is not None and age > timedelta(hours=HOST_MAX_LIVE_HOURS):
+        return f"running over {HOST_MAX_LIVE_HOURS:g}h"
+    try:
+        channel = guild.get_channel(int(last_host["stage_channel_id"]))
+    except (TypeError, ValueError):
+        channel = None
+    if channel is None:
+        return "its channel no longer exists"
+    if isinstance(channel, discord.StageChannel):
+        expected_topic = last_host.get("stage_topic") or last_host.get("event")
+        if not (channel.instance and channel.instance.topic == expected_topic):
+            return "the stage is no longer live"
+    elif isinstance(channel, discord.VoiceChannel):
+        in_grace = age is not None and age < timedelta(minutes=EMPTY_VC_GRACE_MINUTES)
+        if not in_grace and not any(not m.bot for m in channel.members):
+            return "the voice channel is empty"
+    return None
+
+
+async def end_stale_host_sessions(guild):
+    if guild is None:
+        return
+    stale = [(uid, rec, reason) for uid, rec in load_data().items()
+             if uid.isdigit() and isinstance(rec, dict)
+             for reason in [host_session_stale_reason(guild, rec)] if reason]
+    for uid, rec, reason in stale:
+        last_host = rec.get("last_host") or {}
+        clear_stage_tracking(uid)
+        await announce_event_ended(guild, uid, last_host)
+        member = guild.get_member(int(uid))
+        if member is not None:
+            await revoke_stage_perms(guild, member, reason=f"Hosted event auto-ended ({reason})")
+        await log_audit(f"Auto-ended <@{uid}>'s **{last_host.get('event', 'event')}** - {reason}.")
+
+
+@tasks.loop(minutes=5)
+async def stale_host_sweep_loop():
+    for guild in bot.guilds:
+        try:
+            await end_stale_host_sessions(guild)
+        except Exception as e:
+            print(f"[HostSweep] Failed in {guild.name}: {e!r}")
+
+
 async def announce_event_ended(guild, host_uid, last_host):
     """Posts the 'event has ended' reply on a host's original /host announcement.
     Shared by /end and on_stage_instance_delete so the announcement gets the same
@@ -2837,6 +2897,10 @@ async def on_ready():
     if not backup_snapshot_loop.is_running():
         backup_snapshot_loop.start()
         print("[Backup] Channel/role snapshots running hourly")
+
+    if not stale_host_sweep_loop.is_running():
+        stale_host_sweep_loop.start()
+        print(f"[HostSweep] Auto-ending stale hosted events every 5 min (max {HOST_MAX_LIVE_HOURS:g}h)")
 
     bot.add_view(TicketPanelView())
     bot.add_view(HostTicketCloseView())
@@ -4562,6 +4626,7 @@ async def slash_host(
         await interaction.followup.send("You need the Host role to use this.", ephemeral=True)
         return
 
+    await end_stale_host_sessions(guild)
     last_host = load_data().get(str(interaction.user.id), {}).get("last_host")
     if last_host and last_host.get("stage_channel_id"):
         prev_stage = guild.get_channel(int(last_host["stage_channel_id"]))
