@@ -1477,7 +1477,7 @@ a:hover{text-decoration:underline}
 <p>These terms are governed by applicable law. Disputes should be resolved through Discord's mechanisms first.</p>
 
 <h2>13. Contact</h2>
-<p>For terms questions: Contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a> or Discord support channels.</p>
+<p>For terms questions, contact <strong>dkvonn</strong> on Discord.</p>
 
 <p><strong>By inviting Pve-Bot to your server, you accept these Terms of Service.</strong></p>
 </div>
@@ -1590,7 +1590,7 @@ a:hover{text-decoration:underline}
 </ul>
 
 <h2>7. Contact</h2>
-<p>For privacy questions, contact the bot developers via <a href="https://github.com/Yuki-Onnaa/Pve-Bot">GitHub</a>.</p>
+<p>For privacy questions, contact <strong>dkvonn</strong> on Discord.</p>
 
 <p><strong>By using Pve-Bot, you accept this Privacy Policy.</strong></p>
 </div>

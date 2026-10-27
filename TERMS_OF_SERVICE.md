@@ -108,7 +108,7 @@ These terms are governed by applicable law. Disputes should be resolved through 
 
 ## 13. Contact
 
-For terms questions: Contact the bot developers via GitHub or Discord support channels.
+For terms questions, contact **dkvonn** on Discord.
 
 ---
 

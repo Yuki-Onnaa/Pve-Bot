@@ -180,9 +180,7 @@ We may disclose your data if:
 ## 15. Contact & Complaints
 
 ### Questions?
-Contact the bot developers via:
-- GitHub issues: https://github.com/Yuki-Onnaa/Pve-Bot/issues
-- Discord server: [your Discord link]
+Contact **dkvonn** on Discord.
 
 ### Complaints
 If you believe we're mishandling your data:
