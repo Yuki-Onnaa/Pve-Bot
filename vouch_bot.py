@@ -2156,19 +2156,33 @@ async def revoke_stage_perms(guild, member, reason):
         return False
 
 
-def find_host_for_stage(channel_id, topic):
-    """Which user's last /host this live stage instance belongs to, by channel+topic match.
-    Falls back to matching on the bare event name for records saved before stage
-    topics started including the region."""
+def owns_stage_instance(last_host, instance, data=None):
+    """Whether a host's tracked session is this exact live stage instance. Matched by
+    the instance id recorded at /host - two hosts running the same event+region on the
+    same stage get identical topics, so the topic alone can't tell them apart. Sessions
+    with no recorded id (older ones, or the bot couldn't start the stage) fall back to
+    the topic, but never claim an instance another session has recorded as its own."""
+    if instance is None or last_host.get("ended"):
+        return False
+    if str(last_host.get("stage_channel_id")) != str(instance.channel_id):
+        return False
+    if last_host.get("stage_instance_id"):
+        return str(last_host["stage_instance_id"]) == str(instance.id)
+    if instance.topic != (last_host.get("stage_topic") or last_host.get("event")):
+        return False
+    data = load_data() if data is None else data
+    return not any(
+        str((rec.get("last_host") or {}).get("stage_instance_id")) == str(instance.id)
+        for uid, rec in data.items()
+        if uid.isdigit() and isinstance(rec, dict)
+    )
+
+
+def find_host_for_stage(instance):
+    """Which user's last /host this stage instance belongs to."""
     data = load_data()
     for uid, record in data.items():
-        if not uid.isdigit():
-            continue
-        last_host = record.get("last_host") or {}
-        if str(last_host.get("stage_channel_id")) != str(channel_id):
-            continue
-        expected_topic = last_host.get("stage_topic") or last_host.get("event")
-        if expected_topic == topic:
+        if uid.isdigit() and isinstance(record, dict) and owns_stage_instance(record.get("last_host") or {}, instance, data):
             return uid
     return None
 
@@ -2209,8 +2223,7 @@ def hosted_channel_is_live(channel, last_host):
     while their stage instance carries the host's topic; voice channels have no
     instance, so they're live until the host is marked ended."""
     if isinstance(channel, discord.StageChannel):
-        expected_topic = last_host.get("stage_topic") or last_host.get("event")
-        return bool(channel.instance and channel.instance.topic == expected_topic)
+        return owns_stage_instance(last_host, channel.instance)
     if isinstance(channel, discord.VoiceChannel):
         return not last_host.get("ended") and str(last_host.get("stage_channel_id")) == str(channel.id)
     return False
@@ -2260,8 +2273,7 @@ def host_session_stale_reason(guild, record):
     if channel is None:
         return "its channel no longer exists"
     if isinstance(channel, discord.StageChannel):
-        expected_topic = last_host.get("stage_topic") or last_host.get("event")
-        if not (channel.instance and channel.instance.topic == expected_topic):
+        if not owns_stage_instance(last_host, channel.instance):
             return "the stage is no longer live"
     elif isinstance(channel, discord.VoiceChannel):
         in_grace = age is not None and age < timedelta(minutes=EMPTY_VC_GRACE_MINUTES)
@@ -2931,7 +2943,7 @@ async def on_stage_instance_delete(stage_instance):
     guild = getattr(channel, "guild", None)
     if guild is None:
         return
-    host_uid = find_host_for_stage(stage_instance.channel_id, stage_instance.topic)
+    host_uid = find_host_for_stage(stage_instance)
     if host_uid is None:
         return
 
@@ -4741,7 +4753,7 @@ async def slash_host(
             return
 
     if is_stage and stage.instance:
-        other_host_id = find_host_for_stage(stage.id, stage.instance.topic)
+        other_host_id = find_host_for_stage(stage.instance)
         if other_host_id and str(other_host_id) != str(interaction.user.id):
             other_member = guild.get_member(int(other_host_id))
             mention = other_member.mention if other_member else f"<@{other_host_id}>"
@@ -4820,8 +4832,12 @@ async def slash_host(
     stage_started = False
     if is_stage:
         try:
-            await stage.create_instance(topic=stage_topic, reason=f"Hosted by {interaction.user}")
+            instance = await stage.create_instance(topic=stage_topic, reason=f"Hosted by {interaction.user}")
             stage_started = True
+            with data_txn() as data:
+                last_host = data.get(str(interaction.user.id), {}).get("last_host") or {}
+                if str(last_host.get("stage_channel_id")) == str(stage.id):
+                    last_host["stage_instance_id"] = str(instance.id)
         except discord.HTTPException:
             pass
 
@@ -4942,8 +4958,7 @@ async def slash_end(interaction: discord.Interaction):
         if isinstance(stage_channel, discord.StageChannel) and stage_channel.instance:
             # Someone else may have started a new event on the same stage channel
             # since this host's last /host - only end it if it's still theirs.
-            expected_topic = last_host.get("stage_topic") or last_host.get("event")
-            if stage_channel.instance.topic == expected_topic:
+            if owns_stage_instance(last_host, stage_channel.instance):
                 try:
                     # Deleting it fires on_stage_instance_delete, which posts the
                     # "event has ended" reply and strips Stage Perms for us.
@@ -5274,6 +5289,7 @@ async def slash_takeover(interaction: discord.Interaction, current_host: discord
             "channel_id": last_host.get("channel_id"),
             "co_host_ids": co_host_ids,
             "stage_channel_id": last_host.get("stage_channel_id"),
+            "stage_instance_id": last_host.get("stage_instance_id"),
             "started_at": runs[-1],
             "peak": 0,
         }
