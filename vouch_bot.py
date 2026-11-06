@@ -2264,19 +2264,23 @@ def host_session_stale_reason(guild, record):
         age = datetime.now(timezone.utc) - datetime.fromisoformat(runs[-1]) if runs else None
     except ValueError:
         age = None
-    if age is not None and age > timedelta(hours=HOST_MAX_LIVE_HOURS):
-        return f"running over {HOST_MAX_LIVE_HOURS:g}h"
     try:
-        channel = guild.get_channel(int(last_host["stage_channel_id"]))
+        channel = bot.get_channel(int(last_host["stage_channel_id"]))
     except (TypeError, ValueError):
         channel = None
+    # Records aren't scoped to a server - leave sessions in other servers to their own sweep.
+    if channel is not None and getattr(channel.guild, "id", None) != guild.id:
+        return None
+    if age is not None and age > timedelta(hours=HOST_MAX_LIVE_HOURS):
+        return f"running over {HOST_MAX_LIVE_HOURS:g}h"
     if channel is None:
         return "its channel no longer exists"
+    # Right after /host the stage may not be up yet, or the host may still be gathering people.
+    in_grace = age is not None and age < timedelta(minutes=EMPTY_VC_GRACE_MINUTES)
     if isinstance(channel, discord.StageChannel):
-        if not owns_stage_instance(last_host, channel.instance):
+        if not in_grace and not owns_stage_instance(last_host, channel.instance):
             return "the stage is no longer live"
     elif isinstance(channel, discord.VoiceChannel):
-        in_grace = age is not None and age < timedelta(minutes=EMPTY_VC_GRACE_MINUTES)
         if not in_grace and not any(not m.bot for m in channel.members):
             return "the voice channel is empty"
     return None
@@ -2928,6 +2932,22 @@ async def slash_antinuke_error(interaction: discord.Interaction, error):
         await interaction.followup.send(msg, ephemeral=True)
     else:
         await interaction.response.send_message(msg, ephemeral=True)
+
+
+@bot.event
+async def on_stage_instance_create(stage_instance):
+    """Binds a new stage to the /host session waiting on that channel, so it's matched by
+    id from then on - including stages the host started by hand when the bot couldn't."""
+    with data_txn() as data:
+        waiting = [
+            rec["last_host"] for uid, rec in data.items()
+            if uid.isdigit() and isinstance(rec, dict)
+            and str((rec.get("last_host") or {}).get("stage_channel_id")) == str(stage_instance.channel_id)
+            and not rec["last_host"].get("ended") and not rec["last_host"].get("stage_instance_id")
+        ]
+        if waiting:
+            newest = max(waiting, key=lambda lh: lh.get("started_at") or "")
+            newest["stage_instance_id"] = str(stage_instance.id)
 
 
 @bot.event
