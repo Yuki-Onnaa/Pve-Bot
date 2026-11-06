@@ -2278,7 +2278,15 @@ def host_session_stale_reason(guild, record):
     # Right after /host the stage may not be up yet, or the host may still be gathering people.
     in_grace = age is not None and age < timedelta(minutes=EMPTY_VC_GRACE_MINUTES)
     if isinstance(channel, discord.StageChannel):
-        if not in_grace and not owns_stage_instance(last_host, channel.instance):
+        # Discord auto-closed it - give the host the same window to come back and reopen it.
+        try:
+            closed_at = datetime.fromisoformat(last_host["stage_closed_at"]) if last_host.get("stage_closed_at") else None
+        except ValueError:
+            closed_at = None
+        recently_closed = closed_at is not None and datetime.now(timezone.utc) - closed_at < timedelta(
+            minutes=EMPTY_VC_GRACE_MINUTES
+        )
+        if not in_grace and not recently_closed and not owns_stage_instance(last_host, channel.instance):
             return "the stage is no longer live"
     elif isinstance(channel, discord.VoiceChannel):
         if not in_grace and not any(not m.bot for m in channel.members):
@@ -2934,6 +2942,51 @@ async def slash_antinuke_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(msg, ephemeral=True)
 
 
+# Stage instance ids being ended by /end, so the delete handler knows it wasn't Discord.
+_stage_ends_by_command = set()
+
+
+async def stage_closed_by_person(guild, instance):
+    """True if someone ended this stage (it's in the audit log), False if Discord
+    auto-closed it, None if the audit log can't be read."""
+    await asyncio.sleep(2)  # the audit log entry can land just after the gateway event
+    try:
+        async for entry in guild.audit_logs(limit=10, action=discord.AuditLogAction.stage_instance_delete):
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() > 120:
+                break
+            channel = getattr(entry.extra, "channel", None)
+            if getattr(entry.target, "id", None) == instance.id or getattr(channel, "id", None) == instance.channel_id:
+                return entry.user is not None and not getattr(entry.user, "system", False)
+    except discord.Forbidden:
+        print("[Stage] Can't read the audit log - give the bot View Audit Log so auto-closed stages don't end events")
+        return None
+    except discord.HTTPException:
+        return None
+    return False
+
+
+async def reopen_auto_closed_stage(member, channel):
+    """Restarts the stage for a still-running /host event when its host or a co-host
+    joins after Discord auto-closed it."""
+    if not isinstance(channel, discord.StageChannel) or channel.instance is not None:
+        return
+    for uid, rec in load_data().items():
+        last_host = (rec.get("last_host") or {}) if uid.isdigit() and isinstance(rec, dict) else {}
+        if (last_host.get("ended") or not last_host.get("stage_closed_at")
+                or str(last_host.get("stage_channel_id")) != str(channel.id)):
+            continue
+        if str(member.id) != uid and str(member.id) not in co_host_ids_from(last_host):
+            continue
+        topic = last_host.get("stage_topic") or last_host.get("event") or "Event"
+        try:
+            await channel.create_instance(topic=topic, reason=f"Reopened for {member} - Discord auto-closed it")
+        except discord.HTTPException as e:
+            print(f"[Stage] Couldn't reopen {channel.name}: {e}")
+            return
+        await log_audit(f"Reopened {channel.mention} for <@{uid}>'s event - {member.mention} joined.")
+        return
+
+
 @bot.event
 async def on_stage_instance_create(stage_instance):
     """Binds a new stage to the /host session waiting on that channel, so it's matched by
@@ -2948,6 +3001,7 @@ async def on_stage_instance_create(stage_instance):
         if waiting:
             newest = max(waiting, key=lambda lh: lh.get("started_at") or "")
             newest["stage_instance_id"] = str(stage_instance.id)
+            newest.pop("stage_closed_at", None)
 
 
 @bot.event
@@ -2958,12 +3012,28 @@ async def on_stage_instance_delete(stage_instance):
     whoever hosted it, so ending the stage itself is enough - no need to also run /end."""
     channel = stage_instance.channel
     where = channel.mention if channel else f"channel `{stage_instance.channel_id}`"
-    await log_audit(f"Stage ended in {where} (topic: **{stage_instance.topic}**)")
-
     guild = getattr(channel, "guild", None)
-    if guild is None:
-        return
-    host_uid = find_host_for_stage(stage_instance)
+    host_uid = find_host_for_stage(stage_instance) if guild is not None else None
+    ended_by_command = stage_instance.id in _stage_ends_by_command
+    _stage_ends_by_command.discard(stage_instance.id)
+
+    if host_uid is not None and not ended_by_command:
+        closed_by_person = await stage_closed_by_person(guild, stage_instance)
+        if closed_by_person is False:
+            # Discord closes a stage on its own after a few minutes with no speakers -
+            # that isn't the host ending their event, so keep it running.
+            with data_txn() as data:
+                last_host = (data.get(host_uid) or {}).get("last_host") or {}
+                if str(last_host.get("stage_instance_id")) == str(stage_instance.id) or not last_host.get("stage_instance_id"):
+                    last_host["stage_instance_id"] = None
+                    last_host["stage_closed_at"] = datetime.now(timezone.utc).isoformat()
+            await log_audit(
+                f"Discord auto-closed {where} (no speakers for a few minutes). <@{host_uid}>'s event is still "
+                f"running - the stage reopens when they or a co-host join it."
+            )
+            return
+
+    await log_audit(f"Stage ended in {where} (topic: **{stage_instance.topic}**)")
     if host_uid is None:
         return
 
@@ -3056,6 +3126,8 @@ async def on_voice_state_update(member, before, after):
         track_host_attendance(before.channel, after.channel)
     except Exception as e:
         print(f"[HostStats] Attendance tracking failed: {e!r}")
+    if not member.bot:
+        await reopen_auto_closed_stage(member, after.channel)
 
     if after.channel is not None:
         data = load_data()
@@ -4982,6 +5054,7 @@ async def slash_end(interaction: discord.Interaction):
                 try:
                     # Deleting it fires on_stage_instance_delete, which posts the
                     # "event has ended" reply and strips Stage Perms for us.
+                    _stage_ends_by_command.add(stage_channel.instance.id)
                     await stage_channel.instance.delete(reason=f"Ended by {interaction.user}")
                     stage_ended = True
                 except discord.HTTPException:
